@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// TestEngineTaskLifecycle 验证EngineTaskLifecycle。
 func TestEngineTaskLifecycle(t *testing.T) {
 	engine := NewEngine()
 	fixedTime := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
@@ -75,6 +76,7 @@ func TestEngineTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestEngineAuthorizationAndHandoffState 验证EngineAuthorizationAndHandoffState。
 func TestEngineAuthorizationAndHandoffState(t *testing.T) {
 	engine := NewEngine()
 	task := engine.CreateTask(CreateTaskInput{

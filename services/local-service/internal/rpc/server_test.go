@@ -21,6 +21,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
+// TestHandleStreamConnEmitsApprovalNotifications 验证HandleStreamConnEmitsApprovalNotifications。
 func TestHandleStreamConnEmitsApprovalNotifications(t *testing.T) {
 	server := newTestServer()
 	left, right := net.Pipe()
@@ -87,6 +88,7 @@ func TestHandleStreamConnEmitsApprovalNotifications(t *testing.T) {
 	}
 }
 
+// TestHandleDebugEventsReturnsQueuedNotifications 验证HandleDebugEventsReturnsQueuedNotifications。
 func TestHandleDebugEventsReturnsQueuedNotifications(t *testing.T) {
 	server := newTestServer()
 	result, err := server.orchestrator.StartTask(map[string]any{
@@ -128,6 +130,7 @@ func TestHandleDebugEventsReturnsQueuedNotifications(t *testing.T) {
 	}
 }
 
+// newTestServer 处理当前模块的相关逻辑。
 func newTestServer() *Server {
 	orch := orchestrator.NewService(
 		contextsvc.NewService(),
@@ -156,6 +159,7 @@ func newTestServer() *Server {
 	return server
 }
 
+// mustMarshal 处理当前模块的相关逻辑。
 func mustMarshal(t *testing.T, value any) json.RawMessage {
 	t.Helper()
 	encoded, err := json.Marshal(value)

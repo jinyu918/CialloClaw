@@ -17,8 +17,10 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
+// ErrTaskNotFound 定义当前模块的基础变量。
 var ErrTaskNotFound = errors.New("task not found")
 
+// Service 提供当前模块的服务能力。
 type Service struct {
 	context   *contextsvc.Service
 	intent    *intent.Service
@@ -31,6 +33,7 @@ type Service struct {
 	plugin    *plugin.Service
 }
 
+// NewService 创建并返回Service。
 func NewService(
 	context *contextsvc.Service,
 	intent *intent.Service,
@@ -55,6 +58,7 @@ func NewService(
 	}
 }
 
+// Snapshot 处理当前模块的相关逻辑。
 func (s *Service) Snapshot() map[string]any {
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(100, 0)
 	return map[string]any{
@@ -73,6 +77,7 @@ func (s *Service) Snapshot() map[string]any {
 	}
 }
 
+// SubmitInput 处理当前模块的相关逻辑。
 func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	snapshot := s.context.Capture(params)
 	options := mapValue(params, "options")
@@ -130,6 +135,7 @@ func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	return response, nil
 }
 
+// StartTask 启动Task。
 func (s *Service) StartTask(params map[string]any) (map[string]any, error) {
 	snapshot := s.context.Capture(params)
 	explicitIntent := mapValue(params, "intent")
@@ -185,6 +191,7 @@ func (s *Service) StartTask(params map[string]any) (map[string]any, error) {
 	return response, nil
 }
 
+// ConfirmTask 确认Task。
 func (s *Service) ConfirmTask(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	task, ok := s.runEngine.GetTask(taskID)
@@ -225,6 +232,7 @@ func (s *Service) ConfirmTask(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// RecommendationGet 处理当前模块的相关逻辑。
 func (s *Service) RecommendationGet(params map[string]any) (map[string]any, error) {
 	selectionText := stringValue(mapValue(params, "context"), "selection_text", "当前内容")
 	return map[string]any{
@@ -244,11 +252,13 @@ func (s *Service) RecommendationGet(params map[string]any) (map[string]any, erro
 	}, nil
 }
 
+// RecommendationFeedbackSubmit 处理当前模块的相关逻辑。
 func (s *Service) RecommendationFeedbackSubmit(params map[string]any) (map[string]any, error) {
 	_ = params
 	return map[string]any{"applied": true}, nil
 }
 
+// TaskList 处理当前模块的相关逻辑。
 func (s *Service) TaskList(params map[string]any) (map[string]any, error) {
 	group := stringValue(params, "group", "unfinished")
 	limit := intValue(params, "limit", 20)
@@ -266,6 +276,7 @@ func (s *Service) TaskList(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// TaskDetailGet 处理当前模块的相关逻辑。
 func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	task, ok := s.runEngine.TaskDetail(taskID)
@@ -282,6 +293,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// TaskControl 处理当前模块的相关逻辑。
 func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	action := stringValue(params, "action", "pause")
@@ -297,10 +309,12 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// TaskInspectorConfigGet 处理当前模块的相关逻辑。
 func (s *Service) TaskInspectorConfigGet() (map[string]any, error) {
 	return s.runEngine.InspectorConfig(), nil
 }
 
+// TaskInspectorConfigUpdate 处理当前模块的相关逻辑。
 func (s *Service) TaskInspectorConfigUpdate(params map[string]any) (map[string]any, error) {
 	effective := s.runEngine.UpdateInspectorConfig(params)
 	return map[string]any{
@@ -309,6 +323,7 @@ func (s *Service) TaskInspectorConfigUpdate(params map[string]any) (map[string]a
 	}, nil
 }
 
+// TaskInspectorRun 处理当前模块的相关逻辑。
 func (s *Service) TaskInspectorRun(params map[string]any) (map[string]any, error) {
 	_ = params
 	return map[string]any{
@@ -324,6 +339,7 @@ func (s *Service) TaskInspectorRun(params map[string]any) (map[string]any, error
 	}, nil
 }
 
+// NotepadList 处理当前模块的相关逻辑。
 func (s *Service) NotepadList(params map[string]any) (map[string]any, error) {
 	group := stringValue(params, "group", "upcoming")
 	limit := intValue(params, "limit", 20)
@@ -335,6 +351,7 @@ func (s *Service) NotepadList(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// NotepadConvertToTask 处理当前模块的相关逻辑。
 func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, error) {
 	_ = params
 	task := s.runEngine.CreateTask(runengine.CreateTaskInput{
@@ -352,6 +369,7 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 	}, nil
 }
 
+// DashboardOverviewGet 处理当前模块的相关逻辑。
 func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, error) {
 	_ = params
 	tasks, _ := s.runEngine.ListTasks("unfinished", 1, 0)
@@ -384,6 +402,7 @@ func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, e
 	}, nil
 }
 
+// DashboardModuleGet 处理当前模块的相关逻辑。
 func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, error) {
 	module := stringValue(params, "module", "mirror")
 	tab := stringValue(params, "tab", "daily_summary")
@@ -401,6 +420,7 @@ func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, err
 	}, nil
 }
 
+// MirrorOverviewGet 处理当前模块的相关逻辑。
 func (s *Service) MirrorOverviewGet(params map[string]any) (map[string]any, error) {
 	_ = params
 	tasks, _ := s.runEngine.ListTasks("finished", 20, 0)
@@ -424,6 +444,7 @@ func (s *Service) MirrorOverviewGet(params map[string]any) (map[string]any, erro
 	}, nil
 }
 
+// SecuritySummaryGet 处理当前模块的相关逻辑。
 func (s *Service) SecuritySummaryGet() (map[string]any, error) {
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
 	securityStatus := "normal"
@@ -448,6 +469,7 @@ func (s *Service) SecuritySummaryGet() (map[string]any, error) {
 	}, nil
 }
 
+// SecurityPendingList 处理当前模块的相关逻辑。
 func (s *Service) SecurityPendingList(params map[string]any) (map[string]any, error) {
 	limit := intValue(params, "limit", 20)
 	offset := intValue(params, "offset", 0)
@@ -458,6 +480,7 @@ func (s *Service) SecurityPendingList(params map[string]any) (map[string]any, er
 	}, nil
 }
 
+// PendingNotifications 返回待处理的Notifications。
 func (s *Service) PendingNotifications(taskID string) ([]map[string]any, error) {
 	notifications, ok := s.runEngine.PendingNotifications(taskID)
 	if !ok {
@@ -476,6 +499,7 @@ func (s *Service) PendingNotifications(taskID string) ([]map[string]any, error) 
 	return items, nil
 }
 
+// DrainNotifications 取出并清空Notifications。
 func (s *Service) DrainNotifications(taskID string) ([]map[string]any, error) {
 	notifications, ok := s.runEngine.DrainNotifications(taskID)
 	if !ok {
@@ -494,6 +518,7 @@ func (s *Service) DrainNotifications(taskID string) ([]map[string]any, error) {
 	return items, nil
 }
 
+// SecurityRespond 处理当前模块的相关逻辑。
 func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	task, ok := s.runEngine.GetTask(taskID)
@@ -554,6 +579,7 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 	}, nil
 }
 
+// SettingsGet 设置tingsGet。
 func (s *Service) SettingsGet(params map[string]any) (map[string]any, error) {
 	settings := s.runEngine.Settings()
 	scope := stringValue(params, "scope", "all")
@@ -569,6 +595,7 @@ func (s *Service) SettingsGet(params map[string]any) (map[string]any, error) {
 	return map[string]any{"settings": map[string]any{scope: cloneMap(section)}}, nil
 }
 
+// SettingsUpdate 设置tingsUpdate。
 func (s *Service) SettingsUpdate(params map[string]any) (map[string]any, error) {
 	effectiveSettings, updatedKeys, applyMode, needRestart := s.runEngine.UpdateSettings(params)
 	return map[string]any{
@@ -579,6 +606,7 @@ func (s *Service) SettingsUpdate(params map[string]any) (map[string]any, error) 
 	}, nil
 }
 
+// taskMap 处理当前模块的相关逻辑。
 func taskMap(record runengine.TaskRecord) map[string]any {
 	result := map[string]any{
 		"task_id":      record.TaskID,
@@ -598,6 +626,7 @@ func taskMap(record runengine.TaskRecord) map[string]any {
 	return result
 }
 
+// timelineMap 处理当前模块的相关逻辑。
 func timelineMap(timeline []runengine.TaskStepRecord) []map[string]any {
 	result := make([]map[string]any, 0, len(timeline))
 	for _, step := range timeline {
@@ -614,6 +643,7 @@ func timelineMap(timeline []runengine.TaskStepRecord) []map[string]any {
 	return result
 }
 
+// pageMap 处理当前模块的相关逻辑。
 func pageMap(limit, offset, total int) map[string]any {
 	return map[string]any{
 		"limit":    limit,
@@ -623,6 +653,7 @@ func pageMap(limit, offset, total int) map[string]any {
 	}
 }
 
+// taskStatusForSuggestion 处理当前模块的相关逻辑。
 func taskStatusForSuggestion(requiresConfirm bool) string {
 	if requiresConfirm {
 		return "confirming_intent"
@@ -630,6 +661,7 @@ func taskStatusForSuggestion(requiresConfirm bool) string {
 	return "processing"
 }
 
+// currentStepForSuggestion 处理当前模块的相关逻辑。
 func currentStepForSuggestion(requiresConfirm bool) string {
 	if requiresConfirm {
 		return "intent_confirmation"
@@ -637,6 +669,7 @@ func currentStepForSuggestion(requiresConfirm bool) string {
 	return "return_result"
 }
 
+// bubbleTypeForSuggestion 处理当前模块的相关逻辑。
 func bubbleTypeForSuggestion(requiresConfirm bool) string {
 	if requiresConfirm {
 		return "intent_confirm"
@@ -644,6 +677,7 @@ func bubbleTypeForSuggestion(requiresConfirm bool) string {
 	return "result"
 }
 
+// bubbleTextForInput 处理当前模块的相关逻辑。
 func bubbleTextForInput(suggestion intent.Suggestion) string {
 	if suggestion.RequiresConfirm {
 		return "你是想总结这段内容吗？"
@@ -651,6 +685,7 @@ func bubbleTextForInput(suggestion intent.Suggestion) string {
 	return suggestion.ResultBubbleText
 }
 
+// bubbleTextForStart 处理当前模块的相关逻辑。
 func bubbleTextForStart(suggestion intent.Suggestion) string {
 	if suggestion.RequiresConfirm {
 		return "你是想让我按当前对象继续处理吗？"
@@ -658,6 +693,7 @@ func bubbleTextForStart(suggestion intent.Suggestion) string {
 	return suggestion.ResultBubbleText
 }
 
+// initialTimeline 处理当前模块的相关逻辑。
 func initialTimeline(status, currentStep string) []runengine.TaskStepRecord {
 	stepStatus := "running"
 	if status == "confirming_intent" {
@@ -675,6 +711,7 @@ func initialTimeline(status, currentStep string) []runengine.TaskStepRecord {
 	}
 }
 
+// controlBubbleText 处理当前模块的相关逻辑。
 func controlBubbleText(action string) string {
 	switch action {
 	case "pause":
@@ -690,6 +727,7 @@ func controlBubbleText(action string) string {
 	}
 }
 
+// currentTimeFromTask 处理当前模块的相关逻辑。
 func currentTimeFromTask(engine *runengine.Engine, taskID string) string {
 	task, ok := engine.GetTask(taskID)
 	if !ok {
@@ -698,6 +736,7 @@ func currentTimeFromTask(engine *runengine.Engine, taskID string) string {
 	return task.UpdatedAt.Format(dateTimeLayout)
 }
 
+// workspacePathFromSettings 处理当前模块的相关逻辑。
 func workspacePathFromSettings(settings map[string]any) string {
 	general, ok := settings["general"].(map[string]any)
 	if !ok {
@@ -710,6 +749,7 @@ func workspacePathFromSettings(settings map[string]any) string {
 	return stringValue(download, "workspace_path", "D:/CialloClawWorkspace")
 }
 
+// defaultIntentMap 处理当前模块的相关逻辑。
 func defaultIntentMap(name string) map[string]any {
 	arguments := map[string]any{}
 	if name == "summarize" {
@@ -724,6 +764,7 @@ func defaultIntentMap(name string) map[string]any {
 	}
 }
 
+// defaultMirrorReference 处理当前模块的相关逻辑。
 func defaultMirrorReference() map[string]any {
 	return map[string]any{
 		"memory_id": "pref_001",
@@ -732,6 +773,7 @@ func defaultMirrorReference() map[string]any {
 	}
 }
 
+// attachMemoryReadPlans 处理当前模块的相关逻辑。
 func (s *Service) attachMemoryReadPlans(taskID, runID string, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any) {
 	readPlans := []map[string]any{
 		{
@@ -751,6 +793,7 @@ func (s *Service) attachMemoryReadPlans(taskID, runID string, snapshot contextsv
 	_, _ = s.runEngine.SetMemoryPlans(taskID, readPlans, nil)
 }
 
+// attachPostDeliveryHandoffs 处理当前模块的相关逻辑。
 func (s *Service) attachPostDeliveryHandoffs(taskID, runID string, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any, deliveryResult map[string]any, artifacts []map[string]any) {
 	writePlans := []map[string]any{
 		{
@@ -770,6 +813,7 @@ func (s *Service) attachPostDeliveryHandoffs(taskID, runID string, snapshot cont
 	_, _ = s.runEngine.SetDeliveryPlans(taskID, storageWritePlan, artifactPlans)
 }
 
+// requiresAuthorization 处理当前模块的相关逻辑。
 func requiresAuthorization(taskIntent map[string]any) bool {
 	if stringValue(taskIntent, "name", "") == "write_file" {
 		return true
@@ -783,6 +827,7 @@ func requiresAuthorization(taskIntent map[string]any) bool {
 	return false
 }
 
+// buildApprovalRequest 处理当前模块的相关逻辑。
 func buildApprovalRequest(taskID string, taskIntent map[string]any, riskLevel string) map[string]any {
 	arguments := mapValue(taskIntent, "arguments")
 	targetObject := stringValue(arguments, "target_path", "workspace_document")
@@ -802,6 +847,7 @@ func buildApprovalRequest(taskID string, taskIntent map[string]any, riskLevel st
 	}
 }
 
+// buildImpactScope 处理当前模块的相关逻辑。
 func buildImpactScope() map[string]any {
 	return map[string]any{
 		"files":                    []string{"D:/CialloClawWorkspace/report.md"},
@@ -812,6 +858,7 @@ func buildImpactScope() map[string]any {
 	}
 }
 
+// snapshotFromTask 处理当前模块的相关逻辑。
 func snapshotFromTask(task runengine.TaskRecord) contextsvc.TaskContextSnapshot {
 	return contextsvc.TaskContextSnapshot{
 		Trigger:   task.SourceType,
@@ -820,6 +867,7 @@ func snapshotFromTask(task runengine.TaskRecord) contextsvc.TaskContextSnapshot 
 	}
 }
 
+// memoryQueryFromSnapshot 处理当前模块的相关逻辑。
 func memoryQueryFromSnapshot(snapshot contextsvc.TaskContextSnapshot) string {
 	for _, value := range []string{snapshot.SelectionText, snapshot.Text, snapshot.ErrorText, snapshot.PageTitle} {
 		if value != "" {
@@ -834,12 +882,14 @@ func memoryQueryFromSnapshot(snapshot contextsvc.TaskContextSnapshot) string {
 	return "task_context"
 }
 
+// buildMemorySummary 处理当前模块的相关逻辑。
 func buildMemorySummary(taskIntent map[string]any, deliveryResult map[string]any) string {
 	intentName := stringValue(taskIntent, "name", "summarize")
 	title := stringValue(deliveryResult, "title", "任务结果")
 	return fmt.Sprintf("任务完成，意图=%s，交付=%s", intentName, title)
 }
 
+// resultSpecFromIntent 处理当前模块的相关逻辑。
 func resultSpecFromIntent(taskIntent map[string]any) (string, string, string) {
 	switch stringValue(taskIntent, "name", "summarize") {
 	case "rewrite":
@@ -855,6 +905,7 @@ func resultSpecFromIntent(taskIntent map[string]any) (string, string, string) {
 	}
 }
 
+// deliveryTypeFromIntent 处理当前模块的相关逻辑。
 func deliveryTypeFromIntent(taskIntent map[string]any) string {
 	switch stringValue(taskIntent, "name", "summarize") {
 	case "translate", "explain":
@@ -864,6 +915,7 @@ func deliveryTypeFromIntent(taskIntent map[string]any) string {
 	}
 }
 
+// firstNonEmptyString 处理当前模块的相关逻辑。
 func firstNonEmptyString(primary, fallback string) string {
 	if primary != "" {
 		return primary
@@ -871,6 +923,7 @@ func firstNonEmptyString(primary, fallback string) string {
 	return fallback
 }
 
+// firstMapOrNil 处理当前模块的相关逻辑。
 func firstMapOrNil(items []map[string]any) map[string]any {
 	if len(items) == 0 {
 		return nil
@@ -878,6 +931,7 @@ func firstMapOrNil(items []map[string]any) map[string]any {
 	return cloneMap(items[0])
 }
 
+// latestRestorePointFromApprovals 处理当前模块的相关逻辑。
 func latestRestorePointFromApprovals(items []map[string]any) any {
 	if len(items) == 0 {
 		return nil
@@ -888,6 +942,7 @@ func latestRestorePointFromApprovals(items []map[string]any) any {
 	}
 }
 
+// cloneMap 处理当前模块的相关逻辑。
 func cloneMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -908,6 +963,7 @@ func cloneMap(values map[string]any) map[string]any {
 	return result
 }
 
+// cloneMapSlice 处理当前模块的相关逻辑。
 func cloneMapSlice(values []map[string]any) []map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -919,6 +975,7 @@ func cloneMapSlice(values []map[string]any) []map[string]any {
 	return result
 }
 
+// mapValue 处理当前模块的相关逻辑。
 func mapValue(values map[string]any, key string) map[string]any {
 	rawValue, ok := values[key]
 	if !ok {
@@ -931,6 +988,7 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return value
 }
 
+// stringValue 处理当前模块的相关逻辑。
 func stringValue(values map[string]any, key, fallback string) string {
 	rawValue, ok := values[key]
 	if !ok {
@@ -943,6 +1001,7 @@ func stringValue(values map[string]any, key, fallback string) string {
 	return value
 }
 
+// boolValue 处理当前模块的相关逻辑。
 func boolValue(values map[string]any, key string, fallback bool) bool {
 	rawValue, ok := values[key]
 	if !ok {
@@ -955,6 +1014,7 @@ func boolValue(values map[string]any, key string, fallback bool) bool {
 	return value
 }
 
+// intValue 处理当前模块的相关逻辑。
 func intValue(values map[string]any, key string, fallback int) int {
 	rawValue, ok := values[key]
 	if !ok {
@@ -967,6 +1027,7 @@ func intValue(values map[string]any, key string, fallback int) int {
 	return int(value)
 }
 
+// truncateText 处理当前模块的相关逻辑。
 func truncateText(value string, maxLength int) string {
 	if len(value) <= maxLength {
 		return value
@@ -974,4 +1035,5 @@ func truncateText(value string, maxLength int) string {
 	return value[:maxLength] + "..."
 }
 
+// dateTimeLayout 定义当前模块的基础变量。
 const dateTimeLayout = time.RFC3339

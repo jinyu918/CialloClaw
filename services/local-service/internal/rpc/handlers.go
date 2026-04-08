@@ -7,6 +7,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/orchestrator"
 )
 
+// registerHandlers 处理当前模块的相关逻辑。
 func (s *Server) registerHandlers() {
 	s.handlers = map[string]methodHandler{
 		"agent.input.submit":                   s.handleAgentInputSubmit,
@@ -33,113 +34,135 @@ func (s *Server) registerHandlers() {
 	}
 }
 
+// handleAgentInputSubmit 处理当前模块的相关逻辑。
 func (s *Server) handleAgentInputSubmit(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.SubmitInput(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskStart 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskStart(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.StartTask(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskConfirm 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskConfirm(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.ConfirmTask(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentRecommendationGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentRecommendationGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.RecommendationGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentRecommendationFeedbackSubmit 处理当前模块的相关逻辑。
 func (s *Server) handleAgentRecommendationFeedbackSubmit(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.RecommendationFeedbackSubmit(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskList 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskList(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.TaskList(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskDetailGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskDetailGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.TaskDetailGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskControl 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskControl(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.TaskControl(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskInspectorConfigGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskInspectorConfigGet(params map[string]any) (any, *rpcError) {
 	_ = params
 	data, err := s.orchestrator.TaskInspectorConfigGet()
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskInspectorConfigUpdate 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskInspectorConfigUpdate(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.TaskInspectorConfigUpdate(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentTaskInspectorRun 处理当前模块的相关逻辑。
 func (s *Server) handleAgentTaskInspectorRun(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.TaskInspectorRun(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentNotepadList 处理当前模块的相关逻辑。
 func (s *Server) handleAgentNotepadList(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.NotepadList(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentNotepadConvertToTask 处理当前模块的相关逻辑。
 func (s *Server) handleAgentNotepadConvertToTask(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.NotepadConvertToTask(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentDashboardOverviewGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentDashboardOverviewGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.DashboardOverviewGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentDashboardModuleGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentDashboardModuleGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.DashboardModuleGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentMirrorOverviewGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentMirrorOverviewGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.MirrorOverviewGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentSecuritySummaryGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentSecuritySummaryGet(params map[string]any) (any, *rpcError) {
 	_ = params
 	data, err := s.orchestrator.SecuritySummaryGet()
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentSecurityPendingList 处理当前模块的相关逻辑。
 func (s *Server) handleAgentSecurityPendingList(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.SecurityPendingList(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentSecurityRespond 处理当前模块的相关逻辑。
 func (s *Server) handleAgentSecurityRespond(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.SecurityRespond(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentSettingsGet 处理当前模块的相关逻辑。
 func (s *Server) handleAgentSettingsGet(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.SettingsGet(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// handleAgentSettingsUpdate 处理当前模块的相关逻辑。
 func (s *Server) handleAgentSettingsUpdate(params map[string]any) (any, *rpcError) {
 	data, err := s.orchestrator.SettingsUpdate(params)
 	return wrapOrchestratorResult(data, err)
 }
 
+// wrapOrchestratorResult 处理当前模块的相关逻辑。
 func wrapOrchestratorResult(data any, err error) (any, *rpcError) {
 	if err == nil {
 		return data, nil

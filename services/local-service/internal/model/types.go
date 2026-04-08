@@ -3,18 +3,21 @@ package model
 
 import "context"
 
+// GenerateTextRequest 描述当前模块请求结构。
 type GenerateTextRequest struct {
 	TaskID string
 	RunID  string
 	Input  string
 }
 
+// TokenUsage 定义当前模块的数据结构。
 type TokenUsage struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
 }
 
+// InvocationRecord 描述当前模块记录。
 type InvocationRecord struct {
 	TaskID    string
 	RunID     string
@@ -25,6 +28,7 @@ type InvocationRecord struct {
 	LatencyMS int64
 }
 
+// GenerateTextResponse 定义当前模块的数据结构。
 type GenerateTextResponse struct {
 	TaskID     string
 	RunID      string
@@ -36,6 +40,7 @@ type GenerateTextResponse struct {
 	LatencyMS  int64
 }
 
+// InvocationRecord 处理当前模块的相关逻辑。
 func (r GenerateTextResponse) InvocationRecord() InvocationRecord {
 	return InvocationRecord{
 		TaskID:    r.TaskID,
@@ -48,6 +53,7 @@ func (r GenerateTextResponse) InvocationRecord() InvocationRecord {
 	}
 }
 
+// Client 定义当前模块的接口约束。
 type Client interface {
 	GenerateText(ctx context.Context, request GenerateTextRequest) (GenerateTextResponse, error)
 }

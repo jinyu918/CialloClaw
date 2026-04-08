@@ -11,6 +11,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/config"
 )
 
+// mockClient 定义当前模块的数据结构。
 type mockClient struct {
 	response GenerateTextResponse
 	err      error
@@ -18,6 +19,7 @@ type mockClient struct {
 	called   bool
 }
 
+// GenerateText 处理当前模块的相关逻辑。
 func (m *mockClient) GenerateText(_ context.Context, request GenerateTextRequest) (GenerateTextResponse, error) {
 	m.called = true
 	m.request = request
@@ -28,6 +30,7 @@ func (m *mockClient) GenerateText(_ context.Context, request GenerateTextRequest
 	return m.response, nil
 }
 
+// TestNewServiceStoresConfig 验证NewServiceStoresConfig。
 func TestNewServiceStoresConfig(t *testing.T) {
 	cfg := config.ModelConfig{
 		Provider: "openai_responses",
@@ -54,6 +57,7 @@ func TestNewServiceStoresConfig(t *testing.T) {
 	}
 }
 
+// TestGenerateTextReturnsErrorWhenClientMissing 验证GenerateTextReturnsErrorWhenClientMissing。
 func TestGenerateTextReturnsErrorWhenClientMissing(t *testing.T) {
 	service := NewService(config.ModelConfig{}, nil)
 
@@ -63,6 +67,7 @@ func TestGenerateTextReturnsErrorWhenClientMissing(t *testing.T) {
 	}
 }
 
+// TestGenerateTextDelegatesToClient 验证GenerateTextDelegatesToClient。
 func TestGenerateTextDelegatesToClient(t *testing.T) {
 	client := &mockClient{
 		response: GenerateTextResponse{
@@ -97,6 +102,7 @@ func TestGenerateTextDelegatesToClient(t *testing.T) {
 	}
 }
 
+// TestValidateModelConfigRequiresProvider 验证ValidateModelConfigRequiresProvider。
 func TestValidateModelConfigRequiresProvider(t *testing.T) {
 	err := ValidateModelConfig(config.ModelConfig{})
 	if !errors.Is(err, ErrModelProviderRequired) {
@@ -104,6 +110,7 @@ func TestValidateModelConfigRequiresProvider(t *testing.T) {
 	}
 }
 
+// TestValidateModelConfigRejectsUnsupportedProvider 验证ValidateModelConfigRejectsUnsupportedProvider。
 func TestValidateModelConfigRejectsUnsupportedProvider(t *testing.T) {
 	err := ValidateModelConfig(config.ModelConfig{Provider: "unknown"})
 	if !errors.Is(err, ErrModelProviderUnsupported) {
@@ -111,6 +118,7 @@ func TestValidateModelConfigRejectsUnsupportedProvider(t *testing.T) {
 	}
 }
 
+// TestValidateModelConfigTrimsWhitespace 验证ValidateModelConfigTrimsWhitespace。
 func TestValidateModelConfigTrimsWhitespace(t *testing.T) {
 	err := ValidateModelConfig(config.ModelConfig{
 		Provider: "  openai_responses  ",
@@ -122,6 +130,7 @@ func TestValidateModelConfigTrimsWhitespace(t *testing.T) {
 	}
 }
 
+// TestNewServiceFromConfigBuildsOpenAIClient 验证NewServiceFromConfigBuildsOpenAIClient。
 func TestNewServiceFromConfigBuildsOpenAIClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -151,6 +160,7 @@ func TestNewServiceFromConfigBuildsOpenAIClient(t *testing.T) {
 	}
 }
 
+// TestGenerateTextResponseInvocationRecord 验证GenerateTextResponseInvocationRecord。
 func TestGenerateTextResponseInvocationRecord(t *testing.T) {
 	response := GenerateTextResponse{
 		TaskID:    "task_001",

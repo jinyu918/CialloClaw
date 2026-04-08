@@ -8,17 +8,21 @@ import (
 	"sync"
 )
 
+// defaultMemoryListLimit 定义当前模块的基础变量。
 const defaultMemoryListLimit = 5
 
+// InMemoryMemoryStore 定义当前模块的数据结构。
 type InMemoryMemoryStore struct {
 	mu        sync.RWMutex
 	summaries []MemorySummaryRecord
 }
 
+// NewInMemoryMemoryStore 创建并返回InMemoryMemoryStore。
 func NewInMemoryMemoryStore() *InMemoryMemoryStore {
 	return &InMemoryMemoryStore{summaries: make([]MemorySummaryRecord, 0)}
 }
 
+// SaveSummary 处理当前模块的相关逻辑。
 func (s *InMemoryMemoryStore) SaveSummary(_ context.Context, summary MemorySummaryRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -27,6 +31,7 @@ func (s *InMemoryMemoryStore) SaveSummary(_ context.Context, summary MemorySumma
 	return nil
 }
 
+// SearchSummaries 处理当前模块的相关逻辑。
 func (s *InMemoryMemoryStore) SearchSummaries(_ context.Context, taskID, runID, query string, limit int) ([]MemoryRetrievalRecord, error) {
 	limit = normalizeMemoryLimit(limit)
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -74,6 +79,7 @@ func (s *InMemoryMemoryStore) SearchSummaries(_ context.Context, taskID, runID, 
 	return hits, nil
 }
 
+// ListRecentSummaries 列出RecentSummaries。
 func (s *InMemoryMemoryStore) ListRecentSummaries(_ context.Context, limit int) ([]MemorySummaryRecord, error) {
 	limit = normalizeMemoryLimit(limit)
 
@@ -92,6 +98,7 @@ func (s *InMemoryMemoryStore) ListRecentSummaries(_ context.Context, limit int) 
 	return result, nil
 }
 
+// normalizeMemoryLimit 处理当前模块的相关逻辑。
 func normalizeMemoryLimit(limit int) int {
 	if limit <= 0 {
 		return defaultMemoryListLimit
@@ -100,6 +107,7 @@ func normalizeMemoryLimit(limit int) int {
 	return limit
 }
 
+// matchMemorySummary 处理当前模块的相关逻辑。
 func matchMemorySummary(summary, query string) float64 {
 	summary = strings.ToLower(strings.TrimSpace(summary))
 	if summary == "" || query == "" {

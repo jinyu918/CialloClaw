@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TestNewSQLiteMemoryStoreInitializesWALMode 验证NewSQLiteMemoryStoreInitializesWALMode。
 func TestNewSQLiteMemoryStoreInitializesWALMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memory.db")
 	store, err := NewSQLiteMemoryStore(path)
@@ -26,6 +27,7 @@ func TestNewSQLiteMemoryStoreInitializesWALMode(t *testing.T) {
 	}
 }
 
+// TestSQLiteMemoryStoreSaveSearchAndListRecent 验证SQLiteMemoryStoreSaveSearchAndListRecent。
 func TestSQLiteMemoryStoreSaveSearchAndListRecent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memory.db")
 	store, err := NewSQLiteMemoryStore(path)
@@ -69,6 +71,7 @@ func TestSQLiteMemoryStoreSaveSearchAndListRecent(t *testing.T) {
 	}
 }
 
+// TestNewServicePrefersSQLiteMemoryStoreWhenConfigured 验证NewServicePrefersSQLiteMemoryStoreWhenConfigured。
 func TestNewServicePrefersSQLiteMemoryStoreWhenConfigured(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.db")
 	service := NewService(stubAdapter{databasePath: path})
@@ -88,6 +91,7 @@ func TestNewServicePrefersSQLiteMemoryStoreWhenConfigured(t *testing.T) {
 	}
 }
 
+// TestSQLiteMemoryStoreRejectsInvalidSummaryRecord 验证SQLiteMemoryStoreRejectsInvalidSummaryRecord。
 func TestSQLiteMemoryStoreRejectsInvalidSummaryRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "invalid.db")
 	store, err := NewSQLiteMemoryStore(path)

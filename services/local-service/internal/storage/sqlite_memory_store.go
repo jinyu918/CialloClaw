@@ -15,20 +15,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sqliteDriverName 定义当前模块的基础变量。
 const sqliteDriverName = "sqlite"
+// sqliteMemorySource 定义当前模块的基础变量。
 const sqliteMemorySource = "storage_sqlite"
 
+// ErrMemorySummaryIDRequired 定义当前模块的基础变量。
 var ErrMemorySummaryIDRequired = errors.New("storage memory_summary_id is required")
+// ErrMemoryTaskIDRequired 定义当前模块的基础变量。
 var ErrMemoryTaskIDRequired = errors.New("storage memory task_id is required")
+// ErrMemoryRunIDRequired 定义当前模块的基础变量。
 var ErrMemoryRunIDRequired = errors.New("storage memory run_id is required")
+// ErrMemorySummaryRequired 定义当前模块的基础变量。
 var ErrMemorySummaryRequired = errors.New("storage memory summary is required")
+// ErrMemoryCreatedAtRequired 定义当前模块的基础变量。
 var ErrMemoryCreatedAtRequired = errors.New("storage memory created_at is required")
+// ErrMemoryCreatedAtInvalid 定义当前模块的基础变量。
 var ErrMemoryCreatedAtInvalid = errors.New("storage memory created_at must be rfc3339")
 
+// SQLiteMemoryStore 定义当前模块的数据结构。
 type SQLiteMemoryStore struct {
 	db *sql.DB
 }
 
+// NewSQLiteMemoryStore 创建并返回SQLiteMemoryStore。
 func NewSQLiteMemoryStore(databasePath string) (*SQLiteMemoryStore, error) {
 	databasePath = strings.TrimSpace(databasePath)
 	if databasePath == "" {
@@ -57,6 +67,7 @@ func NewSQLiteMemoryStore(databasePath string) (*SQLiteMemoryStore, error) {
 	return store, nil
 }
 
+// SaveSummary 处理当前模块的相关逻辑。
 func (s *SQLiteMemoryStore) SaveSummary(ctx context.Context, summary MemorySummaryRecord) error {
 	if err := validateMemorySummaryRecord(summary); err != nil {
 		return err
@@ -79,6 +90,7 @@ func (s *SQLiteMemoryStore) SaveSummary(ctx context.Context, summary MemorySumma
 	return nil
 }
 
+// SearchSummaries 处理当前模块的相关逻辑。
 func (s *SQLiteMemoryStore) SearchSummaries(ctx context.Context, taskID, runID, query string, limit int) ([]MemoryRetrievalRecord, error) {
 	limit = normalizeMemoryLimit(limit)
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -141,6 +153,7 @@ func (s *SQLiteMemoryStore) SearchSummaries(ctx context.Context, taskID, runID, 
 	return hits, nil
 }
 
+// ListRecentSummaries 列出RecentSummaries。
 func (s *SQLiteMemoryStore) ListRecentSummaries(ctx context.Context, limit int) ([]MemorySummaryRecord, error) {
 	limit = normalizeMemoryLimit(limit)
 
@@ -172,6 +185,7 @@ func (s *SQLiteMemoryStore) ListRecentSummaries(ctx context.Context, limit int) 
 	return summaries, nil
 }
 
+// Close 处理当前模块的相关逻辑。
 func (s *SQLiteMemoryStore) Close() error {
 	if s.db == nil {
 		return nil
@@ -180,6 +194,7 @@ func (s *SQLiteMemoryStore) Close() error {
 	return s.db.Close()
 }
 
+// journalMode 处理当前模块的相关逻辑。
 func (s *SQLiteMemoryStore) journalMode(ctx context.Context) (string, error) {
 	var mode string
 	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode;`).Scan(&mode); err != nil {
@@ -189,6 +204,7 @@ func (s *SQLiteMemoryStore) journalMode(ctx context.Context) (string, error) {
 	return strings.ToLower(strings.TrimSpace(mode)), nil
 }
 
+// initialize 处理当前模块的相关逻辑。
 func (s *SQLiteMemoryStore) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode=WAL;`); err != nil {
 		return fmt.Errorf("enable sqlite wal mode: %w", err)
@@ -216,6 +232,7 @@ func (s *SQLiteMemoryStore) initialize(ctx context.Context) error {
 	return nil
 }
 
+// validateMemorySummaryRecord 处理当前模块的相关逻辑。
 func validateMemorySummaryRecord(summary MemorySummaryRecord) error {
 	if strings.TrimSpace(summary.MemorySummaryID) == "" {
 		return ErrMemorySummaryIDRequired

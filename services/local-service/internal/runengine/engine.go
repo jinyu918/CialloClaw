@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// TaskRecord 描述当前模块记录。
 type TaskRecord struct {
 	TaskID            string
 	SessionID         string
@@ -40,6 +41,7 @@ type TaskRecord struct {
 	CurrentStepStatus string
 }
 
+// TaskStepRecord 描述当前模块记录。
 type TaskStepRecord struct {
 	StepID        string
 	TaskID        string
@@ -50,12 +52,14 @@ type TaskStepRecord struct {
 	OutputSummary string
 }
 
+// NotificationRecord 描述当前模块记录。
 type NotificationRecord struct {
 	Method    string
 	Params    map[string]any
 	CreatedAt time.Time
 }
 
+// CreateTaskInput 定义当前模块的数据结构。
 type CreateTaskInput struct {
 	SessionID        string
 	Title            string
@@ -72,6 +76,7 @@ type CreateTaskInput struct {
 	Finished         bool
 }
 
+// InspectorConfig 描述当前模块配置。
 type InspectorConfig struct {
 	TaskSources          []string
 	InspectionInterval   map[string]any
@@ -81,6 +86,7 @@ type InspectorConfig struct {
 	RemindWhenStale      bool
 }
 
+// Engine 维护当前模块的运行状态。
 type Engine struct {
 	mu           sync.RWMutex
 	nextID       uint64
@@ -93,6 +99,7 @@ type Engine struct {
 	notepadItems []map[string]any
 }
 
+// NewEngine 创建并返回Engine。
 func NewEngine() *Engine {
 	engine := &Engine{
 		now:          time.Now,
@@ -124,6 +131,7 @@ func NewEngine() *Engine {
 	return engine
 }
 
+// CurrentState 处理当前模块的相关逻辑。
 func (e *Engine) CurrentState() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -135,6 +143,7 @@ func (e *Engine) CurrentState() string {
 	return e.tasks[e.taskOrder[0]].runStatus()
 }
 
+// CurrentTaskStatus 处理当前模块的相关逻辑。
 func (e *Engine) CurrentTaskStatus() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -146,6 +155,7 @@ func (e *Engine) CurrentTaskStatus() string {
 	return e.tasks[e.taskOrder[0]].Status
 }
 
+// CreateTask 创建Task。
 func (e *Engine) CreateTask(input CreateTaskInput) TaskRecord {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -200,6 +210,7 @@ func (e *Engine) CreateTask(input CreateTaskInput) TaskRecord {
 	return record.clone()
 }
 
+// GetTask 获取Task。
 func (e *Engine) GetTask(taskID string) (TaskRecord, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -212,6 +223,7 @@ func (e *Engine) GetTask(taskID string) (TaskRecord, bool) {
 	return record.clone(), true
 }
 
+// ListTasks 列出Tasks。
 func (e *Engine) ListTasks(group string, limit, offset int) ([]TaskRecord, int) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -242,6 +254,7 @@ func (e *Engine) ListTasks(group string, limit, offset int) ([]TaskRecord, int) 
 	return filtered[offset:end], total
 }
 
+// ConfirmTask 确认Task。
 func (e *Engine) ConfirmTask(taskID string, intent map[string]any, bubbleMessage map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -267,6 +280,7 @@ func (e *Engine) ConfirmTask(taskID string, intent map[string]any, bubbleMessage
 	return record.clone(), true
 }
 
+// SetPresentation 设置Presentation。
 func (e *Engine) SetPresentation(taskID string, bubbleMessage map[string]any, deliveryResult map[string]any, artifacts []map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -301,6 +315,7 @@ func (e *Engine) SetPresentation(taskID string, bubbleMessage map[string]any, de
 	return record.clone(), true
 }
 
+// CompleteTask 完成Task。
 func (e *Engine) CompleteTask(taskID string, deliveryResult map[string]any, bubbleMessage map[string]any, artifacts []map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -334,6 +349,7 @@ func (e *Engine) CompleteTask(taskID string, deliveryResult map[string]any, bubb
 	return record.clone(), true
 }
 
+// ControlTask 控制Task。
 func (e *Engine) ControlTask(taskID, action string, bubbleMessage map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -368,6 +384,7 @@ func (e *Engine) ControlTask(taskID, action string, bubbleMessage map[string]any
 	return record.clone(), true
 }
 
+// MarkWaitingApproval 处理当前模块的相关逻辑。
 func (e *Engine) MarkWaitingApproval(taskID string, approvalRequest map[string]any, bubbleMessage map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -407,6 +424,7 @@ func (e *Engine) MarkWaitingApproval(taskID string, approvalRequest map[string]a
 	return record.clone(), true
 }
 
+// ResolveAuthorization 处理Authorization。
 func (e *Engine) ResolveAuthorization(taskID string, authorization map[string]any, impactScope map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -427,6 +445,7 @@ func (e *Engine) ResolveAuthorization(taskID string, authorization map[string]an
 	return record.clone(), true
 }
 
+// SetMemoryPlans 设置MemoryPlans。
 func (e *Engine) SetMemoryPlans(taskID string, readPlans []map[string]any, writePlans []map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -445,6 +464,7 @@ func (e *Engine) SetMemoryPlans(taskID string, readPlans []map[string]any, write
 	return record.clone(), true
 }
 
+// SetDeliveryPlans 设置DeliveryPlans。
 func (e *Engine) SetDeliveryPlans(taskID string, storageWritePlan map[string]any, artifactPlans []map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -459,6 +479,7 @@ func (e *Engine) SetDeliveryPlans(taskID string, storageWritePlan map[string]any
 	return record.clone(), true
 }
 
+// PendingNotifications 返回待处理的Notifications。
 func (e *Engine) PendingNotifications(taskID string) ([]NotificationRecord, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -471,6 +492,7 @@ func (e *Engine) PendingNotifications(taskID string) ([]NotificationRecord, bool
 	return cloneNotifications(record.Notifications), true
 }
 
+// DrainNotifications 取出并清空Notifications。
 func (e *Engine) DrainNotifications(taskID string) ([]NotificationRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -485,6 +507,7 @@ func (e *Engine) DrainNotifications(taskID string) ([]NotificationRecord, bool) 
 	return notifications, true
 }
 
+// PendingApprovalRequests 返回待处理的ApprovalRequests。
 func (e *Engine) PendingApprovalRequests(limit, offset int) ([]map[string]any, int) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -511,10 +534,12 @@ func (e *Engine) PendingApprovalRequests(limit, offset int) ([]map[string]any, i
 	return items[offset:end], total
 }
 
+// TaskDetail 处理当前模块的相关逻辑。
 func (e *Engine) TaskDetail(taskID string) (TaskRecord, bool) {
 	return e.GetTask(taskID)
 }
 
+// InspectorConfig 处理当前模块的相关逻辑。
 func (e *Engine) InspectorConfig() map[string]any {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -529,6 +554,7 @@ func (e *Engine) InspectorConfig() map[string]any {
 	}
 }
 
+// UpdateInspectorConfig 更新InspectorConfig。
 func (e *Engine) UpdateInspectorConfig(values map[string]any) map[string]any {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -555,12 +581,14 @@ func (e *Engine) UpdateInspectorConfig(values map[string]any) map[string]any {
 	return e.InspectorConfig()
 }
 
+// Settings 设置tings。
 func (e *Engine) Settings() map[string]any {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return cloneMap(e.settings)
 }
 
+// UpdateSettings 更新Settings。
 func (e *Engine) UpdateSettings(values map[string]any) (map[string]any, []string, string, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -605,6 +633,7 @@ func (e *Engine) UpdateSettings(values map[string]any) (map[string]any, []string
 	return effectiveSettings, updatedKeys, applyMode, needRestart
 }
 
+// NotepadItems 处理当前模块的相关逻辑。
 func (e *Engine) NotepadItems(group string, limit, offset int) ([]map[string]any, int) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -632,6 +661,7 @@ func (e *Engine) NotepadItems(group string, limit, offset int) ([]map[string]any
 	return filtered[offset:end], total
 }
 
+// buildEvent 处理当前模块的相关逻辑。
 func (e *Engine) buildEvent(record *TaskRecord, eventType string) map[string]any {
 	return map[string]any{
 		"event_id":   e.nextIdentifier("evt"),
@@ -645,6 +675,7 @@ func (e *Engine) buildEvent(record *TaskRecord, eventType string) map[string]any
 	}
 }
 
+// buildToolCall 处理当前模块的相关逻辑。
 func (e *Engine) buildToolCall(record *TaskRecord, toolName string) map[string]any {
 	return map[string]any{
 		"tool_call_id": e.nextIdentifier("tool"),
@@ -660,11 +691,13 @@ func (e *Engine) buildToolCall(record *TaskRecord, toolName string) map[string]a
 	}
 }
 
+// nextIdentifier 处理当前模块的相关逻辑。
 func (e *Engine) nextIdentifier(prefix string) string {
 	e.nextID++
 	return fmt.Sprintf("%s_%03d", prefix, e.nextID)
 }
 
+// clone 处理当前模块的相关逻辑。
 func (r TaskRecord) clone() TaskRecord {
 	clone := r
 	clone.Intent = cloneMap(r.Intent)
@@ -691,6 +724,7 @@ func (r TaskRecord) clone() TaskRecord {
 	return clone
 }
 
+// queueNotification 处理当前模块的相关逻辑。
 func (r *TaskRecord) queueNotification(method string, params map[string]any) {
 	r.Notifications = append(r.Notifications, NotificationRecord{
 		Method:    method,
@@ -699,6 +733,7 @@ func (r *TaskRecord) queueNotification(method string, params map[string]any) {
 	})
 }
 
+// isFinished 处理当前模块的相关逻辑。
 func (r TaskRecord) isFinished() bool {
 	switch r.Status {
 	case "completed", "cancelled", "ended_unfinished", "failed":
@@ -708,6 +743,7 @@ func (r TaskRecord) isFinished() bool {
 	}
 }
 
+// runStatus 处理当前模块的相关逻辑。
 func (r TaskRecord) runStatus() string {
 	if r.Status == "completed" {
 		return "completed"
@@ -715,6 +751,7 @@ func (r TaskRecord) runStatus() string {
 	return "processing"
 }
 
+// cloneTimeline 处理当前模块的相关逻辑。
 func cloneTimeline(timeline []TaskStepRecord) []TaskStepRecord {
 	if len(timeline) == 0 {
 		return nil
@@ -725,6 +762,7 @@ func cloneTimeline(timeline []TaskStepRecord) []TaskStepRecord {
 	return result
 }
 
+// cloneMap 处理当前模块的相关逻辑。
 func cloneMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -747,6 +785,7 @@ func cloneMap(values map[string]any) map[string]any {
 	return result
 }
 
+// cloneMapSlice 处理当前模块的相关逻辑。
 func cloneMapSlice(values []map[string]any) []map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -759,6 +798,7 @@ func cloneMapSlice(values []map[string]any) []map[string]any {
 	return result
 }
 
+// cloneNotifications 处理当前模块的相关逻辑。
 func cloneNotifications(values []NotificationRecord) []NotificationRecord {
 	if len(values) == 0 {
 		return nil
@@ -776,6 +816,7 @@ func cloneNotifications(values []NotificationRecord) []NotificationRecord {
 	return result
 }
 
+// currentTimelineStatus 处理当前模块的相关逻辑。
 func currentTimelineStatus(timeline []TaskStepRecord) string {
 	if len(timeline) == 0 {
 		return "pending"
@@ -784,6 +825,7 @@ func currentTimelineStatus(timeline []TaskStepRecord) string {
 	return timeline[len(timeline)-1].Status
 }
 
+// advanceTimeline 处理当前模块的相关逻辑。
 func advanceTimeline(timeline []TaskStepRecord, stepName, status, outputSummary string) []TaskStepRecord {
 	if len(timeline) == 0 {
 		return []TaskStepRecord{{
@@ -817,6 +859,7 @@ func advanceTimeline(timeline []TaskStepRecord, stepName, status, outputSummary 
 	return updated
 }
 
+// buildSecuritySummary 处理当前模块的相关逻辑。
 func buildSecuritySummary(riskLevel string, latestRestorePoint map[string]any) map[string]any {
 	return map[string]any{
 		"security_status":        "normal",
@@ -826,6 +869,7 @@ func buildSecuritySummary(riskLevel string, latestRestorePoint map[string]any) m
 	}
 }
 
+// buildRecoveryPoint 处理当前模块的相关逻辑。
 func buildRecoveryPoint(taskID string, createdAt time.Time) map[string]any {
 	return map[string]any{
 		"recovery_point_id": fmt.Sprintf("rp_%d", createdAt.UnixNano()),
@@ -836,6 +880,7 @@ func buildRecoveryPoint(taskID string, createdAt time.Time) map[string]any {
 	}
 }
 
+// timelineCurrentStepID 处理当前模块的相关逻辑。
 func timelineCurrentStepID(timeline []TaskStepRecord) any {
 	if len(timeline) == 0 {
 		return nil
@@ -844,6 +889,7 @@ func timelineCurrentStepID(timeline []TaskStepRecord) any {
 	return timeline[len(timeline)-1].StepID
 }
 
+// firstNonEmpty 处理当前模块的相关逻辑。
 func firstNonEmpty(primary, fallback string) string {
 	if primary != "" {
 		return primary
@@ -851,6 +897,7 @@ func firstNonEmpty(primary, fallback string) string {
 	return fallback
 }
 
+// stringSlice 处理当前模块的相关逻辑。
 func stringSlice(rawValue any) []string {
 	values, ok := rawValue.([]string)
 	if ok {
@@ -872,6 +919,7 @@ func stringSlice(rawValue any) []string {
 	return result
 }
 
+// mergeMaps 处理当前模块的相关逻辑。
 func mergeMaps(target map[string]any, patch map[string]any) {
 	for key, value := range patch {
 		patchMap, ok := value.(map[string]any)
@@ -888,6 +936,7 @@ func mergeMaps(target map[string]any, patch map[string]any) {
 	}
 }
 
+// buildDefaultSettings 处理当前模块的相关逻辑。
 func buildDefaultSettings() map[string]any {
 	return map[string]any{
 		"general": map[string]any{

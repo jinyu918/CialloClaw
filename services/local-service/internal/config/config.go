@@ -1,18 +1,21 @@
 // 该文件负责本地服务配置结构与默认值。
 package config
 
+// ModelConfig 描述当前模块配置。
 type ModelConfig struct {
 	Provider string
 	ModelID  string
 	Endpoint string
 }
 
+// RPCConfig 描述当前模块配置。
 type RPCConfig struct {
 	Transport        string
 	NamedPipeName    string
 	DebugHTTPAddress string
 }
 
+// Config 描述当前模块配置。
 type Config struct {
 	RPC           RPCConfig
 	WorkspaceRoot string
@@ -20,6 +23,7 @@ type Config struct {
 	Model         ModelConfig
 }
 
+// Load 加载当前能力。
 func Load() Config {
 	return Config{
 		RPC: RPCConfig{

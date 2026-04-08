@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestEnsureWithinWorkspace 验证EnsureWithinWorkspace。
 func TestEnsureWithinWorkspace(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	policy, err := NewLocalPathPolicy(workspaceRoot)

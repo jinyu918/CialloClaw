@@ -22,10 +22,12 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
+// App 定义当前模块的数据结构。
 type App struct {
 	server *rpc.Server
 }
 
+// New 创建并返回当前能力。
 func New(cfg config.Config) (*App, error) {
 	pathPolicy, err := platform.NewLocalPathPolicy(cfg.WorkspaceRoot)
 	if err != nil {
@@ -53,6 +55,7 @@ func New(cfg config.Config) (*App, error) {
 	return &App{server: rpc.NewServer(cfg.RPC, orchestratorService)}, nil
 }
 
+// Start 启动当前能力。
 func (a *App) Start(ctx context.Context) error {
 	return a.server.Start(ctx)
 }
