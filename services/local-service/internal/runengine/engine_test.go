@@ -1,3 +1,4 @@
+// 该测试文件验证运行时状态机与通知队列行为。
 package runengine
 
 import (
@@ -5,6 +6,7 @@ import (
 	"time"
 )
 
+// TestEngineTaskLifecycle 验证EngineTaskLifecycle。
 func TestEngineTaskLifecycle(t *testing.T) {
 	engine := NewEngine()
 	fixedTime := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
@@ -74,6 +76,7 @@ func TestEngineTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestEngineAuthorizationAndHandoffState 验证EngineAuthorizationAndHandoffState。
 func TestEngineAuthorizationAndHandoffState(t *testing.T) {
 	engine := NewEngine()
 	task := engine.CreateTask(CreateTaskInput{

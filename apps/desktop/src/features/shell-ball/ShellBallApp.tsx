@@ -1,3 +1,4 @@
+// 该文件承载悬浮球近场承接相关的界面逻辑。
 import { Sparkles, WandSparkles } from "lucide-react";
 import { StatusBadge, PanelSurface } from "@cialloclaw/ui";
 import { useTaskStream } from "@/hooks/useTaskStream";
@@ -5,6 +6,7 @@ import { useShellBallStore } from "@/stores/shellBallStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { formatStatusLabel } from "@/utils/formatters";
 
+// ShellBallApp 处理当前模块的相关逻辑。
 export function ShellBallApp() {
   const activeTaskId = useTaskStore((state) => state.activeTaskId);
   const activeTask = useTaskStore((state) => state.tasks.find((task) => task.task_id === state.activeTaskId) ?? null);

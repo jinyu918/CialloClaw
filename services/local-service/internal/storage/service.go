@@ -1,3 +1,4 @@
+// 该文件负责存储层的数据接口或落盘实现。
 package storage
 
 import (
@@ -8,15 +9,22 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/platform"
 )
 
+// backendName 定义当前模块的基础变量。
 const backendName = "sqlite_wal"
 
+// ErrAdapterNotConfigured 定义当前模块的基础变量。
 var ErrAdapterNotConfigured = errors.New("storage adapter not configured")
+// ErrDatabasePathRequired 定义当前模块的基础变量。
 var ErrDatabasePathRequired = errors.New("storage database path is required")
+// ErrStructuredStoreUnavailable 定义当前模块的基础变量。
 var ErrStructuredStoreUnavailable = errors.New("storage structured store unavailable")
 
+// memoryStoreBackendInMemory 定义当前模块的基础变量。
 const memoryStoreBackendInMemory = "in_memory"
+// memoryStoreBackendSQLite 定义当前模块的基础变量。
 const memoryStoreBackendSQLite = "sqlite_wal"
 
+// Descriptor 定义当前模块的数据结构。
 type Descriptor struct {
 	Backend      string
 	DatabasePath string
@@ -24,6 +32,7 @@ type Descriptor struct {
 	StoreReady   bool
 }
 
+// Service 提供当前模块的服务能力。
 type Service struct {
 	adapter         platform.StorageAdapter
 	memoryStore     MemoryStore
@@ -32,6 +41,7 @@ type Service struct {
 	fallbackActive  bool
 }
 
+// NewService 创建并返回Service。
 func NewService(adapter platform.StorageAdapter) *Service {
 	memoryStore := MemoryStore(NewInMemoryMemoryStore())
 	memoryStoreName := memoryStoreBackendInMemory
@@ -61,10 +71,12 @@ func NewService(adapter platform.StorageAdapter) *Service {
 	}
 }
 
+// Backend 处理当前模块的相关逻辑。
 func (s *Service) Backend() string {
 	return backendName
 }
 
+// DatabasePath 处理当前模块的相关逻辑。
 func (s *Service) DatabasePath() string {
 	if s.adapter == nil {
 		return ""
@@ -73,10 +85,12 @@ func (s *Service) DatabasePath() string {
 	return strings.TrimSpace(s.adapter.DatabasePath())
 }
 
+// Configured 处理当前模块的相关逻辑。
 func (s *Service) Configured() bool {
 	return s.adapter != nil && s.DatabasePath() != ""
 }
 
+// Validate 处理当前模块的相关逻辑。
 func (s *Service) Validate() error {
 	if s.adapter == nil {
 		return ErrAdapterNotConfigured
@@ -93,6 +107,7 @@ func (s *Service) Validate() error {
 	return nil
 }
 
+// Descriptor 处理当前模块的相关逻辑。
 func (s *Service) Descriptor() Descriptor {
 	return Descriptor{
 		Backend:      s.Backend(),
@@ -102,6 +117,7 @@ func (s *Service) Descriptor() Descriptor {
 	}
 }
 
+// Capabilities 处理当前模块的相关逻辑。
 func (s *Service) Capabilities() CapabilitySnapshot {
 	configured := s.Configured()
 	structuredReady := configured && s.storeInitErr == nil && s.memoryStoreName == memoryStoreBackendSQLite
@@ -118,10 +134,12 @@ func (s *Service) Capabilities() CapabilitySnapshot {
 	}
 }
 
+// MemoryStore 处理当前模块的相关逻辑。
 func (s *Service) MemoryStore() MemoryStore {
 	return s.memoryStore
 }
 
+// Close 处理当前模块的相关逻辑。
 func (s *Service) Close() error {
 	if closer, ok := s.memoryStore.(interface{ Close() error }); ok {
 		return closer.Close()

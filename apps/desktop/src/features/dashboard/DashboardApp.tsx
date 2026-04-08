@@ -1,9 +1,11 @@
+// 该文件承载仪表盘任务工作台相关的界面逻辑。
 import { ShieldCheck, Workflow } from "lucide-react";
 import { PanelSurface, StatusBadge } from "@cialloclaw/ui";
 import { MetricCard } from "@/components/MetricCard";
 import { mapTaskToDetailViewModel } from "@/models/TaskDetailViewModel";
 import { useTaskStore } from "@/stores/taskStore";
 
+// DashboardApp 处理当前模块的相关逻辑。
 export function DashboardApp() {
   const tasks = useTaskStore((state) => state.tasks).map(mapTaskToDetailViewModel);
 

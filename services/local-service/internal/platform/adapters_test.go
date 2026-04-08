@@ -1,3 +1,4 @@
+// 该测试文件验证平台抽象层行为。
 package platform
 
 import (
@@ -5,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestEnsureWithinWorkspace 验证EnsureWithinWorkspace。
 func TestEnsureWithinWorkspace(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	policy, err := NewLocalPathPolicy(workspaceRoot)

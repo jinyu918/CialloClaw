@@ -1,3 +1,4 @@
+// 该文件负责 JSON-RPC 协议结构、解析与响应封装。
 package rpc
 
 import (
@@ -11,6 +12,7 @@ const (
 	errMethodNotFound = 1002005
 )
 
+// requestEnvelope 定义当前模块的数据结构。
 type requestEnvelope struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
@@ -18,27 +20,32 @@ type requestEnvelope struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
+// responseMeta 定义当前模块的数据结构。
 type responseMeta struct {
 	ServerTime string `json:"server_time"`
 }
 
+// resultEnvelope 定义当前模块的数据结构。
 type resultEnvelope struct {
 	Data     any          `json:"data"`
 	Meta     responseMeta `json:"meta"`
 	Warnings []string     `json:"warnings"`
 }
 
+// successEnvelope 定义当前模块的数据结构。
 type successEnvelope struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  resultEnvelope  `json:"result"`
 }
 
+// errorData 定义当前模块的数据结构。
 type errorData struct {
 	TraceID string `json:"trace_id,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 }
 
+// errorEnvelope 定义当前模块的数据结构。
 type errorEnvelope struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
@@ -49,12 +56,14 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
+// notificationEnvelope 定义当前模块的数据结构。
 type notificationEnvelope struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`
 	Params  any    `json:"params"`
 }
 
+// rpcError 定义当前模块的数据结构。
 type rpcError struct {
 	Code    int
 	Message string
@@ -64,6 +73,7 @@ type rpcError struct {
 
 type methodHandler func(params map[string]any) (any, *rpcError)
 
+// decodeRequest 处理当前模块的相关逻辑。
 func decodeRequest(reader io.Reader) (requestEnvelope, *rpcError) {
 	var request requestEnvelope
 	decoder := json.NewDecoder(reader)
@@ -79,6 +89,7 @@ func decodeRequest(reader io.Reader) (requestEnvelope, *rpcError) {
 	return request, nil
 }
 
+// decodeParams 处理当前模块的相关逻辑。
 func decodeParams(raw json.RawMessage) (map[string]any, *rpcError) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -98,6 +109,7 @@ func decodeParams(raw json.RawMessage) (map[string]any, *rpcError) {
 	return params, nil
 }
 
+// newSuccessEnvelope 处理当前模块的相关逻辑。
 func newSuccessEnvelope(id json.RawMessage, data any, serverTime string) successEnvelope {
 	return successEnvelope{
 		JSONRPC: "2.0",
@@ -112,6 +124,7 @@ func newSuccessEnvelope(id json.RawMessage, data any, serverTime string) success
 	}
 }
 
+// newErrorEnvelope 处理当前模块的相关逻辑。
 func newErrorEnvelope(id json.RawMessage, rpcErr *rpcError) errorEnvelope {
 	var envelope errorEnvelope
 	envelope.JSONRPC = "2.0"
@@ -125,6 +138,7 @@ func newErrorEnvelope(id json.RawMessage, rpcErr *rpcError) errorEnvelope {
 	return envelope
 }
 
+// newNotificationEnvelope 处理当前模块的相关逻辑。
 func newNotificationEnvelope(method string, params any) notificationEnvelope {
 	return notificationEnvelope{
 		JSONRPC: "2.0",
@@ -133,6 +147,7 @@ func newNotificationEnvelope(method string, params any) notificationEnvelope {
 	}
 }
 
+// normalizeID 处理当前模块的相关逻辑。
 func normalizeID(id json.RawMessage) json.RawMessage {
 	trimmed := bytes.TrimSpace(id)
 	if len(trimmed) == 0 {
@@ -142,6 +157,7 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 	return trimmed
 }
 
+// traceIDFromRequest 处理当前模块的相关逻辑。
 func traceIDFromRequest(raw json.RawMessage) string {
 	params, err := decodeParams(raw)
 	if err != nil {
@@ -151,11 +167,13 @@ func traceIDFromRequest(raw json.RawMessage) string {
 	return requestTraceID(params)
 }
 
+// requestTraceID 处理当前模块的相关逻辑。
 func requestTraceID(params map[string]any) string {
 	requestMeta := mapValue(params, "request_meta")
 	return stringValue(requestMeta, "trace_id", "trace_rpc_unknown")
 }
 
+// mapValue 处理当前模块的相关逻辑。
 func mapValue(values map[string]any, key string) map[string]any {
 	rawValue, ok := values[key]
 	if !ok {
@@ -170,6 +188,7 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return value
 }
 
+// stringValue 处理当前模块的相关逻辑。
 func stringValue(values map[string]any, key, fallback string) string {
 	rawValue, ok := values[key]
 	if !ok {
@@ -184,6 +203,7 @@ func stringValue(values map[string]any, key, fallback string) string {
 	return value
 }
 
+// boolValue 处理当前模块的相关逻辑。
 func boolValue(values map[string]any, key string, fallback bool) bool {
 	rawValue, ok := values[key]
 	if !ok {
@@ -198,6 +218,7 @@ func boolValue(values map[string]any, key string, fallback bool) bool {
 	return value
 }
 
+// intValue 处理当前模块的相关逻辑。
 func intValue(values map[string]any, key string, fallback int) int {
 	rawValue, ok := values[key]
 	if !ok {
@@ -212,6 +233,7 @@ func intValue(values map[string]any, key string, fallback int) int {
 	return int(value)
 }
 
+// stringSliceValue 处理当前模块的相关逻辑。
 func stringSliceValue(rawValue any) []string {
 	values, ok := rawValue.([]any)
 	if !ok {

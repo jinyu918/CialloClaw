@@ -1,3 +1,4 @@
+// 该文件负责 JSON-RPC 服务端、调试 HTTP 和事件流入口。
 package rpc
 
 import (
@@ -15,6 +16,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/orchestrator"
 )
 
+// Server 定义当前模块的数据结构。
 type Server struct {
 	transport       string
 	namedPipeName   string
@@ -24,6 +26,7 @@ type Server struct {
 	now             func() time.Time
 }
 
+// NewServer 创建并返回Server。
 func NewServer(cfg serviceconfig.RPCConfig, orchestrator *orchestrator.Service) *Server {
 	server := &Server{
 		transport:     cfg.Transport,
@@ -49,6 +52,7 @@ func NewServer(cfg serviceconfig.RPCConfig, orchestrator *orchestrator.Service) 
 	return server
 }
 
+// Start 启动当前能力。
 func (s *Server) Start(ctx context.Context) error {
 	errCh := make(chan error, 2)
 
@@ -80,6 +84,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+// Shutdown 关闭当前能力。
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.debugHTTPServer == nil {
 		return nil
@@ -92,6 +97,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// handleHealthz 处理当前模块的相关逻辑。
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -103,6 +109,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHTTPRPC 处理当前模块的相关逻辑。
 func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -124,6 +131,7 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// handleDebugEvents 处理当前模块的相关逻辑。
 func (s *Server) handleDebugEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -151,6 +159,7 @@ func (s *Server) handleDebugEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleDebugEventStream 处理当前模块的相关逻辑。
 func (s *Server) handleDebugEventStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -201,6 +210,7 @@ func (s *Server) handleDebugEventStream(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// handleStreamConn 处理当前模块的相关逻辑。
 func (s *Server) handleStreamConn(conn net.Conn) {
 	defer conn.Close()
 
@@ -245,6 +255,7 @@ func (s *Server) handleStreamConn(conn net.Conn) {
 	}
 }
 
+// dispatch 处理当前模块的相关逻辑。
 func (s *Server) dispatch(request requestEnvelope) any {
 	if request.JSONRPC != "2.0" {
 		return newErrorEnvelope(request.ID, &rpcError{
@@ -278,10 +289,12 @@ func (s *Server) dispatch(request requestEnvelope) any {
 	return newSuccessEnvelope(request.ID, data, s.nowRFC3339())
 }
 
+// nowRFC3339 处理当前模块的相关逻辑。
 func (s *Server) nowRFC3339() string {
 	return s.now().Format(time.RFC3339)
 }
 
+// taskIDsFromResponse 处理当前模块的相关逻辑。
 func taskIDsFromResponse(response any) []string {
 	success, ok := response.(successEnvelope)
 	if !ok {
@@ -299,6 +312,7 @@ func taskIDsFromResponse(response any) []string {
 	return result
 }
 
+// collectTaskIDs 处理当前模块的相关逻辑。
 func collectTaskIDs(rawValue any, ids map[string]struct{}) {
 	switch value := rawValue.(type) {
 	case map[string]any:
@@ -321,6 +335,7 @@ func collectTaskIDs(rawValue any, ids map[string]struct{}) {
 	}
 }
 
+// marshalSSEData 处理当前模块的相关逻辑。
 func marshalSSEData(value any) string {
 	encoded, err := json.Marshal(value)
 	if err != nil {

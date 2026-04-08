@@ -1,5 +1,7 @@
+// 该文件负责主链路输入上下文的采集与归一化。
 package context
 
+// TaskContextSnapshot 定义当前模块的数据结构。
 type TaskContextSnapshot struct {
 	Source        string
 	Trigger       string
@@ -14,16 +16,20 @@ type TaskContextSnapshot struct {
 	AppName       string
 }
 
+// Service 提供当前模块的服务能力。
 type Service struct{}
 
+// NewService 创建并返回Service。
 func NewService() *Service {
 	return &Service{}
 }
 
+// Snapshot 处理当前模块的相关逻辑。
 func (s *Service) Snapshot() map[string]string {
 	return map[string]string{"source": "desktop"}
 }
 
+// Capture 处理当前模块的相关逻辑。
 func (s *Service) Capture(params map[string]any) TaskContextSnapshot {
 	input := mapValue(params, "input")
 	contextValue := mapValue(params, "context")
@@ -58,6 +64,7 @@ func (s *Service) Capture(params map[string]any) TaskContextSnapshot {
 	}
 }
 
+// mapValue 处理当前模块的相关逻辑。
 func mapValue(values map[string]any, key string) map[string]any {
 	rawValue, ok := values[key]
 	if !ok {
@@ -72,6 +79,7 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return value
 }
 
+// stringValue 处理当前模块的相关逻辑。
 func stringValue(values map[string]any, key string) string {
 	rawValue, ok := values[key]
 	if !ok {
@@ -86,6 +94,7 @@ func stringValue(values map[string]any, key string) string {
 	return value
 }
 
+// stringSliceValue 处理当前模块的相关逻辑。
 func stringSliceValue(rawValue any) []string {
 	values, ok := rawValue.([]any)
 	if !ok {

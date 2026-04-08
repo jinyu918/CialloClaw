@@ -1,3 +1,4 @@
+// 该测试文件验证主链路编排与对接点行为。
 package orchestrator
 
 import (
@@ -15,6 +16,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
+// TestServiceStartTaskAndConfirmFlow 验证ServiceStartTaskAndConfirmFlow。
 func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -61,6 +63,7 @@ func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 	}
 }
 
+// TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs 验证ServiceDirectStartBuildsMemoryAndDeliveryHandoffs。
 func TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -121,6 +124,7 @@ func TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs(t *testing.T) {
 	}
 }
 
+// TestServiceConfirmCanEnterWaitingAuth 验证ServiceConfirmCanEnterWaitingAuth。
 func TestServiceConfirmCanEnterWaitingAuth(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -183,6 +187,7 @@ func TestServiceConfirmCanEnterWaitingAuth(t *testing.T) {
 	}
 }
 
+// modelConfig 处理当前模块的相关逻辑。
 func modelConfig() serviceconfig.ModelConfig {
 	return serviceconfig.ModelConfig{
 		Provider: "openai_responses",

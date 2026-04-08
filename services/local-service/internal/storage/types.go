@@ -1,7 +1,9 @@
+// 该文件负责存储层的数据接口或落盘实现。
 package storage
 
 import "context"
 
+// CapabilitySnapshot 定义当前模块的数据结构。
 type CapabilitySnapshot struct {
 	Backend                string
 	Configured             bool
@@ -13,6 +15,7 @@ type CapabilitySnapshot struct {
 	FallbackActive         bool
 }
 
+// MemorySummaryRecord 描述当前模块记录。
 type MemorySummaryRecord struct {
 	MemorySummaryID string
 	TaskID          string
@@ -21,6 +24,7 @@ type MemorySummaryRecord struct {
 	CreatedAt       string
 }
 
+// MemoryRetrievalRecord 描述当前模块记录。
 type MemoryRetrievalRecord struct {
 	RetrievalHitID string
 	TaskID         string
@@ -31,6 +35,7 @@ type MemoryRetrievalRecord struct {
 	Summary        string
 }
 
+// MemoryStore 定义当前模块的接口约束。
 type MemoryStore interface {
 	SaveSummary(ctx context.Context, summary MemorySummaryRecord) error
 	SearchSummaries(ctx context.Context, taskID, runID, query string, limit int) ([]MemoryRetrievalRecord, error)
