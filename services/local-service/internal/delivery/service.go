@@ -3,9 +3,12 @@ package delivery
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 )
+
+const defaultWorkspaceRoot = "workspace"
 
 // StorageWritePlan 定义当前模块的数据结构。
 type StorageWritePlan struct {
@@ -69,7 +72,7 @@ func (s *Service) BuildDeliveryResult(taskID, deliveryType, title, previewText s
 	}
 
 	if deliveryType == "workspace_document" {
-		payload["path"] = fmt.Sprintf("D:/CialloClawWorkspace/%s.md", slugify(title, taskID))
+		payload["path"] = path.Join(defaultWorkspaceRoot, fmt.Sprintf("%s.md", slugify(title, taskID)))
 	}
 
 	return map[string]any{

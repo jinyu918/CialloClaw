@@ -16,6 +16,9 @@ func TestBuildStorageAndArtifactPlans(t *testing.T) {
 	if storagePlan["target_path"] == nil {
 		t.Fatal("expected storage write plan to carry a target path")
 	}
+	if storagePlan["target_path"] != "workspace/测试摘要.md" {
+		t.Fatalf("expected storage write plan to use workspace-relative target path, got %v", storagePlan["target_path"])
+	}
 
 	artifactPlans := service.BuildArtifactPersistPlans("task_001", artifacts)
 	if len(artifactPlans) != 1 {
