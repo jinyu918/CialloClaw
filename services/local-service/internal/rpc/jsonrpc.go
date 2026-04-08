@@ -49,6 +49,12 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
+type notificationEnvelope struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
+}
+
 type rpcError struct {
 	Code    int
 	Message string
@@ -117,6 +123,14 @@ func newErrorEnvelope(id json.RawMessage, rpcErr *rpcError) errorEnvelope {
 		Detail:  rpcErr.Detail,
 	}
 	return envelope
+}
+
+func newNotificationEnvelope(method string, params any) notificationEnvelope {
+	return notificationEnvelope{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}
 }
 
 func normalizeID(id json.RawMessage) json.RawMessage {
