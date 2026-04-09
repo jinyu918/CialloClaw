@@ -599,8 +599,8 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 
 	return map[string]any{
 		"authorization_record": authorizationRecord,
-		"task":                 taskMap(processingTask),
-		"bubble_message":       resumeBubble,
+		"task":                 taskMap(updatedTask),
+		"bubble_message":       resultBubble,
 		"impact_scope":         impactScope,
 	}, nil
 }

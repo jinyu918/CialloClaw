@@ -328,8 +328,12 @@ func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
 	}
 
 	responseTask := respondResult["task"].(map[string]any)
-	if responseTask["status"] != "processing" {
-		t.Fatalf("expected response task to reflect resumed processing, got %v", responseTask["status"])
+	if responseTask["status"] != "completed" {
+		t.Fatalf("expected response task to reflect finalized completion, got %v", responseTask["status"])
+	}
+	responseBubble := respondResult["bubble_message"].(map[string]any)
+	if responseBubble["type"] != "result" {
+		t.Fatalf("expected security respond to return the final result bubble, got %v", responseBubble["type"])
 	}
 	impactScope := respondResult["impact_scope"].(map[string]any)
 	files := impactScope["files"].([]string)
