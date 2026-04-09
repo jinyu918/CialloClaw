@@ -17,6 +17,20 @@ import (
 )
 
 // TestServiceStartTaskAndConfirmFlow 验证确认后的普通任务会继续执行并完成交付。
+func newTestService() *Service {
+	return NewService(
+		contextsvc.NewService(),
+		intent.NewService(),
+		runengine.NewEngine(),
+		delivery.NewService(),
+		memory.NewService(),
+		risk.NewService(),
+		model.NewService(modelConfig()),
+		tools.NewRegistry(),
+		plugin.NewService(),
+	)
+}
+
 func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -211,6 +225,150 @@ func TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs(t *testing.T) {
 }
 
 // TestServiceStartTaskWaitingAuthDoesNotSetFinishedAt 验证等待授权前不会提前写入 finished_at。
+func TestServiceStartTaskRespectsPreferredDelivery(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_demo",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "direct summarize with bubble delivery",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+		"delivery": map[string]any{
+			"preferred": "bubble",
+			"fallback":  "workspace_document",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	deliveryResult, ok := startResult["delivery_result"].(map[string]any)
+	if !ok {
+		t.Fatal("expected direct start to return delivery_result")
+	}
+	if deliveryResult["type"] != "bubble" {
+		t.Fatalf("expected preferred bubble delivery, got %v", deliveryResult["type"])
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected direct start task to exist in runtime")
+	}
+	if record.PreferredDelivery != "bubble" {
+		t.Fatalf("expected runtime task to persist preferred delivery, got %q", record.PreferredDelivery)
+	}
+	if record.FallbackDelivery != "workspace_document" {
+		t.Fatalf("expected runtime task to persist fallback delivery, got %q", record.FallbackDelivery)
+	}
+	if record.StorageWritePlan != nil || len(record.ArtifactPlans) != 0 {
+		t.Fatal("expected bubble delivery not to create document persistence plans")
+	}
+}
+
+func TestServiceSubmitInputRespectsPreferredDelivery(t *testing.T) {
+	service := newTestService()
+
+	result, err := service.SubmitInput(map[string]any{
+		"session_id": "sess_demo",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "translate this line",
+		},
+		"options": map[string]any{
+			"confirm_required":   false,
+			"preferred_delivery": "workspace_document",
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit input failed: %v", err)
+	}
+
+	deliveryResult, ok := result["delivery_result"].(map[string]any)
+	if !ok {
+		t.Fatal("expected submit input to return delivery_result")
+	}
+	if deliveryResult["type"] != "workspace_document" {
+		t.Fatalf("expected preferred workspace_document delivery, got %v", deliveryResult["type"])
+	}
+
+	payload, ok := deliveryResult["payload"].(map[string]any)
+	if !ok {
+		t.Fatal("expected delivery_result payload")
+	}
+	if payload["path"] == nil {
+		t.Fatal("expected workspace_document delivery to include payload path")
+	}
+
+	taskID := result["task"].(map[string]any)["task_id"].(string)
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected submit input task to exist in runtime")
+	}
+	if record.PreferredDelivery != "workspace_document" {
+		t.Fatalf("expected runtime task to persist preferred delivery, got %q", record.PreferredDelivery)
+	}
+}
+
+func TestServiceConfirmTaskRespectsStoredPreferredDelivery(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_demo",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "selected text for confirmation flow",
+		},
+		"delivery": map[string]any{
+			"preferred": "workspace_document",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	confirmResult, err := service.ConfirmTask(map[string]any{
+		"task_id":   taskID,
+		"confirmed": true,
+	})
+	if err != nil {
+		t.Fatalf("confirm task failed: %v", err)
+	}
+
+	deliveryResult, ok := confirmResult["delivery_result"].(map[string]any)
+	if !ok {
+		t.Fatal("expected confirm flow to return delivery_result")
+	}
+	if deliveryResult["type"] != "workspace_document" {
+		t.Fatalf("expected stored preferred workspace_document delivery, got %v", deliveryResult["type"])
+	}
+
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected confirmed task to exist in runtime")
+	}
+	if record.PreferredDelivery != "workspace_document" {
+		t.Fatalf("expected runtime task to keep preferred delivery, got %q", record.PreferredDelivery)
+	}
+	if record.DeliveryResult["type"] != "workspace_document" {
+		t.Fatalf("expected runtime delivery result to use workspace_document, got %v", record.DeliveryResult["type"])
+	}
+}
+
 func TestServiceStartTaskWaitingAuthDoesNotSetFinishedAt(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -438,6 +596,63 @@ func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
 }
 
 // TestServiceSecurityRespondDenyOnceCancelsTask 验证拒绝授权后任务会结束。
+func TestServiceSecurityRespondRespectsFallbackDelivery(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_demo",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "authorization flow with delivery fallback",
+		},
+		"delivery": map[string]any{
+			"preferred": "unsupported_delivery",
+			"fallback":  "bubble",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	_, err = service.ConfirmTask(map[string]any{
+		"task_id": taskID,
+		"corrected_intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style":                 "key_points",
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm task failed: %v", err)
+	}
+
+	_, err = service.SecurityRespond(map[string]any{
+		"task_id":       taskID,
+		"approval_id":   "appr_001",
+		"decision":      "allow_once",
+		"remember_rule": false,
+	})
+	if err != nil {
+		t.Fatalf("security respond failed: %v", err)
+	}
+
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected task to exist in runtime after authorization")
+	}
+	if record.DeliveryResult["type"] != "bubble" {
+		t.Fatalf("expected fallback bubble delivery after authorization, got %v", record.DeliveryResult["type"])
+	}
+	if record.StorageWritePlan != nil || len(record.ArtifactPlans) != 0 {
+		t.Fatal("expected bubble fallback delivery not to create document persistence plans")
+	}
+}
+
 func TestServiceSecurityRespondDenyOnceCancelsTask(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
