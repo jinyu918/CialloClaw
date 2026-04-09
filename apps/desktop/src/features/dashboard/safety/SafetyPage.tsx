@@ -1,5 +1,11 @@
-import { DashboardPlaceholderPage } from "@/features/dashboard/shared/DashboardPlaceholderPage";
+import { DashboardBackHomeLink } from "@/features/dashboard/shared/DashboardBackHomeLink";
+import { SecurityPageShell } from "./SecurityPageShell";
 
 export function SafetyPage() {
-  return <DashboardPlaceholderPage route="safety" />;
+  return (
+    <>
+      <DashboardBackHomeLink />
+      <SecurityPageShell />
+    </>
+  );
 }

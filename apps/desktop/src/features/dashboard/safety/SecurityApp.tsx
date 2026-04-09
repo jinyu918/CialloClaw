@@ -33,7 +33,7 @@ import {
   respondToApproval,
   type SecurityModuleData,
   type SecurityModuleSource,
-} from "@/services/securityService";
+} from "./securityService";
 import { openWindow } from "@/platform/windowController";
 
 type SecurityCardKey = "status" | "restore" | "budget" | "governance" | `approval:${string}`;

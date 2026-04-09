@@ -1,5 +1,11 @@
-import { DashboardPlaceholderPage } from "@/features/dashboard/shared/DashboardPlaceholderPage";
+import { DashboardBackHomeLink } from "@/features/dashboard/shared/DashboardBackHomeLink";
+import { MirrorApp } from "./MirrorApp";
 
 export function MemoryPage() {
-  return <DashboardPlaceholderPage route="memory" />;
+  return (
+    <>
+      <DashboardBackHomeLink />
+      <MirrorApp />
+    </>
+  );
 }
