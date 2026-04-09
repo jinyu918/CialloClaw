@@ -1,3 +1,4 @@
+// 该测试文件验证存储层的数据行为。
 package storage
 
 import (
@@ -7,14 +8,17 @@ import (
 	"testing"
 )
 
+// stubAdapter 定义当前模块的数据结构。
 type stubAdapter struct {
 	databasePath string
 }
 
+// DatabasePath 处理当前模块的相关逻辑。
 func (s stubAdapter) DatabasePath() string {
 	return s.databasePath
 }
 
+// TestBackendReturnsSQLiteWAL 验证BackendReturnsSQLiteWAL。
 func TestBackendReturnsSQLiteWAL(t *testing.T) {
 	service := NewService(nil)
 
@@ -23,6 +27,7 @@ func TestBackendReturnsSQLiteWAL(t *testing.T) {
 	}
 }
 
+// TestDatabasePathReturnsEmptyWhenAdapterMissing 验证DatabasePathReturnsEmptyWhenAdapterMissing。
 func TestDatabasePathReturnsEmptyWhenAdapterMissing(t *testing.T) {
 	service := NewService(nil)
 
@@ -31,6 +36,7 @@ func TestDatabasePathReturnsEmptyWhenAdapterMissing(t *testing.T) {
 	}
 }
 
+// TestDatabasePathTrimsWhitespace 验证DatabasePathTrimsWhitespace。
 func TestDatabasePathTrimsWhitespace(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "  D:/CialloClaw/data.db  "})
 
@@ -39,6 +45,7 @@ func TestDatabasePathTrimsWhitespace(t *testing.T) {
 	}
 }
 
+// TestConfiguredReturnsFalseWhenAdapterMissing 验证ConfiguredReturnsFalseWhenAdapterMissing。
 func TestConfiguredReturnsFalseWhenAdapterMissing(t *testing.T) {
 	service := NewService(nil)
 
@@ -47,6 +54,7 @@ func TestConfiguredReturnsFalseWhenAdapterMissing(t *testing.T) {
 	}
 }
 
+// TestConfiguredReturnsFalseWhenPathEmpty 验证ConfiguredReturnsFalseWhenPathEmpty。
 func TestConfiguredReturnsFalseWhenPathEmpty(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "   "})
 
@@ -55,6 +63,7 @@ func TestConfiguredReturnsFalseWhenPathEmpty(t *testing.T) {
 	}
 }
 
+// TestConfiguredReturnsTrueWhenAdapterAndPathPresent 验证ConfiguredReturnsTrueWhenAdapterAndPathPresent。
 func TestConfiguredReturnsTrueWhenAdapterAndPathPresent(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "D:/CialloClaw/data.db"})
 
@@ -63,6 +72,7 @@ func TestConfiguredReturnsTrueWhenAdapterAndPathPresent(t *testing.T) {
 	}
 }
 
+// TestValidateReturnsErrorWhenAdapterMissing 验证ValidateReturnsErrorWhenAdapterMissing。
 func TestValidateReturnsErrorWhenAdapterMissing(t *testing.T) {
 	service := NewService(nil)
 
@@ -72,6 +82,7 @@ func TestValidateReturnsErrorWhenAdapterMissing(t *testing.T) {
 	}
 }
 
+// TestValidateReturnsErrorWhenPathMissing 验证ValidateReturnsErrorWhenPathMissing。
 func TestValidateReturnsErrorWhenPathMissing(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "   "})
 
@@ -81,6 +92,7 @@ func TestValidateReturnsErrorWhenPathMissing(t *testing.T) {
 	}
 }
 
+// TestValidatePassesWhenAdapterConfigured 验证ValidatePassesWhenAdapterConfigured。
 func TestValidatePassesWhenAdapterConfigured(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "D:/CialloClaw/data.db"})
 
@@ -89,6 +101,7 @@ func TestValidatePassesWhenAdapterConfigured(t *testing.T) {
 	}
 }
 
+// TestDescriptorReturnsTypedSnapshot 验证DescriptorReturnsTypedSnapshot。
 func TestDescriptorReturnsTypedSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "descriptor.db")
 	service := NewService(stubAdapter{databasePath: path})
@@ -109,6 +122,7 @@ func TestDescriptorReturnsTypedSnapshot(t *testing.T) {
 	}
 }
 
+// TestCapabilitiesReturnsConfiguredStructuredStorageOnly 验证CapabilitiesReturnsConfiguredStructuredStorageOnly。
 func TestCapabilitiesReturnsConfiguredStructuredStorageOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "capabilities.db")
 	service := NewService(stubAdapter{databasePath: path})
@@ -124,11 +138,18 @@ func TestCapabilitiesReturnsConfiguredStructuredStorageOnly(t *testing.T) {
 	if !capabilities.SupportsMemoryStore || capabilities.SupportsArtifactStore || capabilities.SupportsSecretStore {
 		t.Fatalf("unexpected unsupported capabilities enabled: %+v", capabilities)
 	}
+	if !capabilities.SupportsRetrievalHits || !capabilities.SupportsFTS5 || !capabilities.SupportsSQLiteVecStub {
+		t.Fatalf("expected retrieval and search skeleton capabilities to be enabled: %+v", capabilities)
+	}
 	if capabilities.MemoryStoreBackend != memoryStoreBackendSQLite || capabilities.FallbackActive {
 		t.Fatalf("unexpected backend state: %+v", capabilities)
 	}
+	if capabilities.MemoryRetrievalBackend != memoryRetrievalBackendSQLite {
+		t.Fatalf("unexpected retrieval backend: %+v", capabilities)
+	}
 }
 
+// TestCapabilitiesReturnsUnconfiguredSnapshotWhenPathMissing 验证CapabilitiesReturnsUnconfiguredSnapshotWhenPathMissing。
 func TestCapabilitiesReturnsUnconfiguredSnapshotWhenPathMissing(t *testing.T) {
 	service := NewService(stubAdapter{databasePath: "   "})
 
@@ -138,6 +159,7 @@ func TestCapabilitiesReturnsUnconfiguredSnapshotWhenPathMissing(t *testing.T) {
 	}
 }
 
+// TestMemoryStoreReturnsWorkingImplementation 验证MemoryStoreReturnsWorkingImplementation。
 func TestMemoryStoreReturnsWorkingImplementation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.db")
 	service := NewService(stubAdapter{databasePath: path})
@@ -164,8 +186,23 @@ func TestMemoryStoreReturnsWorkingImplementation(t *testing.T) {
 	if len(recent) != 1 || recent[0].MemorySummaryID != "mem_001" {
 		t.Fatalf("unexpected recent summaries: %+v", recent)
 	}
+
+	err = store.SaveRetrievalHits(context.Background(), []MemoryRetrievalRecord{{
+		RetrievalHitID: "hit_001",
+		TaskID:         "task_001",
+		RunID:          "run_001",
+		MemoryID:       "mem_001",
+		Score:          0.9,
+		Source:         memoryRetrievalBackendSQLite,
+		Summary:        "summary",
+		CreatedAt:      "2026-04-08T10:01:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("SaveRetrievalHits returned error: %v", err)
+	}
 }
 
+// TestCloseIsSafeWithoutConfiguredStore 验证CloseIsSafeWithoutConfiguredStore。
 func TestCloseIsSafeWithoutConfiguredStore(t *testing.T) {
 	service := NewService(nil)
 	if err := service.Close(); err != nil {

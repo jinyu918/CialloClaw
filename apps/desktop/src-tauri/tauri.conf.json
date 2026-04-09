@@ -5,8 +5,8 @@
   "identifier": "com.cialloclaw.desktop",
   "build": {
     "frontendDist": "../dist",
-    "beforeDevCommand": "pnpm --dir .. dev",
-    "beforeBuildCommand": "pnpm --dir .. build"
+    "beforeDevCommand": "corepack pnpm dev",
+    "beforeBuildCommand": "corepack pnpm build"
   },
   "app": {
     "windows": [
@@ -32,6 +32,13 @@
         "width": 1080,
         "height": 760,
         "url": "control-panel.html"
+      },
+      {
+        "label": "mirror",
+        "title": "CialloClaw Mirror",
+        "width": 1180,
+        "height": 820,
+        "url": "mirror.html"
       }
     ]
   }

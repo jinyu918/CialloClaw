@@ -1,11 +1,12 @@
 import { create } from "zustand";
+import type { ShellBallVisualState } from "../features/shell-ball/shellBall.types";
 
 type ShellBallState = {
-  status: "idle" | "primed" | "confirming" | "running" | "waiting_auth";
-  setStatus: (status: ShellBallState["status"]) => void;
+  visualState: ShellBallVisualState;
+  setVisualState: (visualState: ShellBallVisualState) => void;
 };
 
 export const useShellBallStore = create<ShellBallState>((set) => ({
-  status: "primed",
-  setStatus: (status) => set({ status }),
+  visualState: "idle",
+  setVisualState: (visualState) => set({ visualState }),
 }));
