@@ -205,6 +205,7 @@ type PlatformCapability interface {
 	Join(elem ...string) string
 	Abs(path string) (string, error)
 	EnsureWithinWorkspace(path string) (string, error)
+	ReadDir(path string) ([]fs.DirEntry, error)
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, content []byte) error
 	Stat(path string) (fs.FileInfo, error)

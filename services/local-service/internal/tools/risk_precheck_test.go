@@ -38,6 +38,10 @@ func (s riskPlatformStub) ReadFile(path string) ([]byte, error) {
 	return nil, nil
 }
 
+func (s riskPlatformStub) ReadDir(path string) ([]fs.DirEntry, error) {
+	return nil, nil
+}
+
 func (s riskPlatformStub) WriteFile(path string, content []byte) error {
 	return nil
 }

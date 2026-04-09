@@ -53,6 +53,10 @@ func (s *stubWriteFilePlatform) ReadFile(path string) ([]byte, error) {
 	return append([]byte(nil), content...), nil
 }
 
+func (s *stubWriteFilePlatform) ReadDir(path string) ([]fs.DirEntry, error) {
+	return nil, nil
+}
+
 func (s *stubWriteFilePlatform) WriteFile(path string, content []byte) error {
 	if s.writeErr != nil {
 		return s.writeErr
