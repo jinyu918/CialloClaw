@@ -360,6 +360,14 @@
   transform: translateY(-1px);
 }
 
+.dashboard-page__home-link--floating {
+  position: fixed;
+  top: clamp(18px, 3vw, 28px);
+  left: clamp(18px, 3vw, 28px);
+  z-index: 80;
+  box-shadow: 0 20px 45px -35px rgba(72, 98, 59, 0.55);
+}
+
 .dashboard-page__module-nav {
   display: flex;
   flex-wrap: wrap;

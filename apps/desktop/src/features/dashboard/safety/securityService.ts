@@ -10,7 +10,7 @@ import type {
   RequestMeta,
 } from "@cialloclaw/protocol";
 import { listSecurityPending, respondSecurity, getSecuritySummary } from "@/rpc/methods";
-import { buildMockRespondResult, securityPendingMock, securitySummaryMock } from "@/mocks/securityModuleMock";
+import { buildMockRespondResult, securityPendingMock, securitySummaryMock } from "./securityModuleMock";
 
 export type SecurityModuleSource = "rpc" | "mock";
 
