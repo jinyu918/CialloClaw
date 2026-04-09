@@ -1,3 +1,4 @@
+// 桌面端 Vite 配置，负责多入口构建与路径别名。
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -18,6 +19,7 @@ export default defineConfig({
         "shell-ball": resolve(currentDirectory, "shell-ball.html"),
         dashboard: resolve(currentDirectory, "dashboard.html"),
         "control-panel": resolve(currentDirectory, "control-panel.html"),
+        mirror: resolve(currentDirectory, "mirror.html"),
       },
     },
   },

@@ -1,3 +1,4 @@
+// 该入口负责启动本地 Harness 服务。
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/config"
 )
 
+// main 处理当前模块的相关逻辑。
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

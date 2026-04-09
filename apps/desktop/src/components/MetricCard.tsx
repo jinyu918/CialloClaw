@@ -1,9 +1,11 @@
+// 该文件定义用于展示统计摘要卡片。 
 type MetricCardProps = {
   label: string;
   value: string;
   detail: string;
 };
 
+// MetricCard 处理当前模块的相关逻辑。
 export function MetricCard({ label, value, detail }: MetricCardProps) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">

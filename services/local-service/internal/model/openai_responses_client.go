@@ -1,3 +1,4 @@
+// 该文件负责模型接入层的结构或实现。
 package model
 
 import (
@@ -13,17 +14,27 @@ import (
 	"time"
 )
 
+// OpenAIResponsesProvider 定义当前模块的基础变量。
 const OpenAIResponsesProvider = "openai_responses"
 
+// ErrOpenAIAPIKeyRequired 定义当前模块的基础变量。
 var ErrOpenAIAPIKeyRequired = errors.New("openai responses api key is required")
+// ErrOpenAIEndpointRequired 定义当前模块的基础变量。
 var ErrOpenAIEndpointRequired = errors.New("openai responses endpoint is required")
+// ErrOpenAIModelIDRequired 定义当前模块的基础变量。
 var ErrOpenAIModelIDRequired = errors.New("openai responses model id is required")
+// ErrOpenAIRequestFailed 定义当前模块的基础变量。
 var ErrOpenAIRequestFailed = errors.New("openai responses request failed")
+// ErrOpenAIRequestTimeout 定义当前模块的基础变量。
 var ErrOpenAIRequestTimeout = errors.New("openai responses request timed out")
+// ErrOpenAIResponseInvalid 定义当前模块的基础变量。
 var ErrOpenAIResponseInvalid = errors.New("openai responses response invalid")
+// ErrOpenAIHTTPStatus 定义当前模块的基础变量。
 var ErrOpenAIHTTPStatus = errors.New("openai responses http status error")
+// ErrGenerateTextInputRequired 定义当前模块的基础变量。
 var ErrGenerateTextInputRequired = errors.New("generate text input is required")
 
+// OpenAIResponsesClientConfig 描述当前模块配置。
 type OpenAIResponsesClientConfig struct {
 	APIKey     string
 	Endpoint   string
@@ -32,6 +43,7 @@ type OpenAIResponsesClientConfig struct {
 	HTTPClient *http.Client
 }
 
+// OpenAIResponsesClient 定义当前模块的数据结构。
 type OpenAIResponsesClient struct {
 	apiKey     string
 	endpoint   string
@@ -40,13 +52,16 @@ type OpenAIResponsesClient struct {
 	httpClient *http.Client
 }
 
+// defaultOpenAIResponsesTimeout 定义当前模块的基础变量。
 const defaultOpenAIResponsesTimeout = 30 * time.Second
 
+// openAIResponsesGenerateRequest 描述当前模块请求结构。
 type openAIResponsesGenerateRequest struct {
 	Model string `json:"model"`
 	Input string `json:"input"`
 }
 
+// openAIResponsesGenerateResponse 定义当前模块的数据结构。
 type openAIResponsesGenerateResponse struct {
 	ID         string                       `json:"id"`
 	Model      string                       `json:"model"`
@@ -56,32 +71,38 @@ type openAIResponsesGenerateResponse struct {
 	Error      *openAIResponsesErrorPayload `json:"error"`
 }
 
+// openAIResponsesOutputItem 定义当前模块的数据结构。
 type openAIResponsesOutputItem struct {
 	Content []openAIResponsesContentItem `json:"content"`
 }
 
+// openAIResponsesContentItem 定义当前模块的数据结构。
 type openAIResponsesContentItem struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
+// openAIResponsesUsage 定义当前模块的数据结构。
 type openAIResponsesUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
 }
 
+// openAIResponsesErrorPayload 定义当前模块的数据结构。
 type openAIResponsesErrorPayload struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 	Code    string `json:"code"`
 }
 
+// OpenAIHTTPStatusError 定义当前模块的数据结构。
 type OpenAIHTTPStatusError struct {
 	StatusCode int
 	Message    string
 }
 
+// Error 处理当前模块的相关逻辑。
 func (e *OpenAIHTTPStatusError) Error() string {
 	if strings.TrimSpace(e.Message) == "" {
 		return fmt.Sprintf("openai responses returned http status %d", e.StatusCode)
@@ -90,10 +111,12 @@ func (e *OpenAIHTTPStatusError) Error() string {
 	return fmt.Sprintf("openai responses returned http status %d: %s", e.StatusCode, e.Message)
 }
 
+// Unwrap 处理当前模块的相关逻辑。
 func (e *OpenAIHTTPStatusError) Unwrap() error {
 	return ErrOpenAIHTTPStatus
 }
 
+// NewOpenAIResponsesClient 创建并返回OpenAIResponsesClient。
 func NewOpenAIResponsesClient(cfg OpenAIResponsesClientConfig) (*OpenAIResponsesClient, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, ErrOpenAIAPIKeyRequired
@@ -132,6 +155,7 @@ func NewOpenAIResponsesClient(cfg OpenAIResponsesClientConfig) (*OpenAIResponses
 	}, nil
 }
 
+// GenerateText 处理当前模块的相关逻辑。
 func (c *OpenAIResponsesClient) GenerateText(ctx context.Context, request GenerateTextRequest) (GenerateTextResponse, error) {
 	startedAt := time.Now()
 	if strings.TrimSpace(request.Input) == "" {
@@ -188,18 +212,22 @@ func (c *OpenAIResponsesClient) GenerateText(ctx context.Context, request Genera
 	}, nil
 }
 
+// Provider 处理当前模块的相关逻辑。
 func (c *OpenAIResponsesClient) Provider() string {
 	return OpenAIResponsesProvider
 }
 
+// ModelID 处理当前模块的相关逻辑。
 func (c *OpenAIResponsesClient) ModelID() string {
 	return c.modelID
 }
 
+// Endpoint 处理当前模块的相关逻辑。
 func (c *OpenAIResponsesClient) Endpoint() string {
 	return c.endpoint
 }
 
+// parseOpenAIResponsesGenerateResponse 处理当前模块的相关逻辑。
 func parseOpenAIResponsesGenerateResponse(statusCode int, body []byte) (openAIResponsesGenerateResponse, error) {
 	var parsed openAIResponsesGenerateResponse
 
@@ -229,6 +257,7 @@ func parseOpenAIResponsesGenerateResponse(statusCode int, body []byte) (openAIRe
 	return parsed, nil
 }
 
+// extractOpenAIOutputText 处理当前模块的相关逻辑。
 func extractOpenAIOutputText(response openAIResponsesGenerateResponse) string {
 	if strings.TrimSpace(response.OutputText) != "" {
 		return response.OutputText
@@ -248,6 +277,7 @@ func extractOpenAIOutputText(response openAIResponsesGenerateResponse) string {
 	return builder.String()
 }
 
+// classifyOpenAIRequestError 处理当前模块的相关逻辑。
 func classifyOpenAIRequestError(err error) error {
 	if err == nil {
 		return nil
@@ -260,6 +290,7 @@ func classifyOpenAIRequestError(err error) error {
 	return fmt.Errorf("%w: %v", ErrOpenAIRequestFailed, err)
 }
 
+// isOpenAITimeoutError 处理当前模块的相关逻辑。
 func isOpenAITimeoutError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -269,6 +300,7 @@ func isOpenAITimeoutError(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
+// firstNonEmpty 处理当前模块的相关逻辑。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -279,6 +311,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// truncateErrorMessage 处理当前模块的相关逻辑。
 func truncateErrorMessage(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if len(trimmed) <= 256 {

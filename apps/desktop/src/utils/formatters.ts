@@ -1,3 +1,4 @@
+// 该文件提供展示层文本与时间格式化能力。 
 export function formatStatusLabel(status: string) {
   const statusLabels: Record<string, string> = {
     confirming_intent: "等待意图确认",
@@ -15,6 +16,7 @@ export function formatStatusLabel(status: string) {
   return statusLabels[status] ?? status.replaceAll("_", " ");
 }
 
+// formatTimestamp 处理当前模块的相关逻辑。
 export function formatTimestamp(value: string | null) {
   if (!value) {
     return "未开始";
