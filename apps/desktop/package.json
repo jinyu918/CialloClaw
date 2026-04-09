@@ -10,6 +10,7 @@
     "test:shell-ball": "tsc -p tsconfig.shell-ball-test.json && node -e \"require('node:fs').mkdirSync('.cache/shell-ball-tests', { recursive: true }); require('node:fs').writeFileSync('.cache/shell-ball-tests/package.json', '{\\\"type\\\":\\\"commonjs\\\"}');\" && node --test .cache/shell-ball-tests/features/shell-ball/shellBall.contract.test.js"
   },
   "dependencies": {
+    "@radix-ui/themes": "^3.2.1",
     "@cialloclaw/protocol": "workspace:*",
     "@cialloclaw/ui": "workspace:*",
     "@floating-ui/react": "^0.27.8",
