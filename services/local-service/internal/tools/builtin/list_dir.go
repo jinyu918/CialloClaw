@@ -51,17 +51,16 @@ func (t *ListDirTool) Execute(ctx context.Context, execCtx *tools.ToolExecuteCon
 		return nil, fmt.Errorf("%w: platform adapter is required", tools.ErrCapabilityDenied)
 	}
 
-	absPath, err := execCtx.Platform.Abs(pathStr)
+	safePath, err := execCtx.Platform.EnsureWithinWorkspace(pathStr)
+	if err != nil {
+		return nil, tools.ErrWorkspaceBoundaryDenied
+	}
+
+	absPath, err := execCtx.Platform.Abs(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve absolute path: %v", tools.ErrToolExecutionFailed, err)
 	}
-
-	safePath, err := execCtx.Platform.EnsureWithinWorkspace(absPath)
-	if err != nil {
-		// workspace 外路径必须显式映射为统一边界错误，
-		// 这样上层 executor、测试和后续审批链路都可以稳定识别该场景。
-		return nil, fmt.Errorf("%w: %v", tools.ErrWorkspaceBoundaryDenied, err)
-	}
+	safePath = absPath
 
 	entries, err := execCtx.Platform.ReadDir(safePath)
 	if err != nil {
@@ -95,15 +94,16 @@ func (t *ListDirTool) DryRun(ctx context.Context, execCtx *tools.ToolExecuteCont
 		return nil, fmt.Errorf("%w: platform adapter is required", tools.ErrCapabilityDenied)
 	}
 
-	absPath, err := execCtx.Platform.Abs(pathStr)
+	safePath, err := execCtx.Platform.EnsureWithinWorkspace(pathStr)
+	if err != nil {
+		return nil, tools.ErrWorkspaceBoundaryDenied
+	}
+
+	absPath, err := execCtx.Platform.Abs(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve absolute path: %v", tools.ErrToolExecutionFailed, err)
 	}
-
-	safePath, err := execCtx.Platform.EnsureWithinWorkspace(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", tools.ErrWorkspaceBoundaryDenied, err)
-	}
+	safePath = absPath
 
 	rawOutput := map[string]any{
 		"path":      safePath,

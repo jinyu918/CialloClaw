@@ -69,17 +69,16 @@ func (t *WriteFileTool) Execute(ctx context.Context, execCtx *tools.ToolExecuteC
 		return nil, fmt.Errorf("%w: platform adapter is required", tools.ErrCapabilityDenied)
 	}
 
-	absPath, err := execCtx.Platform.Abs(parsed.Path)
+	safePath, err := execCtx.Platform.EnsureWithinWorkspace(parsed.Path)
+	if err != nil {
+		return nil, tools.ErrWorkspaceBoundaryDenied
+	}
+
+	absPath, err := execCtx.Platform.Abs(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve absolute path: %v", tools.ErrToolExecutionFailed, err)
 	}
-
-	safePath, err := execCtx.Platform.EnsureWithinWorkspace(absPath)
-	if err != nil {
-		// workspace 外写入不能静默放行，必须显式返回统一边界错误，
-		// 以便风险预检查、测试和后续审批流程在同一错误类型上收口。
-		return nil, fmt.Errorf("%w: %v", tools.ErrWorkspaceBoundaryDenied, err)
-	}
+	safePath = absPath
 
 	created, overwritten, err := detectWriteMode(execCtx.Platform, safePath)
 	if err != nil {
@@ -110,15 +109,16 @@ func (t *WriteFileTool) DryRun(ctx context.Context, execCtx *tools.ToolExecuteCo
 		return nil, fmt.Errorf("%w: platform adapter is required", tools.ErrCapabilityDenied)
 	}
 
-	absPath, err := execCtx.Platform.Abs(parsed.Path)
+	safePath, err := execCtx.Platform.EnsureWithinWorkspace(parsed.Path)
+	if err != nil {
+		return nil, tools.ErrWorkspaceBoundaryDenied
+	}
+
+	absPath, err := execCtx.Platform.Abs(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve absolute path: %v", tools.ErrToolExecutionFailed, err)
 	}
-
-	safePath, err := execCtx.Platform.EnsureWithinWorkspace(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", tools.ErrWorkspaceBoundaryDenied, err)
-	}
+	safePath = absPath
 
 	created, overwritten, err := detectWriteMode(execCtx.Platform, safePath)
 	if err != nil {
