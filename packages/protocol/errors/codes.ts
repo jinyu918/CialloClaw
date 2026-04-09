@@ -1,3 +1,4 @@
+// 该文件集中维护全仓统一错误码。
 export const ERROR_CODES = {
   OK: 0,
   TASK_NOT_FOUND: 1001001,
@@ -36,4 +37,5 @@ export const ERROR_CODES = {
   PATH_POLICY_VIOLATION: 1007005,
 } as const;
 
+// ErrorCodeName 定义当前模块的数据结构。
 export type ErrorCodeName = keyof typeof ERROR_CODES;

@@ -1,3 +1,4 @@
+// JsonRpcRequest 描述当前模块请求结构。
 type JsonRpcRequest = {
   jsonrpc: "2.0";
   id: string;
@@ -5,7 +6,10 @@ type JsonRpcRequest = {
   params?: object;
 };
 
+// JsonRpcEnvelope 定义当前模块的数据结构。
 type JsonRpcEnvelope<T> = {
+  jsonrpc?: "2.0";
+  id?: string | number | null;
   result?: {
     data: T;
     meta?: { server_time: string };
@@ -21,6 +25,20 @@ type JsonRpcEnvelope<T> = {
   };
 };
 
+type JsonRpcNotification = {
+  jsonrpc?: "2.0";
+  id?: string | number | null;
+  method?: string;
+  params?: unknown;
+  [key: string]: unknown;
+};
+
+type NamedPipeSubscription = {
+  id: number;
+  unsubscribe: () => Promise<void>;
+};
+
+// JsonRpcTransport 定义当前模块的接口约束。
 interface JsonRpcTransport {
   send<T>(payload: JsonRpcRequest): Promise<JsonRpcEnvelope<T>>;
 }
@@ -29,10 +47,15 @@ declare global {
   interface Window {
     __CIALLOCLAW_NAMED_PIPE__?: {
       request: <T>(payload: JsonRpcRequest) => Promise<JsonRpcEnvelope<T>>;
+      subscribe: (
+        topic: string,
+        handler: (message: JsonRpcNotification) => void,
+      ) => Promise<NamedPipeSubscription>;
     };
   }
 }
 
+// NamedPipeJsonRpcTransport 定义当前模块的数据结构。
 class NamedPipeJsonRpcTransport implements JsonRpcTransport {
   async send<T>(payload: JsonRpcRequest): Promise<JsonRpcEnvelope<T>> {
     const bridge = window.__CIALLOCLAW_NAMED_PIPE__;
@@ -45,6 +68,7 @@ class NamedPipeJsonRpcTransport implements JsonRpcTransport {
   }
 }
 
+// DebugHttpJsonRpcTransport 定义当前模块的数据结构。
 class DebugHttpJsonRpcTransport implements JsonRpcTransport {
   constructor(private readonly endpoint: string) {}
 
@@ -65,6 +89,7 @@ class DebugHttpJsonRpcTransport implements JsonRpcTransport {
   }
 }
 
+// createTransport 处理当前模块的相关逻辑。
 function createTransport(): JsonRpcTransport {
   const transportMode = import.meta.env.VITE_CIALLOCLAW_RPC_TRANSPORT ?? "named_pipe";
 
@@ -75,13 +100,22 @@ function createTransport(): JsonRpcTransport {
   return new NamedPipeJsonRpcTransport();
 }
 
+function createRequestId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `rpc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+// JsonRpcClient 定义当前模块的数据结构。
 export class JsonRpcClient {
   constructor(private readonly transport: JsonRpcTransport = createTransport()) {}
 
   async request<T>(method: string, params?: object): Promise<T> {
     const payload: JsonRpcRequest = {
       jsonrpc: "2.0",
-      id: crypto.randomUUID(),
+      id: createRequestId(),
       method,
       params,
     };
@@ -96,4 +130,5 @@ export class JsonRpcClient {
   }
 }
 
+// rpcClient 表示当前模块的客户端实例。
 export const rpcClient = new JsonRpcClient();

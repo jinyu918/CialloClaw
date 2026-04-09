@@ -1,7 +1,9 @@
+// 该测试文件验证交付与落盘计划组装行为。
 package delivery
 
 import "testing"
 
+// TestBuildStorageAndArtifactPlans 验证BuildStorageAndArtifactPlans。
 func TestBuildStorageAndArtifactPlans(t *testing.T) {
 	service := NewService()
 	deliveryResult := service.BuildDeliveryResult("task_001", "workspace_document", "测试摘要", "已为你写入文档并打开")
@@ -13,6 +15,9 @@ func TestBuildStorageAndArtifactPlans(t *testing.T) {
 	}
 	if storagePlan["target_path"] == nil {
 		t.Fatal("expected storage write plan to carry a target path")
+	}
+	if storagePlan["target_path"] != "workspace/测试摘要.md" {
+		t.Fatalf("expected storage write plan to use workspace-relative target path, got %v", storagePlan["target_path"])
 	}
 
 	artifactPlans := service.BuildArtifactPersistPlans("task_001", artifacts)
