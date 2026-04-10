@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -39,6 +41,8 @@ import {
   useShellBallInteraction,
 } from "./useShellBallInteraction";
 import { useShellBallStore } from "../../stores/shellBallStore";
+
+const desktopRoot = process.cwd();
 
 function createFakeScheduler() {
   let nextId = 0;
@@ -140,6 +144,21 @@ test("shell-ball demo fixtures preserve the frozen seven-state contract", () => 
     showVoiceHint: true,
     voiceHintText: "持续收音中，结束前不会自动退出。",
   });
+});
+
+test("shell-ball desktop host declares bubble and input helper windows", () => {
+  assert.equal(existsSync(resolve(desktopRoot, "shell-ball-bubble.html")), true);
+  assert.equal(existsSync(resolve(desktopRoot, "shell-ball-input.html")), true);
+
+  const viteConfig = readFileSync(resolve(desktopRoot, "vite.config.ts"), "utf8");
+  const tauriConfig = readFileSync(resolve(desktopRoot, "src-tauri/tauri.conf.json"), "utf8");
+
+  assert.match(viteConfig, /"shell-ball-bubble"/);
+  assert.match(viteConfig, /"shell-ball-input"/);
+  assert.match(tauriConfig, /"label": "shell-ball-bubble"/);
+  assert.match(tauriConfig, /"label": "shell-ball-input"/);
+  assert.match(tauriConfig, /"url": "shell-ball-bubble\.html"/);
+  assert.match(tauriConfig, /"url": "shell-ball-input\.html"/);
 });
 
 test("shell-ball interaction contract auto-advances text submission into processing", () => {
