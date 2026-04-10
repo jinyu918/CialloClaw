@@ -128,9 +128,11 @@ type ToolCallStore interface {
 // AuditStore 定义 audit 记录持久化契约。
 type AuditStore interface {
 	WriteAuditRecord(ctx context.Context, record audit.Record) error
+	ListAuditRecords(ctx context.Context, taskID string, limit, offset int) ([]audit.Record, int, error)
 }
 
 // RecoveryPointStore 定义恢复点持久化契约。
 type RecoveryPointStore interface {
 	WriteRecoveryPoint(ctx context.Context, point checkpoint.RecoveryPoint) error
+	ListRecoveryPoints(ctx context.Context, taskID string, limit, offset int) ([]checkpoint.RecoveryPoint, int, error)
 }

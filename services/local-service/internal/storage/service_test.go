@@ -305,6 +305,42 @@ func TestRecoveryPointWriterReturnsWorkingImplementation(t *testing.T) {
 	assertRecoveryPointCount(t, sqliteWriter.db, 1)
 }
 
+func TestAuditStoreListsRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit-list.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	writer := service.AuditWriter()
+	_ = writer.WriteAuditRecord(context.Background(), audit.Record{AuditID: "audit_001", TaskID: "task_001", Type: "file", Action: "write_file", Summary: "write one", Target: "workspace/one.md", Result: "success", CreatedAt: "2026-04-08T10:00:00Z"})
+	_ = writer.WriteAuditRecord(context.Background(), audit.Record{AuditID: "audit_002", TaskID: "task_002", Type: "file", Action: "write_file", Summary: "write two", Target: "workspace/two.md", Result: "success", CreatedAt: "2026-04-08T10:01:00Z"})
+
+	items, total, err := service.AuditStore().ListAuditRecords(context.Background(), "task_001", 20, 0)
+	if err != nil {
+		t.Fatalf("ListAuditRecords returned error: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].AuditID != "audit_001" {
+		t.Fatalf("unexpected audit list result: total=%d items=%+v", total, items)
+	}
+}
+
+func TestRecoveryPointStoreListsPoints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recovery-list.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	writer := service.RecoveryPointWriter()
+	_ = writer.WriteRecoveryPoint(context.Background(), checkpoint.RecoveryPoint{RecoveryPointID: "rp_001", TaskID: "task_001", Summary: "before one", CreatedAt: "2026-04-08T10:00:00Z", Objects: []string{"workspace/one.md"}})
+	_ = writer.WriteRecoveryPoint(context.Background(), checkpoint.RecoveryPoint{RecoveryPointID: "rp_002", TaskID: "task_002", Summary: "before two", CreatedAt: "2026-04-08T10:01:00Z", Objects: []string{"workspace/two.md"}})
+
+	items, total, err := service.RecoveryPointStore().ListRecoveryPoints(context.Background(), "task_002", 20, 0)
+	if err != nil {
+		t.Fatalf("ListRecoveryPoints returned error: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].RecoveryPointID != "rp_002" {
+		t.Fatalf("unexpected recovery point list result: total=%d items=%+v", total, items)
+	}
+}
+
 func TestTaskRunStoreReturnsWorkingImplementation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task-runs.db")
 	service := NewService(stubAdapter{databasePath: path})

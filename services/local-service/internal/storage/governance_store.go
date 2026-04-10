@@ -29,6 +29,18 @@ func (s *inMemoryAuditStore) WriteAuditRecord(_ context.Context, record audit.Re
 	return nil
 }
 
+func (s *inMemoryAuditStore) ListAuditRecords(_ context.Context, taskID string, limit, offset int) ([]audit.Record, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]audit.Record, 0)
+	for _, record := range s.records {
+		if taskID == "" || record.TaskID == taskID {
+			items = append(items, record)
+		}
+	}
+	return pageAuditRecords(items, limit, offset), len(items), nil
+}
+
 type inMemoryRecoveryPointStore struct {
 	mu     sync.Mutex
 	points []checkpoint.RecoveryPoint
@@ -43,6 +55,18 @@ func (s *inMemoryRecoveryPointStore) WriteRecoveryPoint(_ context.Context, point
 	defer s.mu.Unlock()
 	s.points = append(s.points, point)
 	return nil
+}
+
+func (s *inMemoryRecoveryPointStore) ListRecoveryPoints(_ context.Context, taskID string, limit, offset int) ([]checkpoint.RecoveryPoint, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]checkpoint.RecoveryPoint, 0)
+	for _, point := range s.points {
+		if taskID == "" || point.TaskID == taskID {
+			items = append(items, point)
+		}
+	}
+	return pageRecoveryPoints(items, limit, offset), len(items), nil
 }
 
 type SQLiteAuditStore struct {
@@ -80,6 +104,44 @@ func (s *SQLiteAuditStore) WriteAuditRecord(ctx context.Context, record audit.Re
 		return fmt.Errorf("write audit record: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteAuditStore) ListAuditRecords(ctx context.Context, taskID string, limit, offset int) ([]audit.Record, int, error) {
+	countQuery := `SELECT COUNT(1) FROM audit_records`
+	query := `SELECT audit_id, task_id, type, action, summary, target, result, created_at FROM audit_records`
+	args := []any{}
+	if taskID != "" {
+		countQuery += ` WHERE task_id = ?`
+		query += ` WHERE task_id = ?`
+		args = append(args, taskID)
+	}
+	query += ` ORDER BY created_at DESC, audit_id DESC`
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, firstArg(taskID)...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count audit records: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list audit records: %w", err)
+	}
+	defer rows.Close()
+	items := make([]audit.Record, 0)
+	for rows.Next() {
+		var record audit.Record
+		if err := rows.Scan(&record.AuditID, &record.TaskID, &record.Type, &record.Action, &record.Summary, &record.Target, &record.Result, &record.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan audit record: %w", err)
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate audit records: %w", err)
+	}
+	return items, total, nil
 }
 
 func (s *SQLiteAuditStore) Close() error {
@@ -151,6 +213,48 @@ func (s *SQLiteRecoveryPointStore) WriteRecoveryPoint(ctx context.Context, point
 	return nil
 }
 
+func (s *SQLiteRecoveryPointStore) ListRecoveryPoints(ctx context.Context, taskID string, limit, offset int) ([]checkpoint.RecoveryPoint, int, error) {
+	countQuery := `SELECT COUNT(1) FROM recovery_points`
+	query := `SELECT recovery_point_id, task_id, summary, created_at, objects_json FROM recovery_points`
+	args := []any{}
+	if taskID != "" {
+		countQuery += ` WHERE task_id = ?`
+		query += ` WHERE task_id = ?`
+		args = append(args, taskID)
+	}
+	query += ` ORDER BY created_at DESC, recovery_point_id DESC`
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, firstArg(taskID)...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count recovery points: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list recovery points: %w", err)
+	}
+	defer rows.Close()
+	items := make([]checkpoint.RecoveryPoint, 0)
+	for rows.Next() {
+		var point checkpoint.RecoveryPoint
+		var objectsJSON string
+		if err := rows.Scan(&point.RecoveryPointID, &point.TaskID, &point.Summary, &point.CreatedAt, &objectsJSON); err != nil {
+			return nil, 0, fmt.Errorf("scan recovery point: %w", err)
+		}
+		if err := json.Unmarshal([]byte(objectsJSON), &point.Objects); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal recovery point objects: %w", err)
+		}
+		items = append(items, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate recovery points: %w", err)
+	}
+	return items, total, nil
+}
+
 func (s *SQLiteRecoveryPointStore) Close() error {
 	if s.db == nil {
 		return nil
@@ -196,4 +300,39 @@ func openSQLiteDatabase(databasePath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping sqlite database: %w", err)
 	}
 	return db, nil
+}
+
+func pageAuditRecords(items []audit.Record, limit, offset int) []audit.Record {
+	if offset >= len(items) {
+		return nil
+	}
+	if limit <= 0 {
+		limit = len(items)
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return append([]audit.Record(nil), items[offset:end]...)
+}
+
+func pageRecoveryPoints(items []checkpoint.RecoveryPoint, limit, offset int) []checkpoint.RecoveryPoint {
+	if offset >= len(items) {
+		return nil
+	}
+	if limit <= 0 {
+		limit = len(items)
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return append([]checkpoint.RecoveryPoint(nil), items[offset:end]...)
+}
+
+func firstArg(taskID string) []any {
+	if taskID == "" {
+		return nil
+	}
+	return []any{taskID}
 }

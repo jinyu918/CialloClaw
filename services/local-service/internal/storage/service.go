@@ -228,7 +228,15 @@ func (s *Service) AuditWriter() audit.Writer {
 	return s.auditStore
 }
 
+func (s *Service) AuditStore() AuditStore {
+	return s.auditStore
+}
+
 func (s *Service) RecoveryPointWriter() checkpoint.Writer {
+	return s.recoveryPointStore
+}
+
+func (s *Service) RecoveryPointStore() RecoveryPointStore {
 	return s.recoveryPointStore
 }
 
