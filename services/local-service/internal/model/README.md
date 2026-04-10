@@ -63,11 +63,12 @@ Inside the current module-only scope, the package now preserves `task_id`, `run_
 - Unit tests cover the minimal request/response path with `httptest`
 - `bootstrap` now wires model service through `NewServiceFromConfig(...)` and fails fast on invalid configuration
 - An opt-in live smoke test can be run with:
+  - `RUN_LIVE_OPENAI_RESPONSES_TEST=1`
   - `OPENAI_API_KEY`
   - optional `OPENAI_RESPONSES_ENDPOINT`
   - optional `OPENAI_RESPONSES_MODEL`
 
-The live smoke test stays skipped by default when credentials are absent, so CI remains deterministic.
+The live smoke test stays skipped by default unless `RUN_LIVE_OPENAI_RESPONSES_TEST=1`, so CI remains deterministic even when a shell or CI runner happens to export `OPENAI_API_KEY`.
 
 ## Current Protocol Alignment
 

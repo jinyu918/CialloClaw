@@ -210,9 +210,9 @@ func (s *Service) generateOutput(ctx context.Context, request Request, inputText
 				record := response.InvocationRecord()
 				return outputText, &record, nil
 			}
-			return "", nil, fmt.Errorf("model returned empty output")
+			return fallbackOutput(request, inputText), nil, nil
 		}
-		return "", nil, fmt.Errorf("model generate text: %w", err)
+		return fallbackOutput(request, inputText), nil, nil
 	}
 
 	return fallbackOutput(request, inputText), nil, nil

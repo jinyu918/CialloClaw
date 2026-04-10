@@ -10,6 +10,10 @@ import (
 )
 
 func TestLiveOpenAIResponsesGenerateText(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("RUN_LIVE_OPENAI_RESPONSES_TEST")) != "1" {
+		t.Skip("RUN_LIVE_OPENAI_RESPONSES_TEST is not enabled")
+	}
+
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY is not set")
