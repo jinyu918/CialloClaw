@@ -460,17 +460,6 @@ func (s *Service) TaskInspectorRun(params map[string]any) (map[string]any, error
 		"summary":       result.Summary,
 		"suggestions":   append([]string(nil), result.Suggestions...),
 	}, nil
-	return map[string]any{
-		"inspection_id": "insp_001",
-		"summary": map[string]any{
-			"parsed_files":     3,
-			"identified_items": 12,
-			"due_today":        2,
-			"overdue":          1,
-			"stale":            3,
-		},
-		"suggestions": []string{"优先处理今天到期的复盘邮件", "下周评审材料建议先生成草稿"},
-	}, nil
 }
 
 // NotepadList 处理当前模块的相关逻辑。
