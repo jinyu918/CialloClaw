@@ -8,13 +8,16 @@ package builtin
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
 const readFilePreviewLimit = 200
-const readFileTextType = "text/plain"
+const readFileMaxBytes int64 = 1 << 20
+const readFileDefaultTextType = "text/plain"
 
 // ---------------------------------------------------------------------------
 // ReadFileTool：读取工作区内文件的内置工具
@@ -89,6 +92,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, execCtx *tools.ToolExecuteCo
 		return nil, tools.ErrWorkspaceBoundaryDenied
 	}
 	readPath := readFileToolPath(pathStr, normalizedPath, safePath)
+	if info, err := execCtx.Platform.Stat(readPath); err == nil {
+		if info.Size() > readFileMaxBytes {
+			return nil, fmt.Errorf("%w: file exceeds %d bytes", tools.ErrToolExecutionFailed, readFileMaxBytes)
+		}
+	}
 
 	content, err := execCtx.Platform.ReadFile(readPath)
 	if err != nil {
@@ -100,11 +108,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, execCtx *tools.ToolExecuteCo
 		}, fmt.Errorf("%w: %v", tools.ErrToolExecutionFailed, err)
 	}
 
+	mimeType, textType := detectReadFileTypes(readPath, content)
 	rawOutput := map[string]any{
 		"path":      safePath,
 		"content":   string(content),
-		"mime_type": readFileTextType,
-		"text_type": readFileTextType,
+		"mime_type": mimeType,
+		"text_type": textType,
 	}
 
 	return &tools.ToolResult{
@@ -135,14 +144,14 @@ func (t *ReadFileTool) DryRun(ctx context.Context, execCtx *tools.ToolExecuteCon
 			"dry_run":   true,
 			"path":      safePath,
 			"valid":     true,
-			"mime_type": readFileTextType,
-			"text_type": readFileTextType,
+			"mime_type": inferReadFileMimeType(pathStr, nil),
+			"text_type": inferReadFileTextType(inferReadFileMimeType(pathStr, nil)),
 		},
 		SummaryOutput: map[string]any{
 			"dry_run":   true,
 			"path":      safePath,
 			"valid":     true,
-			"mime_type": readFileTextType,
+			"mime_type": inferReadFileMimeType(pathStr, nil),
 		},
 	}, nil
 }
@@ -173,4 +182,47 @@ func previewReadFileText(input string, limit int) string {
 		return trimmed
 	}
 	return trimmed[:limit]
+}
+
+func detectReadFileTypes(path string, content []byte) (string, string) {
+	mimeType := inferReadFileMimeType(path, content)
+	return mimeType, inferReadFileTextType(mimeType)
+}
+
+func inferReadFileMimeType(path string, content []byte) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "application/yaml"
+	case ".csv":
+		return "text/csv"
+	}
+
+	if len(content) > 0 {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		return http.DetectContentType(sample)
+	}
+
+	return readFileDefaultTextType
+}
+
+func inferReadFileTextType(mimeType string) string {
+	switch {
+	case strings.HasPrefix(mimeType, "text/"):
+		return mimeType
+	case mimeType == "application/json":
+		return "structured_text"
+	case mimeType == "application/yaml":
+		return "structured_text"
+	default:
+		return readFileDefaultTextType
+	}
 }
