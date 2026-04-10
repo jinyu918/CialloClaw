@@ -273,6 +273,94 @@ func TestEngineDefaultsUseWorkspaceRelativePaths(t *testing.T) {
 	}
 }
 
+func TestEngineNotepadItemsNormalizeAndSortRuntimeState(t *testing.T) {
+	engine := NewEngine()
+	now := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	engine.now = func() time.Time { return now }
+
+	engine.ReplaceNotepadItems([]map[string]any{
+		{
+			"item_id":          "todo_later",
+			"title":            "later item",
+			"bucket":           "later",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(48 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "review later",
+		},
+		{
+			"item_id":          "todo_overdue",
+			"title":            "overdue item",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(-2 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "finish now",
+		},
+		{
+			"item_id":          "todo_today",
+			"title":            "today item",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(3 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "translate",
+		},
+	})
+
+	items, total := engine.NotepadItems("", 10, 0)
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("expected three runtime notepad items, total=%d len=%d", total, len(items))
+	}
+	if items[0]["item_id"] != "todo_overdue" || items[0]["status"] != "overdue" {
+		t.Fatalf("expected overdue item to sort first by due time, got %+v", items[0])
+	}
+	if items[1]["item_id"] != "todo_today" || items[1]["status"] != "due_today" {
+		t.Fatalf("expected due_today item to remain normalized, got %+v", items[1])
+	}
+
+	upcomingItems, total := engine.NotepadItems("upcoming", 10, 0)
+	if total != 2 || len(upcomingItems) != 2 {
+		t.Fatalf("expected two upcoming items, total=%d len=%d", total, len(upcomingItems))
+	}
+}
+
+func TestEngineCompleteNotepadItemMovesItemToClosedBucket(t *testing.T) {
+	engine := NewEngine()
+	now := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	engine.now = func() time.Time { return now }
+	engine.ReplaceNotepadItems([]map[string]any{
+		{
+			"item_id":          "todo_convert",
+			"title":            "convert item",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(2 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "summarize",
+		},
+	})
+
+	completed, ok := engine.CompleteNotepadItem("todo_convert")
+	if !ok {
+		t.Fatal("expected notepad item completion to succeed")
+	}
+	if completed["bucket"] != "closed" || completed["status"] != "completed" {
+		t.Fatalf("expected completed notepad item to move to closed bucket, got %+v", completed)
+	}
+	if completed["due_at"] != nil {
+		t.Fatalf("expected completed notepad item to clear due_at, got %+v", completed["due_at"])
+	}
+
+	closedItems, total := engine.NotepadItems("closed", 10, 0)
+	if total != 1 || len(closedItems) != 1 {
+		t.Fatalf("expected one closed item after completion, total=%d len=%d", total, len(closedItems))
+	}
+	if closedItems[0]["item_id"] != "todo_convert" {
+		t.Fatalf("expected closed list to contain completed item, got %+v", closedItems[0])
+	}
+}
+
 func TestEngineListTasksSupportsSorting(t *testing.T) {
 	engine := NewEngine()
 	currentTime := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)

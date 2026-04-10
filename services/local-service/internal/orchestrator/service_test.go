@@ -203,6 +203,105 @@ func TestTaskInspectorRunAggregatesRuntimeState(t *testing.T) {
 	}
 }
 
+func TestServiceNotepadListReturnsRuntimeItemsByBucket(t *testing.T) {
+	service := newTestService()
+	now := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	service.runEngine.ReplaceNotepadItems([]map[string]any{
+		{
+			"item_id":          "todo_today",
+			"title":            "translate daily notes",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(2 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "translate",
+		},
+		{
+			"item_id":          "todo_later",
+			"title":            "rewrite later draft",
+			"bucket":           "later",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(48 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "rewrite",
+		},
+	})
+
+	result, err := service.NotepadList(map[string]any{
+		"group":  "upcoming",
+		"limit":  float64(20),
+		"offset": float64(0),
+	})
+	if err != nil {
+		t.Fatalf("notepad list failed: %v", err)
+	}
+
+	items := result["items"].([]map[string]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one upcoming notepad item, got %d", len(items))
+	}
+	if items[0]["item_id"] != "todo_today" {
+		t.Fatalf("expected runtime list to keep todo_today, got %+v", items[0])
+	}
+	if items[0]["status"] != "due_today" {
+		t.Fatalf("expected runtime list to normalize due_today status, got %v", items[0]["status"])
+	}
+}
+
+func TestServiceNotepadConvertToTaskUsesRuntimeItemAndClosesTodo(t *testing.T) {
+	service := newTestService()
+	now := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	service.runEngine.ReplaceNotepadItems([]map[string]any{
+		{
+			"item_id":          "todo_translate",
+			"title":            "translate the meeting notes",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           now.Add(3 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion": "translate into English",
+		},
+	})
+
+	result, err := service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_translate",
+		"confirmed": true,
+	})
+	if err != nil {
+		t.Fatalf("notepad convert failed: %v", err)
+	}
+
+	task := result["task"].(map[string]any)
+	if task["title"] != "translate the meeting notes" {
+		t.Fatalf("expected converted task title to come from runtime notepad item, got %v", task["title"])
+	}
+	if task["source_type"] != "todo" {
+		t.Fatalf("expected converted task source_type todo, got %v", task["source_type"])
+	}
+
+	intentValue := task["intent"].(map[string]any)
+	if intentValue["name"] != "translate" {
+		t.Fatalf("expected runtime notepad conversion to infer translate intent, got %v", intentValue["name"])
+	}
+
+	taskID := task["task_id"].(string)
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected converted task to remain available in runtime")
+	}
+	if len(record.MemoryReadPlans) == 0 {
+		t.Fatal("expected converted task to attach memory read plans")
+	}
+
+	closedItems, total := service.runEngine.NotepadItems("closed", 10, 0)
+	if total != 1 || len(closedItems) != 1 {
+		t.Fatalf("expected converted todo item to move into closed bucket, total=%d len=%d", total, len(closedItems))
+	}
+	if closedItems[0]["item_id"] != "todo_translate" || closedItems[0]["status"] != "completed" {
+		t.Fatalf("expected closed notepad item to reflect completion, got %+v", closedItems[0])
+	}
+}
+
 // TestServiceSubmitInputEmptyTextReturnsWaitingInput 验证空文本提交会进入 waiting_input。
 func TestServiceSubmitInputEmptyTextReturnsWaitingInput(t *testing.T) {
 	service := NewService(
