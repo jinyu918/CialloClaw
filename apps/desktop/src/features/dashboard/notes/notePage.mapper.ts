@@ -1,5 +1,4 @@
 import type { TodoBucket, TodoItem, TodoStatus } from "@cialloclaw/protocol";
-import { formatTimestamp } from "@/utils/formatters";
 import type { NoteDetailExperience, NoteListItem, NotePreviewGroupKey, NoteSummary } from "./notePage.types";
 
 export function getNoteBucketLabel(bucket: TodoBucket) {
@@ -60,7 +59,21 @@ export function describeNotePreview(item: TodoItem, experience: NoteDetailExperi
 export function buildNoteSummary(groups: Pick<Record<NotePreviewGroupKey, NoteListItem[]>, "upcoming" | "recurring_rule">) {
   const dueToday = groups.upcoming.filter((item) => item.item.status === "due_today").length;
   const overdue = groups.upcoming.filter((item) => item.item.status === "overdue").length;
-  const recurringToday = groups.recurring_rule.filter((item) => item.experience.timeHint.includes("今天")).length;
+  const recurringToday = groups.recurring_rule.filter((item) => {
+    const occurrence = item.experience.nextOccurrenceAt ?? item.experience.plannedAt ?? item.item.due_at;
+    if (!occurrence) {
+      return false;
+    }
+
+    const date = new Date(occurrence);
+    const now = new Date();
+
+    return (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    );
+  }).length;
   const readyForAgent = groups.upcoming.filter((item) => item.experience.canConvertToTask).length;
 
   return {
