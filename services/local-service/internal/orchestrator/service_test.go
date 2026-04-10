@@ -302,6 +302,88 @@ func TestServiceNotepadConvertToTaskUsesRuntimeItemAndClosesTodo(t *testing.T) {
 	}
 }
 
+func TestServiceRecommendationGetUsesRuntimeTaskState(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_recommend",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "explain this runtime-backed recommendation target",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskTitle := startResult["task"].(map[string]any)["title"].(string)
+	result, err := service.RecommendationGet(map[string]any{
+		"source": "floating_ball",
+		"scene":  "hover",
+		"context": map[string]any{
+			"page_title": "Dashboard",
+			"app_name":   "desktop",
+		},
+	})
+	if err != nil {
+		t.Fatalf("recommendation get failed: %v", err)
+	}
+
+	items := result["items"].([]map[string]any)
+	if len(items) == 0 {
+		t.Fatal("expected runtime recommendation items")
+	}
+	if !strings.Contains(items[0]["text"].(string), taskTitle) {
+		t.Fatalf("expected recommendation text to reference runtime task title, got %v", items[0]["text"])
+	}
+}
+
+func TestServiceRecommendationFeedbackSubmitAppliesCooldown(t *testing.T) {
+	service := newTestService()
+	params := map[string]any{
+		"source": "floating_ball",
+		"scene":  "selected_text",
+		"context": map[string]any{
+			"page_title":     "Article",
+			"app_name":       "desktop",
+			"selection_text": "This paragraph should be translated before publishing externally.",
+		},
+	}
+
+	first, err := service.RecommendationGet(params)
+	if err != nil {
+		t.Fatalf("recommendation get failed: %v", err)
+	}
+	items := first["items"].([]map[string]any)
+	if len(items) == 0 {
+		t.Fatal("expected recommendation items before feedback")
+	}
+
+	feedbackResult, err := service.RecommendationFeedbackSubmit(map[string]any{
+		"recommendation_id": items[0]["recommendation_id"],
+		"feedback":          "negative",
+	})
+	if err != nil {
+		t.Fatalf("recommendation feedback submit failed: %v", err)
+	}
+	if feedbackResult["applied"] != true {
+		t.Fatalf("expected recommendation feedback to apply, got %+v", feedbackResult)
+	}
+
+	second, err := service.RecommendationGet(params)
+	if err != nil {
+		t.Fatalf("second recommendation get failed: %v", err)
+	}
+	if second["cooldown_hit"] != true {
+		t.Fatalf("expected cooldown hit after negative feedback, got %+v", second)
+	}
+	if len(second["items"].([]map[string]any)) != 0 {
+		t.Fatalf("expected cooldown hit to suppress recommendation items, got %+v", second["items"])
+	}
+}
+
 // TestServiceSubmitInputEmptyTextReturnsWaitingInput 验证空文本提交会进入 waiting_input。
 func TestServiceSubmitInputEmptyTextReturnsWaitingInput(t *testing.T) {
 	service := NewService(
