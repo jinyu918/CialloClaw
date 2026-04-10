@@ -17,6 +17,8 @@ export const SHELL_BALL_PROCESSING_MS = 1200;
 
 export type ShellBallVoicePreview = "lock" | "cancel" | null;
 
+export type ShellBallGestureAxisIntent = "vertical" | "horizontal";
+
 type ShellBallControllerDispatchOptions = {
   regionActive?: boolean;
   hoverRetained?: boolean;
@@ -85,12 +87,28 @@ export function shouldRetainShellBallHoverInput(input: ShellBallHoverRetentionIn
   return !input.regionActive && (input.inputFocused || input.hasDraft);
 }
 
+export function getShellBallGestureAxisIntent(input: {
+  deltaX: number;
+  deltaY: number;
+}): ShellBallGestureAxisIntent {
+  const verticalDistance = Math.abs(input.deltaY);
+  const horizontalDistance = Math.abs(input.deltaX);
+
+  if (verticalDistance >= horizontalDistance * SHELL_BALL_VERTICAL_PRIORITY_RATIO) {
+    return "vertical";
+  }
+
+  return "horizontal";
+}
+
+export function shouldPreviewShellBallVoiceGesture(input: { deltaX: number; deltaY: number }): boolean {
+  return getShellBallGestureAxisIntent(input) === "vertical";
+}
+
 export function getShellBallVoicePreview(input: { deltaX: number; deltaY: number }): ShellBallVoicePreview {
   const { deltaX, deltaY } = input;
-  const verticalDistance = Math.abs(deltaY);
-  const horizontalDistance = Math.abs(deltaX);
 
-  if (verticalDistance < horizontalDistance * SHELL_BALL_VERTICAL_PRIORITY_RATIO) {
+  if (!shouldPreviewShellBallVoiceGesture({ deltaX, deltaY })) {
     return null;
   }
 

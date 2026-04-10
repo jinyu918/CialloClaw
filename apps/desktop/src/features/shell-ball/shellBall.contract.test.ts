@@ -5,8 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { getShellBallDemoViewModel } from "./shellBall.demo";
 import {
   createShellBallInteractionController,
+  getShellBallGestureAxisIntent,
   getShellBallInputBarMode,
   getShellBallProcessingReturnState,
+  shouldPreviewShellBallVoiceGesture,
   getShellBallVoicePreview,
   resolveShellBallTransition,
   resolveShellBallVoiceReleaseEvent,
@@ -576,6 +578,58 @@ test("shell-ball voice preview helpers keep preview and release resolution pure"
   assert.equal(resolveShellBallVoiceReleaseEvent(null), "voice_finish");
 });
 
+test("shell-ball gesture helpers classify vertical intent explicitly for drag-safe voice previews", () => {
+  assert.equal(
+    getShellBallGestureAxisIntent({
+      deltaX: 8,
+      deltaY: -SHELL_BALL_LOCK_DELTA_PX,
+    }),
+    "vertical",
+  );
+
+  assert.equal(
+    getShellBallGestureAxisIntent({
+      deltaX: SHELL_BALL_CANCEL_DELTA_PX,
+      deltaY: SHELL_BALL_CANCEL_DELTA_PX,
+    }),
+    "horizontal",
+  );
+
+  assert.equal(
+    getShellBallGestureAxisIntent({
+      deltaX: SHELL_BALL_CANCEL_DELTA_PX,
+      deltaY: 12,
+    }),
+    "horizontal",
+  );
+});
+
+test("shell-ball gesture helpers gate voice preview behind vertical-priority intent", () => {
+  assert.equal(
+    shouldPreviewShellBallVoiceGesture({
+      deltaX: 0,
+      deltaY: SHELL_BALL_CANCEL_DELTA_PX,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldPreviewShellBallVoiceGesture({
+      deltaX: SHELL_BALL_CANCEL_DELTA_PX,
+      deltaY: SHELL_BALL_CANCEL_DELTA_PX,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldPreviewShellBallVoiceGesture({
+      deltaX: SHELL_BALL_CANCEL_DELTA_PX,
+      deltaY: 12,
+    }),
+    false,
+  );
+});
+
 test("shell-ball input bar surfaces voice preview guidance to the UI", () => {
   const markup = renderToStaticMarkup(
     createElement(ShellBallInputBar, {
@@ -622,7 +676,7 @@ test("shell-ball surface renders the floating structure without the demo switche
       onSubmitText: () => {},
       onPressStart: () => {},
       onPressMove: () => {},
-      onPressEnd: () => {},
+      onPressEnd: () => false,
       onInputFocusChange: () => {},
     }),
   );
@@ -633,6 +687,34 @@ test("shell-ball surface renders the floating structure without the demo switche
   assert.match(markup, /shell-ball-input-bar/);
   assert.doesNotMatch(markup, /Shell-ball demo switcher/);
   assert.doesNotMatch(markup, /shell-ball-surface__switcher-shell/);
+});
+
+test("shell-ball surface reserves a host drag zone separate from the interaction zone", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ShellBallSurface, {
+      visualState: "hover_input",
+      voicePreview: null,
+      inputBarMode: "interactive",
+      inputValue: "draft",
+      motionConfig: getShellBallMotionConfig("hover_input"),
+      onPrimaryClick: () => {},
+      onRegionEnter: () => {},
+      onRegionLeave: () => {},
+      onInputValueChange: () => {},
+      onAttachFile: () => {},
+      onSubmitText: () => {},
+      onPressStart: () => {},
+      onPressMove: () => {},
+      onPressEnd: () => false,
+      onInputFocusChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /data-shell-ball-zone="host-drag"/);
+  assert.match(markup, /data-shell-ball-zone="interaction"/);
+  assert.match(markup, /data-shell-ball-zone="voice-hotspot"/);
+  assert.match(markup, /shell-ball-surface__host-drag-zone/);
+  assert.match(markup, /shell-ball-surface__interaction-zone/);
 });
 
 test("shell-ball demo switcher visibility stays dev-only", () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import {
   createShellBallInteractionController,
   getShellBallInputBarMode,
@@ -151,10 +152,10 @@ export function useShellBallInteraction() {
     dispatch("attach_file");
   }
 
-  function handlePressStart(clientX: number, clientY: number) {
+  function handlePressStart(event: PointerEvent<HTMLButtonElement>) {
     regionActiveRef.current = true;
-    pressStartXRef.current = clientX;
-    pressStartYRef.current = clientY;
+    pressStartXRef.current = event.clientX;
+    pressStartYRef.current = event.clientY;
     setCurrentVoicePreview(null);
     clearLongPressTimer();
 
@@ -171,7 +172,7 @@ export function useShellBallInteraction() {
     }, SHELL_BALL_LONG_PRESS_MS);
   }
 
-  function handlePressMove(clientX: number, clientY: number) {
+  function handlePressMove(event: PointerEvent<HTMLButtonElement>) {
     if (pressStartXRef.current === null || pressStartYRef.current === null) {
       return;
     }
@@ -183,22 +184,33 @@ export function useShellBallInteraction() {
 
     setCurrentVoicePreview(
       getShellBallVoicePreview({
-        deltaX: clientX - pressStartXRef.current,
-        deltaY: clientY - pressStartYRef.current,
+        deltaX: event.clientX - pressStartXRef.current,
+        deltaY: event.clientY - pressStartYRef.current,
       }),
     );
   }
 
-  function handlePressEnd() {
+  function handlePressEnd(_event: PointerEvent<HTMLButtonElement>) {
     clearLongPressTimer();
 
     if (controllerRef.current?.getState() === "voice_listening") {
       dispatch(resolveShellBallVoiceReleaseEvent(voicePreviewRef.current));
+      pressStartXRef.current = null;
+      pressStartYRef.current = null;
+      setCurrentVoicePreview(null);
+      return true;
+    } else if (controllerRef.current?.getState() === "voice_locked") {
+      dispatch("primary_click_locked_voice_end");
+      pressStartXRef.current = null;
+      pressStartYRef.current = null;
+      setCurrentVoicePreview(null);
+      return true;
     }
 
     pressStartXRef.current = null;
     pressStartYRef.current = null;
     setCurrentVoicePreview(null);
+    return false;
   }
 
   function handleInputFocusChange(focused: boolean) {

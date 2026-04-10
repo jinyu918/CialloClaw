@@ -143,10 +143,23 @@
   --shell-ball-bubble-accent: rgba(79, 157, 167, 0.24);
 }
 
-.shell-ball-surface__region {
+.shell-ball-surface__interaction-shell {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+
+.shell-ball-surface__host-drag-zone {
+  height: clamp(0.75rem, 2vw, 1rem);
+  pointer-events: none;
+  width: min(100%, 18rem);
+}
+
+.shell-ball-surface__interaction-zone {
   align-items: center;
   display: grid;
   justify-items: center;
+  width: 100%;
 }
 
 .shell-ball-surface__body {
