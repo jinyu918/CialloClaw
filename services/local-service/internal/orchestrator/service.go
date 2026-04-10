@@ -1742,13 +1742,16 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 		return runengine.TaskRecord{}, nil, nil, nil, fmt.Errorf("execute task %s: %w", processingTask.TaskID, err)
 	}
 
-	if executionResult.ToolName != "" {
+	for _, toolCall := range executionResult.ToolCalls {
+		if toolCall.ToolName == "" {
+			continue
+		}
 		if recordedTask, ok := s.runEngine.RecordToolCall(
 			processingTask.TaskID,
-			executionResult.ToolName,
-			executionResult.ToolInput,
-			executionResult.ToolOutput,
-			executionResult.DurationMS,
+			toolCall.ToolName,
+			toolCall.Input,
+			toolCall.Output,
+			toolCall.DurationMS,
 		); ok {
 			processingTask = recordedTask
 		}
