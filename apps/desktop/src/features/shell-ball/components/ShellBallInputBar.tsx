@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ChangeEvent, KeyboardEvent } from "react";
 import { ArrowUp, Paperclip } from "lucide-react";
 import { cn } from "../../../utils/cn";
@@ -23,6 +24,8 @@ export function ShellBallInputBar({
   onSubmit,
   onFocusChange,
 }: ShellBallInputBarProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   if (mode === "hidden") {
     return null;
   }
@@ -34,6 +37,21 @@ export function ShellBallInputBar({
   const buttonsDisabled = !isInteractive;
   const submitDisabled = !isInteractive || trimmedValue === "";
   const previewLabel = voicePreview === null ? null : `Release to ${voicePreview}`;
+
+  useEffect(() => {
+    if (isInteractive) {
+      return;
+    }
+
+    if (inputRef.current === null) {
+      return;
+    }
+
+    if (inputRef.current === document.activeElement) {
+      inputRef.current.blur();
+      onFocusChange(false);
+    }
+  }, [isInteractive, onFocusChange]);
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     if (!isInteractive) {
@@ -63,6 +81,7 @@ export function ShellBallInputBar({
       data-voice-preview={voicePreview ?? undefined}
     >
       <input
+        ref={inputRef}
         type="text"
         className="shell-ball-input-bar__field"
         value={value}
@@ -71,6 +90,7 @@ export function ShellBallInputBar({
         onFocus={() => onFocusChange(true)}
         onBlur={() => onFocusChange(false)}
         readOnly={!isInteractive}
+        tabIndex={isInteractive ? 0 : -1}
         aria-label="Shell-ball input"
         placeholder={isVoice ? "Voice capture is active" : "Type a request for shell-ball"}
       />

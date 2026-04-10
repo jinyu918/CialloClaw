@@ -31,7 +31,13 @@ import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { ShellBallInputBar } from "./components/ShellBallInputBar";
 import type { ShellBallTransitionResult } from "./shellBall.types";
 import { shellBallVisualStates } from "./shellBall.types";
-import { syncShellBallInteractionController, useShellBallInteraction } from "./useShellBallInteraction";
+import {
+  getShellBallPostSubmitInputReset,
+  getShellBallVoicePreviewFromEvent,
+  shouldKeepShellBallVoicePreviewOnRegionLeave,
+  syncShellBallInteractionController,
+  useShellBallInteraction,
+} from "./useShellBallInteraction";
 import { useShellBallStore } from "../../stores/shellBallStore";
 
 function createFakeScheduler() {
@@ -645,6 +651,81 @@ test("shell-ball input bar surfaces voice preview guidance to the UI", () => {
 
   assert.match(markup, /data-voice-preview="cancel"/);
   assert.match(markup, /Release to cancel/);
+});
+
+test("shell-ball release preview recomputes from the final pointer position", () => {
+  assert.equal(
+    getShellBallVoicePreviewFromEvent({
+      startX: 100,
+      startY: 100,
+      clientX: 100,
+      clientY: 52,
+      fallbackPreview: null,
+    }),
+    "lock",
+  );
+
+  assert.equal(
+    getShellBallVoicePreviewFromEvent({
+      startX: 100,
+      startY: 100,
+      clientX: 100,
+      clientY: 148,
+      fallbackPreview: null,
+    }),
+    "cancel",
+  );
+});
+
+test("shell-ball keeps voice preview alive on leave while voice listening is active", () => {
+  assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("voice_listening"), true);
+  assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("hover_input"), false);
+  assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("voice_locked"), false);
+});
+
+test("shell-ball submit reset clears draft retention after submit", () => {
+  assert.deepEqual(getShellBallPostSubmitInputReset("summarize this"), {
+    nextInputValue: "",
+    nextFocused: false,
+  });
+
+  assert.equal(
+    shouldRetainShellBallHoverInput({
+      regionActive: false,
+      inputFocused: false,
+      hasDraft: false,
+    }),
+    false,
+  );
+});
+
+test("shell-ball input bar removes keyboard focus stops outside interactive mode", () => {
+  const readonlyMarkup = renderToStaticMarkup(
+    createElement(ShellBallInputBar, {
+      mode: "readonly",
+      voicePreview: null,
+      value: "submitted",
+      onValueChange: () => {},
+      onAttachFile: () => {},
+      onSubmit: () => {},
+      onFocusChange: () => {},
+    }),
+  );
+
+  const voiceMarkup = renderToStaticMarkup(
+    createElement(ShellBallInputBar, {
+      mode: "voice",
+      voicePreview: null,
+      value: "",
+      onValueChange: () => {},
+      onAttachFile: () => {},
+      onSubmit: () => {},
+      onFocusChange: () => {},
+    }),
+  );
+
+  assert.match(readonlyMarkup, /tabindex="-1"/i);
+  assert.match(voiceMarkup, /tabindex="-1"/i);
 });
 
 test("shell-ball app drops page-shell copy while preserving the floating shell surface", () => {

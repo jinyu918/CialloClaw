@@ -16,6 +16,38 @@ type TimeoutHandle = ReturnType<typeof globalThis.setTimeout>;
 
 type ShellBallInteractionController = ReturnType<typeof createShellBallInteractionController>;
 
+export function getShellBallVoicePreviewFromEvent(input: {
+  startX: number | null;
+  startY: number | null;
+  clientX: number;
+  clientY: number;
+  fallbackPreview: ShellBallVoicePreview;
+}) {
+  if (input.startX === null || input.startY === null) {
+    return input.fallbackPreview;
+  }
+
+  return getShellBallVoicePreview({
+    deltaX: input.clientX - input.startX,
+    deltaY: input.clientY - input.startY,
+  });
+}
+
+export function shouldKeepShellBallVoicePreviewOnRegionLeave(state: ShellBallVisualState) {
+  return state === "voice_listening";
+}
+
+export function getShellBallPostSubmitInputReset(inputValue: string) {
+  if (inputValue.trim() === "") {
+    return null;
+  }
+
+  return {
+    nextInputValue: "",
+    nextFocused: false,
+  };
+}
+
 export function syncShellBallInteractionController(input: {
   controller: ShellBallInteractionController;
   visualState: ShellBallVisualState;
@@ -39,7 +71,6 @@ export function useShellBallInteraction() {
   const pressStartYRef = useRef<number | null>(null);
   const voicePreviewRef = useRef<ShellBallVoicePreview>(null);
   const longPressHandleRef = useRef<TimeoutHandle | null>(null);
-  const suppressNextPrimaryClickRef = useRef(false);
   const setVisualStateRef = useRef(setVisualState);
   const controllerRef = useRef<ShellBallInteractionController | null>(null);
 
@@ -112,11 +143,6 @@ export function useShellBallInteraction() {
   }
 
   function handlePrimaryClick() {
-    if (suppressNextPrimaryClickRef.current) {
-      suppressNextPrimaryClickRef.current = false;
-      return;
-    }
-
     if (controllerRef.current?.getState() !== "voice_locked") {
       return;
     }
@@ -132,8 +158,11 @@ export function useShellBallInteraction() {
   function handleRegionLeave() {
     regionActiveRef.current = false;
     clearLongPressTimer();
-    setCurrentVoicePreview(null);
-    suppressNextPrimaryClickRef.current = false;
+
+    if (!shouldKeepShellBallVoicePreviewOnRegionLeave(controllerRef.current?.getState() ?? visualState)) {
+      setCurrentVoicePreview(null);
+    }
+
     dispatch("pointer_leave_region", {
       regionActive: false,
       hoverRetained: getHoverRetained(),
@@ -141,11 +170,14 @@ export function useShellBallInteraction() {
   }
 
   function handleSubmitText() {
-    if (inputValue.trim() === "") {
+    const reset = getShellBallPostSubmitInputReset(inputValue);
+    if (reset === null) {
       return;
     }
 
     dispatch("submit_text");
+    setInputValue(reset.nextInputValue);
+    inputFocusedRef.current = reset.nextFocused;
   }
 
   function handleAttachFile() {
@@ -164,8 +196,6 @@ export function useShellBallInteraction() {
       return;
     }
 
-    suppressNextPrimaryClickRef.current = true;
-
     longPressHandleRef.current = globalThis.setTimeout(() => {
       longPressHandleRef.current = null;
       dispatch("press_start");
@@ -183,18 +213,29 @@ export function useShellBallInteraction() {
     }
 
     setCurrentVoicePreview(
-      getShellBallVoicePreview({
-        deltaX: event.clientX - pressStartXRef.current,
-        deltaY: event.clientY - pressStartYRef.current,
+      getShellBallVoicePreviewFromEvent({
+        startX: pressStartXRef.current,
+        startY: pressStartYRef.current,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        fallbackPreview: voicePreviewRef.current,
       }),
     );
   }
 
-  function handlePressEnd(_event: PointerEvent<HTMLButtonElement>) {
+  function handlePressEnd(event: PointerEvent<HTMLButtonElement>) {
     clearLongPressTimer();
 
     if (controllerRef.current?.getState() === "voice_listening") {
-      dispatch(resolveShellBallVoiceReleaseEvent(voicePreviewRef.current));
+      const finalPreview = getShellBallVoicePreviewFromEvent({
+        startX: pressStartXRef.current,
+        startY: pressStartYRef.current,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        fallbackPreview: voicePreviewRef.current,
+      });
+
+      dispatch(resolveShellBallVoiceReleaseEvent(finalPreview));
       pressStartXRef.current = null;
       pressStartYRef.current = null;
       setCurrentVoicePreview(null);
@@ -225,7 +266,6 @@ export function useShellBallInteraction() {
     pressStartXRef.current = null;
     pressStartYRef.current = null;
     setCurrentVoicePreview(null);
-    suppressNextPrimaryClickRef.current = false;
     controllerRef.current?.forceState(state, { regionActive: regionActiveRef.current });
     syncVisualState();
   }
@@ -252,7 +292,6 @@ export function useShellBallInteraction() {
       pressStartXRef.current = null;
       pressStartYRef.current = null;
       voicePreviewRef.current = null;
-      suppressNextPrimaryClickRef.current = false;
       controllerRef.current?.dispose();
     };
   }, []);
