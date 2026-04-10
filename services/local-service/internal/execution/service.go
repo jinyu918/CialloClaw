@@ -125,11 +125,19 @@ func (s *Service) Execute(ctx context.Context, request Request) (Result, error) 
 		ModelInvocation: cloneMap(trace.ModelInvocation),
 		AuditRecord:     cloneMap(trace.AuditRecord),
 		ToolCalls:       append([]tools.ToolCallRecord(nil), trace.ToolCalls...),
+		ToolInput: map[string]any{
+			"intent_name":     stringValue(request.Intent, "name", "summarize"),
+			"delivery_type":   deliveryType,
+			"input_preview":   truncateText(inputText, 96),
+			"available_tools": s.availableToolNames(),
+			"workers":         s.availableWorkers(),
+		},
 	}
 
-	if toolResult, ok, err := s.executeThroughToolExecutor(ctx, request, deliveryResult, outputText); err != nil {
+	if toolResult, ok, err := s.executeThroughToolExecutor(ctx, request, deliveryResult, trace.OutputText); err != nil {
 		return Result{}, err
 	} else if ok {
+		toolResult.ToolCalls = append(append([]tools.ToolCallRecord(nil), result.ToolCalls...), toolResult.ToolCalls...)
 		// 当请求已走 ToolExecutor 路径时，保留真实工具输入，
 		// 仅把 execution 层的通用上下文附加到 execution_context，
 		// 避免后续 ToolCall 记录丢失实际工具参数。
@@ -223,6 +231,7 @@ func (s *Service) executeDirectBuiltinTool(ctx context.Context, request Request)
 		DeliveryResult: s.delivery.BuildDeliveryResultWithTargetPath(request.TaskID, "bubble", request.ResultTitle, bubbleText, ""),
 		Artifacts:      toolArtifactsFromResult(request.TaskID, toolResult),
 		BubbleText:     bubbleText,
+		ToolCalls:      []tools.ToolCallRecord{normalizeFilesystemToolCall(toolResult.ToolCall, map[string]any{"path": stringValue(args, "path", "")})},
 		ToolName:       intentName,
 		ToolInput: mergeToolInputs(args, map[string]any{
 			"intent_name":     intentName,
@@ -230,7 +239,7 @@ func (s *Service) executeDirectBuiltinTool(ctx context.Context, request Request)
 			"available_tools": s.availableToolNames(),
 			"workers":         s.availableWorkers(),
 		}),
-		ToolOutput: mergeToolOutputs(toolResult.RawOutput, toolResult.SummaryOutput),
+		ToolOutput: normalizeFilesystemToolOutput(intentName, mergeToolOutputs(toolResult.RawOutput, toolResult.SummaryOutput), args),
 	}, true, nil
 }
 
@@ -256,9 +265,10 @@ func (s *Service) executeThroughToolExecutor(ctx context.Context, request Reques
 		Content:        outputText,
 		DeliveryResult: deliveryResult,
 		Artifacts:      toolArtifactsFromResult(request.TaskID, toolResult),
+		ToolCalls:      []tools.ToolCallRecord{normalizeFilesystemToolCall(toolResult.ToolCall, toolInput)},
 		ToolName:       toolName,
 		ToolInput:      toolInput,
-		ToolOutput:     mergeToolOutputs(toolResult.RawOutput, toolResult.SummaryOutput),
+		ToolOutput:     normalizeFilesystemToolOutput(toolName, mergeToolOutputs(toolResult.RawOutput, toolResult.SummaryOutput), toolInput),
 	}
 	if toolName == "write_file" {
 		result.Artifacts = s.delivery.BuildArtifact(request.TaskID, request.ResultTitle, deliveryResult)
@@ -271,7 +281,7 @@ func (s *Service) executeThroughToolExecutor(ctx context.Context, request Reques
 			return Result{}, false, err
 		}
 		if consumedOutput != nil {
-			result.ToolOutput = mergeToolOutputs(consumedOutput, toolResult.SummaryOutput)
+			result.ToolOutput = normalizeFilesystemToolOutput(toolName, mergeToolOutputs(consumedOutput, toolResult.SummaryOutput), toolInput)
 		}
 		if consumedArtifact != nil {
 			result.Artifacts = append(result.Artifacts, consumedArtifact)
@@ -369,6 +379,38 @@ func mergeToolInputs(toolInput, executionContext map[string]any) map[string]any 
 		merged["execution_context"] = executionContext
 	}
 	return merged
+}
+
+func normalizeFilesystemToolOutput(toolName string, output map[string]any, toolInput map[string]any) map[string]any {
+	if len(output) == 0 {
+		return nil
+	}
+	normalized := cloneOutput(output)
+	pathValue := stringValue(toolInput, "path", "")
+	if pathValue == "" {
+		return normalized
+	}
+	switch toolName {
+	case "read_file", "write_file", "list_dir":
+		normalized["path"] = pathValue
+	}
+	return normalized
+}
+
+func normalizeFilesystemToolCall(record tools.ToolCallRecord, toolInput map[string]any) tools.ToolCallRecord {
+	pathValue := stringValue(toolInput, "path", "")
+	if pathValue == "" {
+		return record
+	}
+	if record.Input == nil {
+		record.Input = map[string]any{}
+	}
+	record.Input["path"] = pathValue
+	if record.Output == nil {
+		record.Output = map[string]any{}
+	}
+	record.Output["path"] = pathValue
+	return record
 }
 
 func toolArtifactsFromResult(taskID string, result *tools.ToolExecutionResult) []map[string]any {

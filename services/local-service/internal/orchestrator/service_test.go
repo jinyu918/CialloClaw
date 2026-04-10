@@ -60,6 +60,7 @@ func newTestServiceWithExecution(t *testing.T, modelOutput string) (*Service, st
 	}
 
 	modelService := model.NewService(modelConfig(), stubModelClient{output: modelOutput})
+	auditService := audit.NewService()
 	deliveryService := delivery.NewService()
 	toolRegistry := tools.NewRegistry()
 	if err := builtin.RegisterBuiltinTools(toolRegistry); err != nil {
@@ -68,7 +69,7 @@ func newTestServiceWithExecution(t *testing.T, modelOutput string) (*Service, st
 	toolExecutor := tools.NewToolExecutor(toolRegistry)
 	pluginService := plugin.NewService()
 	fileSystem := platform.NewLocalFileSystemAdapter(pathPolicy)
-	executor := execution.NewService(fileSystem, platform.LocalExecutionBackend{}, modelService, audit.NewService(), checkpoint.NewService(), deliveryService, toolRegistry, toolExecutor, pluginService)
+	executor := execution.NewService(fileSystem, platform.LocalExecutionBackend{}, modelService, auditService, checkpoint.NewService(), deliveryService, toolRegistry, toolExecutor, pluginService)
 
 	service := NewService(
 		contextsvc.NewService(),
