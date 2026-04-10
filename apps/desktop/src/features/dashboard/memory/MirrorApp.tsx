@@ -7,29 +7,26 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { BookMarked, BrainCircuit, CalendarDays, Sparkles, X } from "lucide-react";
+import { BookMarked, BrainCircuit, CalendarDays, Clock3, X } from "lucide-react";
 import { PanelSurface, StatusBadge } from "@cialloclaw/ui";
 import { subscribeMirrorOverviewUpdated } from "@/rpc/subscriptions";
 import { loadMirrorOverviewData, type MirrorOverviewData } from "./mirrorService";
+import { loadMirrorFloatingPositions, saveMirrorFloatingPositions } from "./mirrorLayoutStorage";
+import {
+  DEFAULT_MIRROR_DIRECTION_STACK,
+  FLOATING_MIRROR_DIRECTION_KEYS,
+  MIRROR_ORBITAL_TARGETS,
+  getMirrorDirectionMeta,
+  type FloatingMirrorDirectionKey,
+  type MirrorCardAccent,
+  type MirrorDirectionKey,
+} from "./mirrorDirections";
 import "./mirror.css";
 
-const MODULE_KEYS = [
-  "history",
-  "profile",
-  "activeHours",
-  "preferredOutput",
-  "daily",
-  "completedTasks",
-  "generatedOutputs",
-  "memory",
-] as const;
-
-type DraggableModuleKey = (typeof MODULE_KEYS)[number];
-type FloatingModuleKey = Exclude<DraggableModuleKey, "memory">;
 type ModulePosition = { x: number; y: number };
-type ModulePositions = Record<DraggableModuleKey, ModulePosition>;
+type ModulePositions = Record<MirrorDirectionKey, ModulePosition>;
 type ModuleSize = { width: number; height: number };
-type ModuleSizes = Record<DraggableModuleKey, ModuleSize>;
+type ModuleSizes = Record<MirrorDirectionKey, ModuleSize>;
 type BoardBounds = { minX: number; minY: number; maxX: number; maxY: number };
 type BoardGrid = { columns: number; rows: number };
 type OccupiedModule = { position: ModulePosition; size: ModuleSize };
@@ -46,11 +43,15 @@ type CardSummary = {
   tone: string;
   mainLine: string;
   detailLine: string;
-  accent: "sky" | "warm" | "sage" | "rose";
-  emphasis?: "default" | "number" | "memory";
+  accent: MirrorCardAccent;
+  emphasis?: "memory";
+};
+type DetailBadge = {
+  label: string;
+  tone: string;
 };
 type DragState = {
-  key: DraggableModuleKey;
+  key: FloatingMirrorDirectionKey;
   pointerId: number;
   startX: number;
   startY: number;
@@ -59,8 +60,7 @@ type DragState = {
   moved: boolean;
 };
 
-const INITIAL_MODULE_STACK: DraggableModuleKey[] = [...MODULE_KEYS];
-const FLOATING_MODULE_KEYS = MODULE_KEYS.filter((key): key is FloatingModuleKey => key !== "memory");
+const INITIAL_MODULE_STACK: MirrorDirectionKey[] = DEFAULT_MIRROR_DIRECTION_STACK;
 const DRAG_THRESHOLD = 8;
 const BOARD_PADDING = 12;
 const CARD_CLEARANCE = 10;
@@ -69,34 +69,16 @@ const DEFAULT_CARD_SIZE: ModuleSize = { width: 260, height: 168 };
 const DEFAULT_MEMORY_CARD_SIZE: ModuleSize = { width: 480, height: 320 };
 const PINNED_MEMORY_CARD_OFFSET = { x: 20, y: 104 };
 const DEFAULT_MODULE_SIZES: ModuleSizes = {
-  history: DEFAULT_CARD_SIZE,
+  dailyStage: DEFAULT_CARD_SIZE,
   profile: DEFAULT_CARD_SIZE,
-  activeHours: DEFAULT_CARD_SIZE,
-  preferredOutput: DEFAULT_CARD_SIZE,
-  daily: DEFAULT_CARD_SIZE,
-  completedTasks: DEFAULT_CARD_SIZE,
-  generatedOutputs: DEFAULT_CARD_SIZE,
   memory: DEFAULT_MEMORY_CARD_SIZE,
+  history: DEFAULT_CARD_SIZE,
 };
 const DEFAULT_MODULE_POSITIONS: ModulePositions = {
-  history: { x: 0, y: 0 },
+  dailyStage: { x: 0, y: 0 },
   profile: { x: 0, y: 0 },
-  activeHours: { x: 0, y: 0 },
-  preferredOutput: { x: 0, y: 0 },
-  daily: { x: 0, y: 0 },
-  completedTasks: { x: 0, y: 0 },
-  generatedOutputs: { x: 0, y: 0 },
   memory: { x: 0, y: 0 },
-};
-const ORBITAL_MODULE_TARGETS: Record<DraggableModuleKey, { x: number; y: number }> = {
-  history: { x: 0.04, y: 0.16 },
-  profile: { x: 0.34, y: 0.04 },
-  activeHours: { x: 0.68, y: 0.08 },
-  preferredOutput: { x: 0.82, y: 0.34 },
-  daily: { x: 0.72, y: 0.68 },
-  completedTasks: { x: 0.42, y: 0.82 },
-  generatedOutputs: { x: 0.12, y: 0.7 },
-  memory: { x: 0.06, y: 0.18 },
+  history: { x: 0, y: 0 },
 };
 
 function formatMirrorDate(value: string) {
@@ -112,18 +94,6 @@ function formatShortMirrorDate(value: string) {
     month: "short",
     day: "numeric",
   });
-}
-
-function formatInsightBadgeLabel(value: string) {
-  if (value === "mirror ready") {
-    return "镜像已生成";
-  }
-
-  if (value === "mirror empty") {
-    return "暂无镜像";
-  }
-
-  return value;
 }
 
 function clampValue(value: number, min: number, max: number) {
@@ -165,11 +135,11 @@ function clampDimension(value: number, min: number, max: number) {
 }
 
 function getBoardGrid(canvasWidth: number, canvasHeight: number): BoardGrid {
-  let bestGrid: BoardGrid = { columns: FLOATING_MODULE_KEYS.length, rows: 1 };
+  let bestGrid: BoardGrid = { columns: FLOATING_MIRROR_DIRECTION_KEYS.length, rows: 1 };
   let bestScore = Number.NEGATIVE_INFINITY;
 
-  for (let columns = 1; columns <= FLOATING_MODULE_KEYS.length; columns += 1) {
-    const rows = Math.ceil(FLOATING_MODULE_KEYS.length / columns);
+  for (let columns = 1; columns <= FLOATING_MIRROR_DIRECTION_KEYS.length; columns += 1) {
+    const rows = Math.ceil(FLOATING_MIRROR_DIRECTION_KEYS.length / columns);
     const width = (canvasWidth - BOARD_PADDING * 2 - CARD_CLEARANCE * (columns - 1)) / columns;
     const height = (canvasHeight - BOARD_PADDING * 2 - CARD_CLEARANCE * (rows - 1)) / rows;
     const score = Math.min(width, height);
@@ -205,14 +175,10 @@ function getMemoryCardSize(canvasWidth: number, canvasHeight: number) {
 
 function getModuleSizes(regularSize: ModuleSize, memorySize: ModuleSize): ModuleSizes {
   return {
-    history: regularSize,
+    dailyStage: regularSize,
     profile: regularSize,
-    activeHours: regularSize,
-    preferredOutput: regularSize,
-    daily: regularSize,
-    completedTasks: regularSize,
-    generatedOutputs: regularSize,
     memory: memorySize,
+    history: regularSize,
   } satisfies ModuleSizes;
 }
 
@@ -288,10 +254,10 @@ function getGridModuleTargets(bounds: BoardBounds, grid: BoardGrid, size: Module
   const gridStartY = bounds.minY + Math.max(0, (availableHeight - gridHeight) / 2);
   const positions = { ...DEFAULT_MODULE_POSITIONS };
 
-  FLOATING_MODULE_KEYS.forEach((key, index) => {
+  FLOATING_MIRROR_DIRECTION_KEYS.forEach((key, index) => {
     const row = Math.floor(index / grid.columns);
     const indexInRow = index % grid.columns;
-    const remainingCards = FLOATING_MODULE_KEYS.length - row * grid.columns;
+    const remainingCards = FLOATING_MIRROR_DIRECTION_KEYS.length - row * grid.columns;
     const cardsInRow = Math.min(grid.columns, remainingCards);
     const rowWidth = cardsInRow * size.width + Math.max(0, cardsInRow - 1) * CARD_CLEARANCE;
     const gridStartX = bounds.minX + Math.max(0, (availableWidth - rowWidth) / 2);
@@ -310,8 +276,8 @@ function getOrbitalModuleTargets(bounds: BoardBounds) {
   const travelX = Math.max(0, bounds.maxX - bounds.minX);
   const travelY = Math.max(0, bounds.maxY - bounds.minY);
 
-  FLOATING_MODULE_KEYS.forEach((key) => {
-    const target = ORBITAL_MODULE_TARGETS[key];
+  FLOATING_MIRROR_DIRECTION_KEYS.forEach((key) => {
+    const target = MIRROR_ORBITAL_TARGETS[key];
     positions[key] = {
       x: Math.round(bounds.minX + travelX * target.x),
       y: Math.round(bounds.minY + travelY * target.y),
@@ -324,7 +290,7 @@ function getOrbitalModuleTargets(bounds: BoardBounds) {
 function getDefaultModuleTargets(bounds: BoardBounds, grid: BoardGrid, size: ModuleSize): ModulePositions {
   const availableWidth = bounds.maxX - bounds.minX + size.width;
   const availableHeight = bounds.maxY - bounds.minY + size.height;
-  const canUseOrbitalLayout = availableWidth >= size.width * 3.6 && availableHeight >= size.height * 3.15;
+  const canUseOrbitalLayout = availableWidth >= size.width * 3.15 && availableHeight >= size.height * 2.6;
 
   if (!canUseOrbitalLayout) {
     return getGridModuleTargets(bounds, grid, size);
@@ -350,7 +316,7 @@ function normalizeModulePositions(targets: ModulePositions, layout: BoardLayout)
 
   nextPositions.memory = pinnedMemoryPosition;
 
-  for (const key of FLOATING_MODULE_KEYS) {
+  for (const key of FLOATING_MIRROR_DIRECTION_KEYS) {
     const settledPosition = resolveSettledPosition(targets[key], layout.moduleSizes[key], occupied, layout);
 
     if (!settledPosition) {
@@ -364,100 +330,56 @@ function normalizeModulePositions(targets: ModulePositions, layout: BoardLayout)
   return nextPositions;
 }
 
-function getModuleTitle(key: DraggableModuleKey) {
-  if (key === "history") {
-    return "历史概要";
-  }
-
-  if (key === "profile") {
-    return "用户画像";
-  }
-
-  if (key === "activeHours") {
-    return "活跃时段";
-  }
-
-  if (key === "preferredOutput") {
-    return "偏好交付";
-  }
-
-  if (key === "daily") {
-    return "日报";
-  }
-
-  if (key === "completedTasks") {
-    return "今日完成";
-  }
-
-  if (key === "generatedOutputs") {
-    return "输出数量";
-  }
-
-  return "近期被调用记忆";
+function getDirectionTitle(key: MirrorDirectionKey) {
+  return getMirrorDirectionMeta(key).title;
 }
 
-function getModuleEyebrow(key: DraggableModuleKey) {
-  if (key === "history") {
-    return "历史概要";
-  }
-
-  if (key === "profile") {
-    return "用户画像";
-  }
-
-  if (key === "activeHours") {
-    return "用户画像";
-  }
-
-  if (key === "preferredOutput") {
-    return "用户画像";
-  }
-
-  if (key === "daily") {
-    return "日报";
-  }
-
-  if (key === "completedTasks") {
-    return "日报";
-  }
-
-  if (key === "generatedOutputs") {
-    return "日报";
-  }
-
-  return "记忆引用";
+function getDirectionEyebrow(key: MirrorDirectionKey) {
+  return getMirrorDirectionMeta(key).eyebrow;
 }
 
-function getDetailKey(key: DraggableModuleKey) {
-  if (key === "history") {
-    return "history";
-  }
+function getDirectionPlateCode(key: MirrorDirectionKey) {
+  const codes: Record<MirrorDirectionKey, string> = {
+    dailyStage: "SL-02",
+    profile: "SL-03",
+    memory: "MS-01",
+    history: "SL-04",
+  };
 
-  if (key === "profile" || key === "activeHours" || key === "preferredOutput") {
-    return "profile";
-  }
+  return codes[key];
+}
 
-  if (key === "daily" || key === "completedTasks" || key === "generatedOutputs") {
-    return "daily";
-  }
+function pickFloatingModulePositions(positions: ModulePositions): Record<FloatingMirrorDirectionKey, ModulePosition> {
+  return {
+    dailyStage: positions.dailyStage,
+    profile: positions.profile,
+    history: positions.history,
+  };
+}
 
-  return "memory";
+function getInitialModulePositions(): ModulePositions {
+  return {
+    ...DEFAULT_MODULE_POSITIONS,
+    ...(loadMirrorFloatingPositions() ?? {}),
+  };
 }
 
 export function MirrorApp() {
   const [mirrorData, setMirrorData] = useState<MirrorOverviewData | null>(null);
-  const [modulePositions, setModulePositions] = useState<ModulePositions>(DEFAULT_MODULE_POSITIONS);
-  const [moduleStack, setModuleStack] = useState<DraggableModuleKey[]>(INITIAL_MODULE_STACK);
+  const [modulePositions, setModulePositions] = useState<ModulePositions>(getInitialModulePositions);
+  const [moduleStack, setModuleStack] = useState<MirrorDirectionKey[]>(INITIAL_MODULE_STACK);
   const [moduleSizes, setModuleSizes] = useState<ModuleSizes>(DEFAULT_MODULE_SIZES);
-  const [draggingKey, setDraggingKey] = useState<DraggableModuleKey | null>(null);
-  const [activeDetailKey, setActiveDetailKey] = useState<DraggableModuleKey | null>(null);
+  const [draggingKey, setDraggingKey] = useState<FloatingMirrorDirectionKey | null>(null);
+  const [activeDetailKey, setActiveDetailKey] = useState<MirrorDirectionKey | null>(null);
   const [boardReady, setBoardReady] = useState(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const modulePositionsRef = useRef<ModulePositions>(DEFAULT_MODULE_POSITIONS);
   const hasPlacedModulesRef = useRef(false);
   const isMountedRef = useRef(true);
   const fetchInFlightRef = useRef(false);
   const pendingRefreshRef = useRef(false);
+  const lastSavedFloatingPositionsRef = useRef<string | null>(null);
 
   const refreshMirrorData = useCallback(() => {
     if (fetchInFlightRef.current) {
@@ -503,8 +425,20 @@ export function MirrorApp() {
     };
   }, [refreshMirrorData]);
 
-  const bringModuleToFront = useCallback((key: DraggableModuleKey) => {
+  const bringModuleToFront = useCallback((key: MirrorDirectionKey) => {
     setModuleStack((currentStack) => [...currentStack.filter((item) => item !== key), key]);
+  }, []);
+
+  const persistFloatingModulePositions = useCallback((positions: ModulePositions) => {
+    const floatingPositions = pickFloatingModulePositions(positions);
+    const serializedFloatingPositions = JSON.stringify(floatingPositions);
+
+    if (lastSavedFloatingPositionsRef.current === serializedFloatingPositions) {
+      return;
+    }
+
+    saveMirrorFloatingPositions(floatingPositions);
+    lastSavedFloatingPositionsRef.current = serializedFloatingPositions;
   }, []);
 
   const getBoardLayout = useCallback(() => {
@@ -531,14 +465,14 @@ export function MirrorApp() {
   }, []);
 
   const getSettledModulePosition = useCallback(
-    (key: DraggableModuleKey, target: ModulePosition, positions: ModulePositions) => {
+    (key: MirrorDirectionKey, target: ModulePosition, positions: ModulePositions) => {
       const layout = getBoardLayout();
 
       if (!layout) {
         return target;
       }
 
-      const occupied = MODULE_KEYS.filter((item) => item !== key).map((item) => ({
+      const occupied = INITIAL_MODULE_STACK.filter((item) => item !== key).map((item) => ({
         position: positions[item],
         size: layout.moduleSizes[item],
       }));
@@ -563,7 +497,10 @@ export function MirrorApp() {
       setModulePositions((currentPositions) => {
         const targets = hasPlacedModulesRef.current
           ? currentPositions
-          : getDefaultModuleTargets(layout.bounds, layout.grid, layout.regularSize);
+          : {
+              ...getDefaultModuleTargets(layout.bounds, layout.grid, layout.regularSize),
+              ...pickFloatingModulePositions(currentPositions),
+            };
         return normalizeModulePositions(targets, layout);
       });
       hasPlacedModulesRef.current = true;
@@ -577,6 +514,18 @@ export function MirrorApp() {
       window.removeEventListener("resize", syncBoardLayout);
     };
   }, [getBoardLayout, mirrorData]);
+
+  useEffect(() => {
+    modulePositionsRef.current = modulePositions;
+  }, [modulePositions]);
+
+  useEffect(() => {
+    if (!boardReady || draggingKey) {
+      return;
+    }
+
+    persistFloatingModulePositions(modulePositions);
+  }, [boardReady, draggingKey, modulePositions, persistFloatingModulePositions]);
 
   useEffect(() => {
     if (!activeDetailKey) {
@@ -600,7 +549,7 @@ export function MirrorApp() {
     return (
       <main className="app-shell mirror-page">
         <div className="mirror-page__canvas mirror-page__canvas--full mirror-page__canvas--loading">
-          <p className="mirror-page__loading-copy">正在整理镜像卡片…</p>
+          <p className="mirror-page__loading-copy">正在点亮检片台…</p>
         </div>
       </main>
     );
@@ -620,7 +569,7 @@ export function MirrorApp() {
     setDraggingKey(null);
   };
 
-  const handleModulePointerDown = (key: DraggableModuleKey) => (event: PointerEvent<HTMLDivElement>) => {
+  const handleModulePointerDown = (key: FloatingMirrorDirectionKey) => (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
       return;
     }
@@ -639,7 +588,7 @@ export function MirrorApp() {
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleModulePointerMove = (key: DraggableModuleKey) => (event: PointerEvent<HTMLDivElement>) => {
+  const handleModulePointerMove = (key: FloatingMirrorDirectionKey) => (event: PointerEvent<HTMLDivElement>) => {
     const dragState = dragStateRef.current;
 
     if (!dragState || dragState.key !== key || dragState.pointerId !== event.pointerId) {
@@ -673,7 +622,7 @@ export function MirrorApp() {
     }));
   };
 
-  const handleModulePointerUp = (key: DraggableModuleKey) => (event: PointerEvent<HTMLDivElement>) => {
+  const handleModulePointerUp = (key: FloatingMirrorDirectionKey) => (event: PointerEvent<HTMLDivElement>) => {
     const dragState = dragStateRef.current;
 
     if (!dragState || dragState.key !== key || dragState.pointerId !== event.pointerId) {
@@ -688,12 +637,16 @@ export function MirrorApp() {
 
     releaseDrag();
 
+    if (dragState.moved) {
+      persistFloatingModulePositions(modulePositionsRef.current);
+    }
+
     if (!dragState.moved && travelled < DRAG_THRESHOLD) {
       setActiveDetailKey(key);
     }
   };
 
-  const handleModulePointerCancel = (_key: DraggableModuleKey) => (event: PointerEvent<HTMLDivElement>) => {
+  const handleModulePointerCancel = (_key: FloatingMirrorDirectionKey) => (event: PointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -701,7 +654,7 @@ export function MirrorApp() {
     releaseDrag();
   };
 
-  const handleModuleKeyDown = (key: DraggableModuleKey) => (event: KeyboardEvent<HTMLDivElement>) => {
+  const handleModuleKeyDown = (key: MirrorDirectionKey) => (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       bringModuleToFront(key);
@@ -720,7 +673,7 @@ export function MirrorApp() {
           <article key={`${item}-${index}`} className="mirror-page__history-item">
             <div className="mirror-page__history-index">0{index + 1}</div>
             <div className="mirror-page__history-copy">
-              <p className="mirror-page__history-label">历史片段 {index + 1}</p>
+              <p className="mirror-page__history-label">概要片段 {index + 1}</p>
               <p className="mirror-page__history-text">{item}</p>
             </div>
           </article>
@@ -744,61 +697,57 @@ export function MirrorApp() {
           <p className="mirror-page__profile-copy">{profile.work_style}</p>
         </article>
 
-        <article className="mirror-page__profile-card mirror-page__profile-card--warm">
+        <article className="mirror-page__profile-card mirror-page__profile-card--accent">
           <div className="mirror-page__profile-heading">
-            <Sparkles className="mirror-page__profile-icon mirror-page__profile-icon--warm" />
+            <BookMarked className="mirror-page__profile-icon" />
             <span>偏好交付</span>
           </div>
           <p className="mirror-page__profile-copy">{profile.preferred_output}</p>
         </article>
 
-        <article className="mirror-page__profile-card mirror-page__profile-card--hours">
-          <StatusBadge tone="green">活跃时段</StatusBadge>
+        <article className="mirror-page__profile-card">
+          <div className="mirror-page__profile-heading">
+            <Clock3 className="mirror-page__profile-icon" />
+            <span>活跃时段</span>
+          </div>
           <p className="mirror-page__hours-value">{profile.active_hours}</p>
         </article>
-
-        <div className="mirror-page__detail-note-shell">
-          <p className="mirror-page__micro-label">镜像摘要</p>
-          <p className="mirror-page__note">{insight.description}</p>
-        </div>
       </div>
     );
   };
 
   const renderDailyDetail = () => {
     if (!dailySummary) {
-      return <p className="mirror-page__empty-state">暂无每日摘要。</p>;
+      return <p className="mirror-page__empty-state">暂无日报与阶段总结。</p>;
     }
-
-    const perTaskOutput = dailySummary.completed_tasks
-      ? (dailySummary.generated_outputs / dailySummary.completed_tasks).toFixed(1)
-      : "0.0";
 
     return (
       <div className="mirror-page__daily-stack mirror-page__daily-stack--expanded">
         <div className="mirror-page__date-card">
           <CalendarDays className="mirror-page__date-icon" />
           <div>
-            <p className="mirror-page__micro-label">记录日期</p>
+            <p className="mirror-page__micro-label">回看日期</p>
             <p className="mirror-page__date-value">{formatMirrorDate(dailySummary.date)}</p>
           </div>
         </div>
 
         <div className="mirror-page__summary-grid">
           <article className="mirror-page__summary-card">
-            <p className="mirror-page__micro-label">完成任务</p>
+            <p className="mirror-page__micro-label">当天完成事项</p>
             <p className="mirror-page__summary-value">{dailySummary.completed_tasks}</p>
-            <p className="mirror-page__summary-copy">已完成任务</p>
+            <p className="mirror-page__summary-copy">已完成任务数量</p>
           </article>
           <article className="mirror-page__summary-card mirror-page__summary-card--accent">
-            <p className="mirror-page__micro-label">输出数量</p>
+            <p className="mirror-page__micro-label">沉淀成果</p>
             <p className="mirror-page__summary-value">{dailySummary.generated_outputs}</p>
-            <p className="mirror-page__summary-copy">已记录输出</p>
+            <p className="mirror-page__summary-copy">已生成输出数量</p>
           </article>
         </div>
 
-        <div className="mirror-page__note">
-          平均每个已完成任务沉淀 {perTaskOutput} 份输出线索，可继续作为后续镜像整理和回看依据。
+        <div className="mirror-page__detail-note-shell mirror-page__detail-note-shell--stage">
+          <p className="mirror-page__micro-label">阶段总结</p>
+          <p className="mirror-page__stage-headline">{insight.title}</p>
+          <p className="mirror-page__note">{insight.description}</p>
         </div>
       </div>
     );
@@ -821,7 +770,7 @@ export function MirrorApp() {
                   <h3 className="mirror-page__memory-title">{reference.memory_id}</h3>
                 </div>
               </div>
-              <StatusBadge tone="processing">最近调用</StatusBadge>
+              <StatusBadge tone="processing">引用记录</StatusBadge>
             </div>
 
             <p className="mirror-page__memory-reason">{reference.reason}</p>
@@ -837,21 +786,47 @@ export function MirrorApp() {
       return null;
     }
 
-    const detailKey = getDetailKey(activeDetailKey);
-
-    if (detailKey === "history") {
+    if (activeDetailKey === "history") {
       return renderHistoryDetail();
     }
 
-    if (detailKey === "profile") {
+    if (activeDetailKey === "profile") {
       return renderProfileDetail();
     }
 
-    if (detailKey === "daily") {
+    if (activeDetailKey === "dailyStage") {
       return renderDailyDetail();
     }
 
     return renderMemoryDetail();
+  };
+
+  const getDetailBadge = (key: MirrorDirectionKey): DetailBadge => {
+    if (key === "dailyStage") {
+      return {
+        label: dailySummary ? formatShortMirrorDate(dailySummary.date) : "暂无日报",
+        tone: "processing",
+      };
+    }
+
+    if (key === "profile") {
+      return {
+        label: profile ? "画像已整理" : "暂无画像",
+        tone: "green",
+      };
+    }
+
+    if (key === "history") {
+      return {
+        label: overview.history_summary.length ? `${overview.history_summary.length} 条概要` : "暂无概要",
+        tone: "processing",
+      };
+    }
+
+    return {
+      label: overview.memory_references.length ? `${overview.memory_references.length} 条引用` : "暂无引用",
+      tone: "processing",
+    };
   };
 
   const renderDetailOverlay = () => {
@@ -859,13 +834,15 @@ export function MirrorApp() {
       return null;
     }
 
+    const detailBadge = getDetailBadge(activeDetailKey);
+
     return (
       <div className="mirror-page__detail-layer" onClick={closeDetail}>
-        <div className="mirror-page__detail-panel" role="dialog" aria-modal="true" aria-label={`${getModuleTitle(activeDetailKey)}详情`} onClick={(event) => event.stopPropagation()}>
-          <PanelSurface title={getModuleTitle(activeDetailKey)} eyebrow={getModuleEyebrow(activeDetailKey)}>
+        <div className="mirror-page__detail-panel" role="dialog" aria-modal="true" aria-label={`${getDirectionTitle(activeDetailKey)}详情`} onClick={(event) => event.stopPropagation()}>
+          <PanelSurface title={getDirectionTitle(activeDetailKey)} eyebrow={getDirectionEyebrow(activeDetailKey)}>
             <div className="mirror-page__detail-topbar">
               <div className="mirror-page__detail-meta">
-                <StatusBadge tone="processing">{formatInsightBadgeLabel(insight.badge)}</StatusBadge>
+                <StatusBadge tone={detailBadge.tone}>{detailBadge.label}</StatusBadge>
               </div>
               <button type="button" className="mirror-page__close-button" onClick={closeDetail} aria-label="关闭详情视图">
                 <X className="mirror-page__close-icon" />
@@ -878,98 +855,57 @@ export function MirrorApp() {
     );
   };
 
-  const getCardSummary = (key: DraggableModuleKey): CardSummary => {
-    if (key === "history") {
+  const getCardSummary = (key: MirrorDirectionKey): CardSummary => {
+    if (key === "dailyStage") {
       return {
-        badge: `${overview.history_summary.length} 条片段`,
+        badge: dailySummary ? formatShortMirrorDate(dailySummary.date) : "待同步",
         tone: "processing",
-        detailLine: overview.history_summary[1] ?? "轻触查看完整历史脉络。",
-        accent: "rose",
-        mainLine: overview.history_summary[0] ?? "暂无历史概要",
+        detailLine: dailySummary ? insight.description : "等待新的日报同步后生成阶段总结。",
+        accent: getMirrorDirectionMeta(key).accent,
+        mainLine: dailySummary ? insight.title : "暂无日报与阶段总结",
       };
     }
 
     if (key === "profile") {
       return {
-        badge: "用户画像",
+        badge: profile ? "画像侧写" : "暂无画像",
         tone: "green",
-        detailLine: profile?.preferred_output ?? "等待新的画像补全。",
-        accent: "sage",
+        detailLine: profile
+          ? `偏好 ${profile.preferred_output} · 活跃于 ${profile.active_hours}`
+          : "等待新的用户画像同步。",
+        accent: getMirrorDirectionMeta(key).accent,
         mainLine: profile?.work_style ?? "暂无用户画像",
       };
     }
 
-    if (key === "activeHours") {
+    if (key === "history") {
       return {
-        badge: "活跃时段",
-        tone: "green",
-        detailLine: "镜像捕捉到的高频在线节奏。",
-        accent: "sky",
-        mainLine: profile?.active_hours ?? "未记录",
-      };
-    }
-
-    if (key === "preferredOutput") {
-      return {
-        badge: "偏好交付",
+        badge: overview.history_summary.length ? `${overview.history_summary.length} 条概要` : "暂无概要",
         tone: "processing",
-        detailLine: profile?.work_style ?? "等待新的偏好摘要。",
-        accent: "warm",
-        mainLine: profile?.preferred_output ?? "未记录",
-      };
-    }
-
-    if (key === "daily") {
-      return {
-        badge: dailySummary ? formatShortMirrorDate(dailySummary.date) : "暂无记录",
-        tone: "processing",
-        detailLine: dailySummary
-          ? `${dailySummary.completed_tasks} 项任务 · ${dailySummary.generated_outputs} 份输出`
-          : "等待新的日报同步。",
-        accent: "sky",
-        mainLine: dailySummary ? formatMirrorDate(dailySummary.date) : "暂无日报",
-      };
-    }
-
-    if (key === "completedTasks") {
-      return {
-        badge: "今日完成",
-        tone: "processing",
-        detailLine: "已经落到镜面里的任务完成数。",
-        accent: "warm",
-        mainLine: `${dailySummary?.completed_tasks ?? 0} 项任务`,
-        emphasis: "number",
-      };
-    }
-
-    if (key === "generatedOutputs") {
-      return {
-        badge: "输出数量",
-        tone: "processing",
-        detailLine: "今日沉淀进镜像的输出线索。",
-        accent: "rose",
-        mainLine: `${dailySummary?.generated_outputs ?? 0} 份输出`,
-        emphasis: "number",
+        detailLine: overview.history_summary[1] ?? "轻触查看按片段整理的历史摘要。",
+        accent: getMirrorDirectionMeta(key).accent,
+        mainLine: overview.history_summary[0] ?? "暂无历史概要",
       };
     }
 
     return {
-      badge: `${overview.memory_references.length} 条记忆`,
+      badge: `${overview.memory_references.length} 条引用`,
       tone: "processing",
       detailLine: latestMemoryReference?.reason ?? "等待新的记忆调用记录。",
-      accent: "sage",
-      mainLine: latestMemoryReference?.memory_id ?? "暂无记忆",
+      accent: getMirrorDirectionMeta(key).accent,
+      mainLine: latestMemoryReference?.memory_id ?? "暂无近期被调用记忆",
       emphasis: "memory",
     };
   };
 
-  const renderDraggableModule = (key: DraggableModuleKey) => {
+  const renderDraggableModule = (key: MirrorDirectionKey) => {
     const isDragging = draggingKey === key;
     const isExpanded = activeDetailKey === key;
     const isPinnedMemoryCard = key === "memory";
     const moduleSize = moduleSizes[key];
     const summary = getCardSummary(key);
-    const moduleHint = isPinnedMemoryCard ? "点按查看详情" : "拖动整理 · 点按查看";
+    const directionMeta = getMirrorDirectionMeta(key);
+    const inspectionCode = getDirectionPlateCode(key);
     const summaryClassName = [
       "mirror-page__card-line",
       summary.emphasis ? `mirror-page__card-line--${summary.emphasis}` : null,
@@ -996,6 +932,7 @@ export function MirrorApp() {
         key={key}
         className={`mirror-page__draggable mirror-page__draggable--${key}${isPinnedMemoryCard ? " mirror-page__draggable--pinned" : ""}${isDragging ? " is-dragging" : ""}${isExpanded ? " is-active" : ""}${boardReady ? " is-ready" : ""}`}
         data-accent={summary.accent}
+        data-surface-kind={isPinnedMemoryCard ? "master" : "slide"}
         style={{
           height: `${moduleSize.height}px`,
           transform: `translate3d(${modulePositions[key].x}px, ${modulePositions[key].y}px, 0)`,
@@ -1005,22 +942,32 @@ export function MirrorApp() {
         tabIndex={0}
         aria-haspopup="dialog"
         aria-expanded={isExpanded}
-        aria-label={`${getModuleTitle(key)}，${isPinnedMemoryCard ? "可打开详情" : "可拖动并打开详情"}`}
+        aria-label={`${getDirectionTitle(key)}，${isPinnedMemoryCard ? "可打开详情" : "可拖动并打开详情"}`}
         onKeyDown={handleModuleKeyDown(key)}
         {...pointerHandlers}
       >
-        <section className="mirror-page__card-surface" aria-hidden="true">
+        <section className={`mirror-page__card-surface mirror-page__card-surface--${isPinnedMemoryCard ? "master" : "slide"}`} aria-hidden="true">
+          {isPinnedMemoryCard ? <span className="mirror-page__master-clip" aria-hidden="true" /> : <span className="mirror-page__slide-tab" aria-hidden="true" />}
+          <div className="mirror-page__surface-registers" aria-hidden="true">
+            <span className="mirror-page__surface-register mirror-page__surface-register--top-left" />
+            <span className="mirror-page__surface-register mirror-page__surface-register--top-right" />
+            <span className="mirror-page__surface-register mirror-page__surface-register--bottom-left" />
+            <span className="mirror-page__surface-register mirror-page__surface-register--bottom-right" />
+          </div>
           <div className="mirror-page__card-shell">
             <div className="mirror-page__card-top">
               <div className="mirror-page__card-heading">
-                <p className="mirror-page__card-kicker">{getModuleEyebrow(key)}</p>
-                <p className="mirror-page__card-title">{getModuleTitle(key)}</p>
+                <p className="mirror-page__card-kicker">{directionMeta.eyebrow}</p>
+                <p className="mirror-page__card-title">{directionMeta.title}</p>
               </div>
-              <StatusBadge tone={summary.tone}>{summary.badge}</StatusBadge>
+              <div className="mirror-page__card-top-meta">
+                <p className="mirror-page__surface-code">{inspectionCode}</p>
+                <StatusBadge tone={summary.tone}>{summary.badge}</StatusBadge>
+              </div>
             </div>
             <p className={summaryClassName}>{summary.mainLine}</p>
             <p className="mirror-page__card-detail">{summary.detailLine}</p>
-            <p className="mirror-page__module-hint">{moduleHint}</p>
+            <p className="mirror-page__module-hint">{directionMeta.hint}</p>
           </div>
         </section>
       </div>
@@ -1029,39 +976,22 @@ export function MirrorApp() {
 
   return (
     <main className="app-shell mirror-page">
-      <div className="mirror-page__canvas mirror-page__canvas--full" ref={canvasRef} aria-label="Mirror 卡片工作板">
-        <section className="mirror-page__scene" aria-label="Mirror 中央陪伴视图">
-          <div className="mirror-page__companion-shell">
-            <div className="mirror-page__companion-halo" />
-            <div className="mirror-page__companion-orbit mirror-page__companion-orbit--outer" />
-
-            <div className="mirror-page__mascot-shell">
-              <div className="mirror-page__mascot-shadow" />
-              <div className="mirror-page__mascot-float">
-                <div className="mirror-page__mascot-tail" />
-                <div className="mirror-page__mascot-wing mirror-page__mascot-wing--left" />
-                <div className="mirror-page__mascot-wing mirror-page__mascot-wing--right" />
-                <div className="mirror-page__mascot-body">
-                  <div className="mirror-page__mascot-crest">
-                    <span className="mirror-page__mascot-feather mirror-page__mascot-feather--left" />
-                    <span className="mirror-page__mascot-feather mirror-page__mascot-feather--center" />
-                    <span className="mirror-page__mascot-feather mirror-page__mascot-feather--right" />
-                  </div>
-                  <div className="mirror-page__mascot-belly" />
-                  <div className="mirror-page__mascot-cheek mirror-page__mascot-cheek--left" />
-                  <div className="mirror-page__mascot-cheek mirror-page__mascot-cheek--right" />
-                  <div className="mirror-page__mascot-face">
-                    <div className="mirror-page__mascot-eyes">
-                      <span className="mirror-page__mascot-eye" />
-                      <span className="mirror-page__mascot-eye" />
-                    </div>
-                    <div className="mirror-page__mascot-beak" />
-                  </div>
-                </div>
-              </div>
-              <div className="mirror-page__mascot-perch" />
-            </div>
-
+      <div className="mirror-page__canvas mirror-page__canvas--full" ref={canvasRef} aria-label="Mirror 检片台">
+        <section className="mirror-page__scene" aria-hidden="true">
+          <div className="mirror-page__desk-glow mirror-page__desk-glow--north" />
+          <div className="mirror-page__desk-glow mirror-page__desk-glow--east" />
+          <div className="mirror-page__desk-shadow-band" />
+          <div className="mirror-page__inspection-field">
+            <div className="mirror-page__inspection-field-core" />
+            <div className="mirror-page__inspection-grid" />
+            <div className="mirror-page__inspection-register mirror-page__inspection-register--horizontal" />
+            <div className="mirror-page__inspection-register mirror-page__inspection-register--vertical" />
+            <span className="mirror-page__inspection-corner mirror-page__inspection-corner--top-left" />
+            <span className="mirror-page__inspection-corner mirror-page__inspection-corner--top-right" />
+            <span className="mirror-page__inspection-corner mirror-page__inspection-corner--bottom-left" />
+            <span className="mirror-page__inspection-corner mirror-page__inspection-corner--bottom-right" />
+            <span className="mirror-page__inspection-pin mirror-page__inspection-pin--top" />
+            <span className="mirror-page__inspection-pin mirror-page__inspection-pin--right" />
           </div>
         </section>
         {moduleStack.map(renderDraggableModule)}
