@@ -23,7 +23,9 @@ import {
 } from "./shellBall.interaction";
 import { getShellBallMotionConfig } from "./shellBall.motion";
 import { ShellBallApp } from "./ShellBallApp";
+import { ShellBallDevLayer } from "./ShellBallDevLayer";
 import { ShellBallSurface } from "./ShellBallSurface";
+import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { ShellBallInputBar } from "./components/ShellBallInputBar";
 import type { ShellBallTransitionResult } from "./shellBall.types";
 import { shellBallVisualStates } from "./shellBall.types";
@@ -592,7 +594,7 @@ test("shell-ball input bar surfaces voice preview guidance to the UI", () => {
 });
 
 test("shell-ball app drops page-shell copy while preserving the floating shell surface", () => {
-  const markup = renderToStaticMarkup(createElement(ShellBallApp));
+  const markup = renderToStaticMarkup(createElement(ShellBallApp, { isDev: false }));
 
   assert.doesNotMatch(markup, /shell-ball phase 1/i);
   assert.doesNotMatch(markup, /小胖啾近场承接/);
@@ -601,7 +603,7 @@ test("shell-ball app drops page-shell copy while preserving the floating shell s
   assert.match(markup, /shell-ball-surface/);
   assert.match(markup, /shell-ball-bubble-zone/);
   assert.match(markup, /shell-ball-mascot/);
-  assert.match(markup, /Shell-ball demo switcher/);
+  assert.doesNotMatch(markup, /Shell-ball demo switcher/);
 });
 
 test("shell-ball surface renders the floating structure without the demo switcher", () => {
@@ -633,8 +635,35 @@ test("shell-ball surface renders the floating structure without the demo switche
   assert.doesNotMatch(markup, /shell-ball-surface__switcher-shell/);
 });
 
-test("shell-ball app composes the reusable surface with the demo switcher", () => {
-  const markup = renderToStaticMarkup(createElement(ShellBallApp));
+test("shell-ball demo switcher visibility stays dev-only", () => {
+  assert.equal(shouldShowShellBallDemoSwitcher(true), true);
+  assert.equal(shouldShowShellBallDemoSwitcher(false), false);
+});
+
+test("shell-ball dev layer isolates demo controls from the formal surface", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ShellBallDevLayer, {
+      value: "idle",
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /Shell-ball demo controls/);
+  assert.match(markup, /Shell-ball demo switcher/);
+  assert.match(markup, /shell-ball-surface__switcher-shell/);
+});
+
+test("shell-ball app keeps the reusable surface as the production structure", () => {
+  const markup = renderToStaticMarkup(createElement(ShellBallApp, { isDev: false }));
+
+  assert.match(markup, /Shell-ball floating surface/);
+  assert.match(markup, /shell-ball-surface__body/);
+  assert.doesNotMatch(markup, /Shell-ball demo switcher/);
+  assert.doesNotMatch(markup, /shell-ball-surface__switcher-shell/);
+});
+
+test("shell-ball app injects the demo switcher only in dev mode", () => {
+  const markup = renderToStaticMarkup(createElement(ShellBallApp, { isDev: true }));
 
   assert.match(markup, /Shell-ball floating surface/);
   assert.match(markup, /shell-ball-surface__body/);

@@ -8,7 +8,6 @@
     "rootDir": "./src"
   },
   "include": [
-    "src/app/shell-ball/main.tsx",
     "src/features/shell-ball/shellBall.contract.test.ts",
     "src/features/shell-ball/ShellBallApp.tsx",
     "src/features/shell-ball/ShellBallSurface.tsx",

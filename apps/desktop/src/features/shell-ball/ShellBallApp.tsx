@@ -1,9 +1,14 @@
-import { ShellBallDemoSwitcher } from "./components/ShellBallDemoSwitcher";
+import { ShellBallDevLayer } from "./ShellBallDevLayer";
+import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { ShellBallSurface } from "./ShellBallSurface";
 import { useShellBallInteraction } from "./useShellBallInteraction";
 import { getShellBallMotionConfig } from "./shellBall.motion";
 
-export function ShellBallApp() {
+type ShellBallAppProps = {
+  isDev?: boolean;
+};
+
+export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
   const {
     visualState,
     inputValue,
@@ -22,6 +27,7 @@ export function ShellBallApp() {
     handleForceState,
   } = useShellBallInteraction();
   const motionConfig = getShellBallMotionConfig(visualState);
+  const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev);
 
   return (
     <ShellBallSurface
@@ -41,9 +47,9 @@ export function ShellBallApp() {
       onPressEnd={handlePressEnd}
       onInputFocusChange={handleInputFocusChange}
     >
-      <aside className="shell-ball-surface__switcher-shell" aria-label="Shell-ball demo controls">
-        <ShellBallDemoSwitcher value={visualState} onChange={handleForceState} />
-      </aside>
+      {showDemoSwitcher ? (
+        <ShellBallDevLayer value={visualState} onChange={handleForceState} />
+      ) : null}
     </ShellBallSurface>
   );
 }
