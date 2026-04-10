@@ -3,8 +3,6 @@ package bootstrap
 
 import (
 	"context"
-	"os"
-	"strings"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/checkpoint"
@@ -42,7 +40,7 @@ func New(cfg config.Config) (*App, error) {
 		return nil, err
 	}
 
-	_ = audit.NewService()
+	auditService := audit.NewService()
 	_ = checkpoint.NewService()
 	storageService := storage.NewService(platform.NewLocalStorageAdapter(cfg.DatabasePath))
 	fileSystem := platform.NewLocalFileSystemAdapter(pathPolicy)
@@ -53,20 +51,17 @@ func New(cfg config.Config) (*App, error) {
 	}
 	toolExecutor := tools.NewToolExecutor(toolRegistry)
 
-	modelService := model.NewService(cfg.Model)
-	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	if apiKey != "" {
-		if configuredModelService, err := model.NewServiceFromConfig(model.ServiceConfig{
-			ModelConfig: cfg.Model,
-			APIKey:      apiKey,
-		}); err == nil {
-			modelService = configuredModelService
-		}
+	modelService, err := model.NewServiceFromConfig(model.ServiceConfig{
+		ModelConfig: cfg.Model,
+	})
+	if err != nil {
+		_ = storageService.Close()
+		return nil, err
 	}
 
 	deliveryService := delivery.NewService()
 	pluginService := plugin.NewService()
-	executionService := execution.NewService(fileSystem, modelService, deliveryService, toolRegistry, pluginService)
+	executionService := execution.NewService(fileSystem, modelService, auditService, deliveryService, toolRegistry, pluginService)
 	inspectorService := taskinspector.NewService(fileSystem)
 	runEngine, err := runengine.NewEngineWithStore(storageService.TaskRunStore())
 	if err != nil {

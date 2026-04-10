@@ -2,11 +2,13 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
 	serviceconfig "github.com/cialloclaw/cialloclaw/services/local-service/internal/config"
 	contextsvc "github.com/cialloclaw/cialloclaw/services/local-service/internal/context"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/delivery"
@@ -18,9 +20,14 @@ import (
 
 type stubModelClient struct {
 	output string
+	err    error
 }
 
 func (s stubModelClient) GenerateText(_ context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
+	if s.err != nil {
+		return model.GenerateTextResponse{}, s.err
+	}
+
 	return model.GenerateTextResponse{
 		TaskID:     request.TaskID,
 		RunID:      request.RunID,
@@ -43,6 +50,7 @@ func newTestExecutionService(t *testing.T, output string) (*Service, string) {
 	return NewService(
 		platform.NewLocalFileSystemAdapter(pathPolicy),
 		model.NewService(serviceconfig.ModelConfig{}, stubModelClient{output: output}),
+		audit.NewService(),
 		delivery.NewService(),
 		tools.NewRegistry(),
 		plugin.NewService(),
@@ -67,6 +75,18 @@ func TestExecuteWorkspaceDocumentWritesFile(t *testing.T) {
 
 	if result.ToolName != "write_file" {
 		t.Fatalf("expected write_file tool, got %s", result.ToolName)
+	}
+	if result.ModelInvocation == nil {
+		t.Fatal("expected model invocation to be present for workspace document flow")
+	}
+	if result.AuditRecord == nil {
+		t.Fatal("expected audit record to be present for workspace document flow")
+	}
+	if result.ToolOutput["model_invocation"] == nil {
+		t.Fatalf("expected tool output to include model invocation, got %+v", result.ToolOutput)
+	}
+	if result.ToolOutput["audit_record"] == nil {
+		t.Fatalf("expected tool output to include audit record, got %+v", result.ToolOutput)
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("expected one artifact, got %d", len(result.Artifacts))
@@ -107,10 +127,61 @@ func TestExecuteBubbleReturnsGeneratedText(t *testing.T) {
 	if result.ToolName != "generate_text" {
 		t.Fatalf("expected generate_text tool, got %s", result.ToolName)
 	}
+	if result.ModelInvocation == nil {
+		t.Fatal("expected model invocation to be present")
+	}
+	if result.AuditRecord == nil {
+		t.Fatal("expected audit record to be present")
+	}
+	if result.ToolOutput["model_invocation"] == nil {
+		t.Fatalf("expected tool output to include model invocation, got %+v", result.ToolOutput)
+	}
+	if result.ToolOutput["audit_record"] == nil {
+		t.Fatalf("expected tool output to include audit record, got %+v", result.ToolOutput)
+	}
 	if result.BubbleText != "这段内容主要在解释当前问题的原因和处理方向。" {
 		t.Fatalf("expected bubble text to use generated output, got %s", result.BubbleText)
 	}
 	if len(result.Artifacts) != 0 {
 		t.Fatalf("expected bubble delivery not to create artifacts, got %d", len(result.Artifacts))
+	}
+}
+
+func TestExecuteFallsBackWhenModelFails(t *testing.T) {
+	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+	pathPolicy, err := platform.NewLocalPathPolicy(workspaceRoot)
+	if err != nil {
+		t.Fatalf("new local path policy: %v", err)
+	}
+
+	service := NewService(
+		platform.NewLocalFileSystemAdapter(pathPolicy),
+		model.NewService(serviceconfig.ModelConfig{}, stubModelClient{err: errors.New("provider unavailable")}),
+		audit.NewService(),
+		delivery.NewService(),
+		tools.NewRegistry(),
+		plugin.NewService(),
+	)
+
+	result, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_003",
+		RunID:        "run_003",
+		Title:        "解释内容",
+		Intent:       map[string]any{"name": "explain", "arguments": map[string]any{}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text_selection", SelectionText: "需要解释的文本"},
+		DeliveryType: "bubble",
+		ResultTitle:  "解释结果",
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if result.ModelInvocation != nil {
+		t.Fatalf("expected no model invocation when fallback is used, got %+v", result.ModelInvocation)
+	}
+	if result.AuditRecord != nil {
+		t.Fatalf("expected no audit record when fallback is used, got %+v", result.AuditRecord)
+	}
+	if !strings.Contains(result.BubbleText, "需要解释的文本") {
+		t.Fatalf("expected fallback bubble to include normalized input, got %s", result.BubbleText)
 	}
 }

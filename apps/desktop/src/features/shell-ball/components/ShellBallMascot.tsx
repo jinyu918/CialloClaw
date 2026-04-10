@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, PointerEvent } from "react";
 import { AudioLines, ShieldAlert } from "lucide-react";
 import { cn } from "../../../utils/cn";
 import type { ShellBallMotionConfig, ShellBallVisualState } from "../shellBall.types";
@@ -6,11 +6,22 @@ import type { ShellBallMotionConfig, ShellBallVisualState } from "../shellBall.t
 type ShellBallMascotProps = {
   visualState: ShellBallVisualState;
   motionConfig: ShellBallMotionConfig;
+  onPrimaryClick: () => void;
+  onPressStart: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPressMove: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPressEnd: () => void;
 };
 
 type MotionStyle = CSSProperties & Record<string, string>;
 
-export function ShellBallMascot({ visualState, motionConfig }: ShellBallMascotProps) {
+export function ShellBallMascot({
+  visualState,
+  motionConfig,
+  onPrimaryClick,
+  onPressStart,
+  onPressMove,
+  onPressEnd,
+}: ShellBallMascotProps) {
   const floatStyle: MotionStyle = {
     "--shell-ball-float-distance": `${motionConfig.floatOffsetY}px`,
     "--shell-ball-float-duration": `${motionConfig.floatDurationMs}ms`,
@@ -37,6 +48,23 @@ export function ShellBallMascot({ visualState, motionConfig }: ShellBallMascotPr
   const crestStyle: CSSProperties = {
     transform: `translateY(${-motionConfig.crestLiftPx}px)`,
   };
+
+  function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onPressStart(event);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLButtonElement>) {
+    onPressMove(event);
+  }
+
+  function handlePointerEnd(event: PointerEvent<HTMLButtonElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    onPressEnd();
+  }
 
   return (
     <div className="shell-ball-mascot" data-state={visualState} data-tone={motionConfig.accentTone}>
@@ -98,6 +126,16 @@ export function ShellBallMascot({ visualState, motionConfig }: ShellBallMascotPr
 
       <div className="shell-ball-mascot__orbital shell-ball-mascot__orbital--front" />
       <div className={cn("shell-ball-mascot__perch", motionConfig.ringMode !== "hidden" && "shell-ball-mascot__perch--active")} />
+      <button
+        type="button"
+        className="shell-ball-mascot__hotspot"
+        aria-label="Shell-ball mascot"
+        onClick={onPrimaryClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+      />
     </div>
   );
 }
