@@ -123,6 +123,7 @@
 
 - 补更清晰的 `BuildRecordInputFromCandidate(...)` 示例样例
 - 明确 writer 错误在上层执行链中的统一处理方式
+- 明确 storage 读侧结果在 orchestrator / security 视图中的消费规则
 
 ### P1
 
@@ -140,7 +141,7 @@
 ### P0
 
 - `tools` / `execution` / `orchestrator` 已能产出并消费最小 audit candidate
-- 下一步补 storage 侧 audit 的读取能力，而不只是写入能力
+- `storage` 已具备 audit 的写侧和读侧能力
 - `rpc` / dashboard 安全页读取 audit 数据
 
 ### P1

@@ -107,6 +107,7 @@
 
 - 补更清晰的 `BuildCreateInputFromCandidate(...)` 示例样例
 - 明确 `required=false` 时在上层执行链中的消费策略
+- 明确 storage 读侧结果在 orchestrator / security 视图中的消费规则
 
 ### P1
 
@@ -124,7 +125,7 @@
 ### P0
 
 - `tools` / `execution` 已能产出并消费最小 checkpoint candidate
-- 下一步补 storage 侧 recovery point 的读取能力，而不只是写入能力
+- `storage` 已具备 recovery point 的写侧和读侧能力
 - dashboard / security 页读取 recovery point 列表
 
 ### P1
