@@ -489,10 +489,6 @@ export function ControlPanelApp() {
                     updateSettings((current) => ({
                       ...current,
                       inspector: { ...current.inspector, inspect_on_startup: checked },
-                      settings: {
-                        ...current.settings,
-                        task_automation: { ...current.settings.task_automation, inspect_on_startup: checked },
-                      },
                     }))
                   }
                 />
@@ -505,10 +501,6 @@ export function ControlPanelApp() {
                     updateSettings((current) => ({
                       ...current,
                       inspector: { ...current.inspector, inspect_on_file_change: checked },
-                      settings: {
-                        ...current.settings,
-                        task_automation: { ...current.settings.task_automation, inspect_on_file_change: checked },
-                      },
                     }))
                   }
                 />
@@ -521,10 +513,6 @@ export function ControlPanelApp() {
                     updateSettings((current) => ({
                       ...current,
                       inspector: { ...current.inspector, remind_before_deadline: checked },
-                      settings: {
-                        ...current.settings,
-                        task_automation: { ...current.settings.task_automation, remind_before_deadline: checked },
-                      },
                     }))
                   }
                 />
@@ -537,10 +525,6 @@ export function ControlPanelApp() {
                     updateSettings((current) => ({
                       ...current,
                       inspector: { ...current.inspector, remind_when_stale: checked },
-                      settings: {
-                        ...current.settings,
-                        task_automation: { ...current.settings.task_automation, remind_when_stale: checked },
-                      },
                     }))
                   }
                 />
@@ -564,10 +548,6 @@ export function ControlPanelApp() {
                         return {
                           ...current,
                           inspector: { ...current.inspector, task_sources: taskSources },
-                          settings: {
-                            ...current.settings,
-                            task_automation: { ...current.settings.task_automation, task_sources: taskSources },
-                          },
                         };
                       })
                     }

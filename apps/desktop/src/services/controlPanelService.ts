@@ -35,6 +35,24 @@ export type ControlPanelSaveResult = {
   source: ControlPanelSource;
 };
 
+function projectInspectorToTaskAutomation(
+  settings: SettingsSnapshot["settings"],
+  inspector: AgentTaskInspectorConfigGetResult,
+): SettingsSnapshot["settings"] {
+  return {
+    ...settings,
+    task_automation: {
+      ...settings.task_automation,
+      task_sources: inspector.task_sources,
+      inspection_interval: inspector.inspection_interval,
+      inspect_on_file_change: inspector.inspect_on_file_change,
+      inspect_on_startup: inspector.inspect_on_startup,
+      remind_before_deadline: inspector.remind_before_deadline,
+      remind_when_stale: inspector.remind_when_stale,
+    },
+  };
+}
+
 function createRequestMeta(): RequestMeta {
   return {
     trace_id: `trace_control_panel_${Date.now()}`,
@@ -78,9 +96,10 @@ function buildMockInspector(settings: DesktopSettings): AgentTaskInspectorConfig
 
 function getInitialControlPanelData(): ControlPanelData {
   const settings = loadSettings();
+  const inspector = buildMockInspector(settings);
   return {
-    settings: settings.settings,
-    inspector: buildMockInspector(settings),
+    settings: projectInspectorToTaskAutomation(settings.settings, inspector),
+    inspector,
     securitySummary: buildMockSecuritySummary(),
     source: "mock",
   };
@@ -96,7 +115,7 @@ export async function loadControlPanelData(): Promise<ControlPanelData> {
     ]);
 
     return {
-      settings: settingsResult.settings,
+      settings: projectInspectorToTaskAutomation(settingsResult.settings, inspectorResult),
       inspector: inspectorResult,
       securitySummary: securityResult.summary,
       source: "rpc",
@@ -109,13 +128,15 @@ export async function loadControlPanelData(): Promise<ControlPanelData> {
 
 export async function saveControlPanelData(data: ControlPanelData): Promise<ControlPanelSaveResult> {
   if (data.source === "mock") {
-    const nextSettings: DesktopSettings = { settings: data.settings };
+    const nextSettings: DesktopSettings = {
+      settings: projectInspectorToTaskAutomation(data.settings, data.inspector),
+    };
     saveSettings(nextSettings);
     return {
       applyMode: "immediate",
       needRestart: false,
       updatedKeys: ["general", "floating_ball", "memory", "task_automation", "data_log"],
-      effectiveSettings: data.settings,
+      effectiveSettings: nextSettings.settings,
       effectiveInspector: data.inspector,
       source: "mock",
     };
@@ -127,7 +148,6 @@ export async function saveControlPanelData(data: ControlPanelData): Promise<Cont
       general: data.settings.general,
       floating_ball: data.settings.floating_ball,
       memory: data.settings.memory,
-      task_automation: data.settings.task_automation,
       data_log: data.settings.data_log,
     }),
     updateTaskInspectorConfig({
@@ -145,10 +165,7 @@ export async function saveControlPanelData(data: ControlPanelData): Promise<Cont
     applyMode: settingsResult.apply_mode,
     needRestart: settingsResult.need_restart,
     updatedKeys: settingsResult.updated_keys,
-    effectiveSettings: {
-      ...settingsResult.effective_settings,
-      task_automation: inspectorResult.effective_config,
-    },
+    effectiveSettings: projectInspectorToTaskAutomation(settingsResult.effective_settings as SettingsSnapshot["settings"], inspectorResult.effective_config),
     effectiveInspector: inspectorResult.effective_config,
     source: "rpc",
   };
