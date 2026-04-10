@@ -67,6 +67,16 @@ func newTestExecutionService(t *testing.T, output string) (*Service, string) {
 	), workspaceRoot
 }
 
+func registerBuiltinTools(t *testing.T) *tools.Registry {
+	t.Helper()
+
+	registry := tools.NewRegistry()
+	if err := builtin.RegisterBuiltinTools(registry); err != nil {
+		t.Fatalf("RegisterBuiltinTools returned error: %v", err)
+	}
+	return registry
+}
+
 func TestExecuteWorkspaceDocumentWritesFile(t *testing.T) {
 	service, workspaceRoot := newTestExecutionService(t, "第一点\n第二点\n第三点")
 
@@ -107,6 +117,12 @@ func TestExecuteWorkspaceDocumentWritesFile(t *testing.T) {
 	}
 	if result.ToolOutput["recovery_point"] != nil {
 		t.Fatalf("expected no recovery point for create flow, got %+v", result.ToolOutput)
+	}
+	if len(result.ToolCalls) != 2 {
+		t.Fatalf("expected generate_text + write_file tool chain, got %d calls", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].ToolName != "generate_text" || result.ToolCalls[1].ToolName != "write_file" {
+		t.Fatalf("unexpected tool chain order: %+v", result.ToolCalls)
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("expected one delivery artifact, got %d", len(result.Artifacts))

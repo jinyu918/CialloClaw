@@ -82,9 +82,14 @@ func New(cfg config.Config) (*App, error) {
 		modelService,
 		toolRegistry,
 		pluginService,
-	).WithExecutor(executionService).WithTaskInspector(inspectorService)
+	).WithAudit(auditService).WithExecutor(executionService).WithTaskInspector(inspectorService)
 
-	return &App{server: rpc.NewServer(cfg.RPC, orchestratorService), storage: storageService, toolRegistry: toolRegistry, toolExecutor: toolExecutor}, nil
+	return &App{
+		server:       rpc.NewServer(cfg.RPC, orchestratorService),
+		storage:      storageService,
+		toolRegistry: toolRegistry,
+		toolExecutor: toolExecutor,
+	}, nil
 }
 
 // Start 启动当前能力。
