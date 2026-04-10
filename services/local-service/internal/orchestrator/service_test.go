@@ -40,6 +40,12 @@ func (s stubModelClient) GenerateText(_ context.Context, request model.GenerateT
 		Provider:   "openai_responses",
 		ModelID:    "gpt-5.4",
 		OutputText: s.output,
+		Usage: model.TokenUsage{
+			InputTokens:  12,
+			OutputTokens: 24,
+			TotalTokens:  36,
+		},
+		LatencyMS: 42,
 	}, nil
 }
 
@@ -1304,6 +1310,97 @@ func TestServiceSecuritySummaryUsesRuntimeTaskState(t *testing.T) {
 	tokenCostSummary := summary["token_cost_summary"].(map[string]any)
 	if tokenCostSummary["budget_auto_downgrade"] != true {
 		t.Fatalf("expected token summary to reflect settings snapshot, got %v", tokenCostSummary["budget_auto_downgrade"])
+	}
+}
+
+func TestServiceSecuritySummaryIncludesRuntimeTokenUsage(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed token summary")
+
+	result, err := service.StartTask(map[string]any{
+		"session_id": "sess_exec",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "collect runtime token summary",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := result["task"].(map[string]any)["task_id"].(string)
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected completed runtime task to remain available")
+	}
+	if len(record.AuditRecords) == 0 {
+		t.Fatal("expected executor-backed task to carry audit records")
+	}
+
+	securityResult, err := service.SecuritySummaryGet()
+	if err != nil {
+		t.Fatalf("security summary failed: %v", err)
+	}
+
+	tokenCostSummary := securityResult["summary"].(map[string]any)["token_cost_summary"].(map[string]any)
+	if tokenCostSummary["current_task_tokens"] != 36 {
+		t.Fatalf("expected current_task_tokens to reflect runtime usage, got %+v", tokenCostSummary)
+	}
+	if tokenCostSummary["today_tokens"] != 36 {
+		t.Fatalf("expected today_tokens to reflect runtime usage, got %+v", tokenCostSummary)
+	}
+	if tokenCostSummary["budget_auto_downgrade"] != true {
+		t.Fatalf("expected budget_auto_downgrade to remain true, got %+v", tokenCostSummary)
+	}
+}
+
+func TestServiceDashboardModuleHighlightsIncludeAuditTrail(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "dashboard audit trail")
+
+	_, err := service.StartTask(map[string]any{
+		"session_id": "sess_exec",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "build dashboard audit trail",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	moduleResult, err := service.DashboardModuleGet(map[string]any{
+		"module": "security",
+		"tab":    "audit",
+	})
+	if err != nil {
+		t.Fatalf("dashboard module get failed: %v", err)
+	}
+
+	highlights := moduleResult["highlights"].([]string)
+	foundAuditHighlight := false
+	for _, highlight := range highlights {
+		if strings.Contains(highlight, "generate_text") || strings.Contains(highlight, "publish_result") {
+			foundAuditHighlight = true
+			break
+		}
+	}
+	if !foundAuditHighlight {
+		t.Fatalf("expected dashboard highlights to expose runtime audit trail, got %+v", highlights)
 	}
 }
 

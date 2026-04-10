@@ -129,6 +129,74 @@ func TestEngineExecutionProgressAndToolCall(t *testing.T) {
 }
 
 // TestEngineAuthorizationAndHandoffState 验证EngineAuthorizationAndHandoffState。
+func TestEngineAppendAuditDataPersistsAuditAndTokenUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task-run-audit.db")
+	store, err := storage.NewSQLiteTaskRunStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteTaskRunStore returned error: %v", err)
+	}
+
+	engine, err := NewEngineWithStore(store)
+	if err != nil {
+		t.Fatalf("NewEngineWithStore returned error: %v", err)
+	}
+	engine.now = func() time.Time { return time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC) }
+
+	task := engine.CreateTask(CreateTaskInput{
+		SessionID:   "sess_audit",
+		Title:       "persist audit",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "summarize"},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+	})
+
+	appended, ok := engine.AppendAuditData(task.TaskID, []map[string]any{{
+		"audit_id":   "audit_001",
+		"task_id":    task.TaskID,
+		"type":       "model",
+		"action":     "generate_text",
+		"summary":    "generate text output",
+		"target":     "summarize",
+		"result":     "success",
+		"created_at": time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+	}}, map[string]any{
+		"total_tokens":   36,
+		"estimated_cost": 0.0,
+		"request_id":     "req_test",
+	})
+	if !ok {
+		t.Fatal("expected append audit data to succeed")
+	}
+	if len(appended.AuditRecords) != 1 {
+		t.Fatalf("expected audit record on runtime task, got %+v", appended.AuditRecords)
+	}
+	if appended.TokenUsage["total_tokens"] != 36 {
+		t.Fatalf("expected token usage on runtime task, got %+v", appended.TokenUsage)
+	}
+
+	reloaded, err := NewEngineWithStore(store)
+	if err != nil {
+		t.Fatalf("NewEngineWithStore reload returned error: %v", err)
+	}
+
+	persisted, ok := reloaded.GetTask(task.TaskID)
+	if !ok {
+		t.Fatal("expected task to reload from sqlite")
+	}
+	if len(persisted.AuditRecords) != 1 {
+		t.Fatalf("expected audit records to round-trip through storage, got %+v", persisted.AuditRecords)
+	}
+	if persisted.TokenUsage["total_tokens"] != float64(36) && persisted.TokenUsage["total_tokens"] != 36 {
+		t.Fatalf("expected token usage to round-trip through storage, got %+v", persisted.TokenUsage)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+}
+
 func TestEngineAuthorizationAndHandoffState(t *testing.T) {
 	engine := NewEngine()
 	fixedTime := time.Date(2026, 4, 8, 11, 0, 0, 0, time.UTC)
