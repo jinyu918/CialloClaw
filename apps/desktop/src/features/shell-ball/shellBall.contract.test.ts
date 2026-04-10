@@ -222,6 +222,19 @@ test("shell-ball bubble focus behavior is applied at runtime instead of static c
 
   assert.doesNotMatch(tauriConfig, /"focusable": false/);
   assert.match(metricsSource, /setFocusable\(false\)/);
+  assert.match(metricsSource, /setFocus\(\)/);
+});
+
+test("shell-ball input bar keeps hook order stable across hidden and visible states", () => {
+  const inputBarSource = readFileSync(
+    resolve(desktopRoot, "src/features/shell-ball/components/ShellBallInputBar.tsx"),
+    "utf8",
+  );
+
+  assert.equal(
+    inputBarSource.indexOf("useEffect(()") < inputBarSource.indexOf('if (mode === "hidden")'),
+    true,
+  );
 });
 
 test("shell-ball helper window sync maps visual states into visibility and snapshot payloads", () => {

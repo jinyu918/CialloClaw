@@ -278,6 +278,11 @@ export function useShellBallWindowMetrics({ role, visible = true }: UseShellBall
 
       if (visible) {
         await showShellBallWindow(role);
+
+        if (role === "input") {
+          await currentWindow.setFocus();
+        }
+
         return;
       }
 
@@ -345,9 +350,14 @@ export function useShellBallWindowMetrics({ role, visible = true }: UseShellBall
       geometryRef.current.bounds,
     );
 
-    void setShellBallWindowPosition(role, createShellBallLogicalPosition(nextFrame.x, nextFrame.y)).then(() =>
-      showShellBallWindow(role),
-    );
+    void (async () => {
+      await setShellBallWindowPosition(role, createShellBallLogicalPosition(nextFrame.x, nextFrame.y));
+      await showShellBallWindow(role);
+
+      if (role === "input") {
+        await getCurrentWindow().setFocus();
+      }
+    })();
   }, [role, visible, windowFrame]);
 
   return { rootRef, windowFrame };
