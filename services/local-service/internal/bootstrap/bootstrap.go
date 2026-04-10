@@ -82,7 +82,7 @@ func New(cfg config.Config) (*App, error) {
 		modelService,
 		toolRegistry,
 		pluginService,
-	).WithAudit(auditService).WithExecutor(executionService).WithTaskInspector(inspectorService)
+	).WithAudit(auditService).WithExecutor(executionService).WithStorage(storageService).WithTaskInspector(inspectorService)
 
 	return &App{
 		server:       rpc.NewServer(cfg.RPC, orchestratorService),

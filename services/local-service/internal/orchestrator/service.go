@@ -20,6 +20,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/recommendation"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/risk"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/runengine"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/storage"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/taskinspector"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
@@ -51,6 +52,7 @@ type Service struct {
 	recommendation *recommendation.Service
 	executor       *execution.Service
 	inspector      *taskinspector.Service
+	storage        *storage.Service
 }
 
 // NewService 创建并返回Service。
@@ -101,6 +103,14 @@ func (s *Service) WithExecutor(executorService *execution.Service) *Service {
 func (s *Service) WithTaskInspector(inspectorService *taskinspector.Service) *Service {
 	if inspectorService != nil {
 		s.inspector = inspectorService
+	}
+	return s
+}
+
+// WithStorage 挂接共享 storage 服务，用于治理数据读侧回填。
+func (s *Service) WithStorage(storageService *storage.Service) *Service {
+	if storageService != nil {
+		s.storage = storageService
 	}
 	return s
 }
@@ -399,12 +409,19 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		return nil, ErrTaskNotFound
 	}
 
+	securitySummary := cloneMap(task.SecuritySummary)
+	if latestRestorePointFromSummary(securitySummary) == nil {
+		if restorePoint := s.latestRestorePointFromStorage(task.TaskID); restorePoint != nil {
+			securitySummary["latest_restore_point"] = restorePoint
+		}
+	}
+
 	return map[string]any{
 		"task":              taskMap(task),
 		"timeline":          timelineMap(task.Timeline),
 		"artifacts":         cloneMapSlice(task.Artifacts),
 		"mirror_references": cloneMapSlice(task.MirrorReferences),
-		"security_summary":  cloneMap(task.SecuritySummary),
+		"security_summary":  securitySummary,
 	}, nil
 }
 
@@ -555,13 +572,18 @@ func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, e
 	}
 
 	allTasks := append(append([]runengine.TaskRecord{}, unfinishedTasks...), finishedTasks...)
+	hasRestorePoint := latestRestorePointFromTasks(allTasks) != nil
+	if !hasRestorePoint {
+		hasRestorePoint = s.latestRestorePointFromStorage("") != nil
+	}
+
 	return map[string]any{
 		"overview": map[string]any{
 			"focus_summary": focusSummary,
 			"trust_summary": map[string]any{
 				"risk_level":             aggregateRiskLevel(allTasks, pendingApprovals, s.risk.DefaultLevel()),
 				"pending_authorizations": pendingTotal,
-				"has_restore_point":      latestRestorePointFromTasks(allTasks) != nil,
+				"has_restore_point":      hasRestorePoint,
 				"workspace_path":         workspacePathFromSettings(s.runEngine.Settings()),
 			},
 			"quick_actions":     buildDashboardQuickActions(hasFocusTask, pendingTotal, len(finishedTasks)),
@@ -621,11 +643,15 @@ func (s *Service) SecuritySummaryGet() (map[string]any, error) {
 	finishedTasks, _ := s.runEngine.ListTasks("finished", "finished_at", "desc", 0, 0)
 	allTasks := append(append([]runengine.TaskRecord{}, unfinishedTasks...), finishedTasks...)
 	dataLogSettings := mapValue(s.runEngine.Settings(), "data_log")
+	latestRestorePoint := latestRestorePointFromTasks(allTasks)
+	if latestRestorePoint == nil {
+		latestRestorePoint = s.latestRestorePointFromStorage("")
+	}
 	return map[string]any{
 		"summary": map[string]any{
 			"security_status":        aggregateSecurityStatus(allTasks, pendingTotal),
 			"pending_authorizations": pendingTotal,
-			"latest_restore_point":   latestRestorePointFromTasks(allTasks),
+			"latest_restore_point":   latestRestorePoint,
 			"token_cost_summary":     aggregateTokenCostSummary(unfinishedTasks, finishedTasks, boolValue(dataLogSettings, "budget_auto_downgrade", true)),
 		},
 	}, nil
@@ -1339,6 +1365,35 @@ func latestRestorePointFromTasks(tasks []runengine.TaskRecord) map[string]any {
 		}
 	}
 	return nil
+}
+
+func latestRestorePointFromSummary(summary map[string]any) map[string]any {
+	if summary == nil {
+		return nil
+	}
+	latestRestorePoint, ok := summary["latest_restore_point"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return cloneMap(latestRestorePoint)
+}
+
+func (s *Service) latestRestorePointFromStorage(taskID string) map[string]any {
+	if s.storage == nil {
+		return nil
+	}
+	items, _, err := s.storage.RecoveryPointStore().ListRecoveryPoints(context.Background(), taskID, 1, 0)
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	item := items[0]
+	return map[string]any{
+		"recovery_point_id": item.RecoveryPointID,
+		"task_id":           item.TaskID,
+		"summary":           item.Summary,
+		"created_at":        item.CreatedAt,
+		"objects":           append([]string(nil), item.Objects...),
+	}
 }
 
 func latestOutputPathFromTasks(tasks []runengine.TaskRecord) string {
