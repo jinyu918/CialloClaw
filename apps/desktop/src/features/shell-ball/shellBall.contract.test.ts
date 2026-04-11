@@ -2139,6 +2139,9 @@ test("shell-ball bubble zone renders a real message list without placeholder chr
 
 test("shell-ball bubble window styles stay transparent, faded, and motion-ready", () => {
   const shellBallStyles = readFileSync(resolve(desktopRoot, "src/features/shell-ball/shellBall.css"), "utf8");
+  const mobileBubbleZoneBlock = shellBallStyles.match(
+    /@media \(max-width: 720px\)\s*\{[\s\S]*?(\.shell-ball-bubble-zone\s*\{[\s\S]*?\})/,
+  )?.[1] ?? "";
   const markup = renderToStaticMarkup(
     createElement(ShellBallBubbleZone, {
       visualState: "processing",
@@ -2159,8 +2162,12 @@ test("shell-ball bubble window styles stay transparent, faded, and motion-ready"
   assert.match(shellBallStyles, /\.shell-ball-window--bubble\s*\{[\s\S]*border:\s*0;/);
   assert.match(shellBallStyles, /\.shell-ball-window--bubble\s*\{[\s\S]*box-shadow:\s*none;/);
   assert.match(shellBallStyles, /--shell-ball-helper-width:\s*min\(22rem, calc\(100vw - 1rem\)\);/);
+  assert.match(shellBallStyles, /@media \(max-width: 720px\)\s*\{[\s\S]*--shell-ball-helper-width:\s*min\(20rem, calc\(100vw - 0\.75rem\)\);/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone\s*\{[\s\S]*width:\s*var\(--shell-ball-helper-width\);/);
   assert.match(shellBallStyles, /\.shell-ball-input-bar,\s*\.shell-ball-input-bar--hidden\s*\{[\s\S]*width:\s*var\(--shell-ball-helper-width\);/);
+  assert.match(mobileBubbleZoneBlock, /min-height:\s*4\.6rem;/);
+  assert.match(mobileBubbleZoneBlock, /padding-inline:\s*0;/);
+  assert.doesNotMatch(mobileBubbleZoneBlock, /width:/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll\s*\{[\s\S]*scrollbar-width:\s*none;/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll::-webkit-scrollbar\s*\{[\s\S]*display:\s*none;/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll\s*\{[\s\S]*mask-image:\s*linear-gradient\(/);

@@ -1127,6 +1127,10 @@
 }
 
 @media (max-width: 720px) {
+  .shell-ball-window {
+    --shell-ball-helper-width: min(20rem, calc(100vw - 0.75rem));
+  }
+
   .shell-ball-surface {
     padding: 0.75rem 0.55rem 0.9rem;
   }
@@ -1134,7 +1138,6 @@
   .shell-ball-bubble-zone {
     min-height: 4.6rem;
     padding-inline: 0;
-    width: min(20rem, calc(100vw - 0.75rem));
   }
 
   .shell-ball-surface__body {
