@@ -9,6 +9,7 @@ import {
   type PointerEvent,
 } from "react";
 import { Badge, Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
   History,
@@ -34,7 +35,7 @@ import {
   type SecurityModuleData,
   type SecurityModuleSource,
 } from "./securityService";
-import { openDashboardRoute } from "@/features/dashboard/shared/dashboardRouteNavigation";
+import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 
 type SecurityCardKey = "status" | "restore" | "budget" | "governance" | `approval:${string}`;
 type CardPosition = { x: number; y: number };
@@ -392,6 +393,7 @@ function getCardPreview(
 }
 
 export function SecurityApp() {
+  const navigate = useNavigate();
   const [moduleData, setModuleData] = useState(() => getInitialSecurityModuleData());
   const [activeApprovalId, setActiveApprovalId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -772,7 +774,7 @@ export function SecurityApp() {
       {feedback ? <div className="security-page__detail-callout">{feedback}</div> : null}
 
       <Flex align="center" gap="3" wrap="wrap">
-        <Button variant="soft" color="gray" onClick={() => openDashboardRoute("home")}>
+        <Button variant="soft" color="gray" onClick={() => navigate(resolveDashboardRoutePath("home"))}>
           返回 Dashboard
           <ArrowUpRight className="h-4 w-4" />
         </Button>
