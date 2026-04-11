@@ -4,10 +4,16 @@ import { AppProviders } from "@/features/shared/AppProviders";
 import { ShellBallApp } from "@/features/shell-ball/ShellBallApp";
 import "@/features/shell-ball/shellBall.css";
 
-document.documentElement.setAttribute("data-shell-ball-app", "true");
-document.body.setAttribute("data-shell-ball-app", "true");
+const rootElement = document.getElementById("root")!;
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+document.documentElement.dataset.appWindow = "shell-ball";
+document.body.dataset.appWindow = "shell-ball";
+rootElement.dataset.appWindow = "shell-ball";
+document.documentElement.setAttribute("data-app-window", "shell-ball");
+document.body.setAttribute("data-app-window", "shell-ball");
+rootElement.setAttribute("data-app-window", "shell-ball");
+
+ReactDOM.createRoot(rootElement).render(
   <AppProviders>
     <ShellBallApp isDev={import.meta.env.DEV} />
   </AppProviders>,

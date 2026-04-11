@@ -2,9 +2,10 @@ import { ShellBallDevLayer } from "./ShellBallDevLayer";
 import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { ShellBallSurface } from "./ShellBallSurface";
 import { useShellBallInteraction } from "./useShellBallInteraction";
-import { useShellBallWindow } from "./useShellBallWindow";
 import { getShellBallMotionConfig } from "./shellBall.motion";
-import { isTauriWindowEnvironment } from "@/platform/shellBallWindow";
+import { useShellBallCoordinator } from "./useShellBallCoordinator";
+import { useShellBallWindowMetrics } from "./useShellBallWindowMetrics";
+import { startShellBallWindowDragging } from "../../platform/shellBallWindowController";
 
 type ShellBallAppProps = {
   isDev?: boolean;
@@ -14,67 +15,51 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
   const {
     visualState,
     inputValue,
-    setInputValue,
     voicePreview,
-    inputBarMode,
     handlePrimaryClick,
-    handleRegionEnter: handleRegionEnterInteraction,
-    handleRegionLeave: handleRegionLeaveInteraction,
-    handleSubmitText,
-    handleAttachFile,
+    handleRegionEnter,
+    handleRegionLeave,
     handlePressStart,
     handlePressMove,
     handlePressEnd,
+    handleSubmitText,
+    handleAttachFile,
     handleInputFocusChange,
+    setInputValue,
     handleForceState,
   } = useShellBallInteraction();
-  const {
-    contentRef,
-    dragZoneRef,
-    interactionRef,
-    surfaceRef,
-    handleInteractionEnter: handleWindowInteractionEnter,
-    handleInteractionLeave: handleWindowInteractionLeave,
-    handleHostDragStart,
-  } = useShellBallWindow({
-    inputBarMode,
-    visualState,
-  });
   const motionConfig = getShellBallMotionConfig(visualState);
-  const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev) && !isTauriWindowEnvironment();
+  const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev);
+  const { rootRef } = useShellBallWindowMetrics({ role: "ball" });
 
-  function handleRegionEnter() {
-    handleWindowInteractionEnter();
-    handleRegionEnterInteraction();
-  }
-
-  function handleRegionLeave() {
-    handleRegionLeaveInteraction();
-    handleWindowInteractionLeave();
-  }
+  useShellBallCoordinator({
+    visualState,
+    inputValue,
+    voicePreview,
+    setInputValue,
+    onRegionEnter: handleRegionEnter,
+    onRegionLeave: handleRegionLeave,
+    onInputFocusChange: handleInputFocusChange,
+    onSubmitText: handleSubmitText,
+    onAttachFile: handleAttachFile,
+    onPrimaryClick: handlePrimaryClick,
+  });
 
   return (
     <ShellBallSurface
-      contentRef={contentRef}
-      dragZoneRef={dragZoneRef}
-      interactionRef={interactionRef}
-      surfaceRef={surfaceRef}
+      containerRef={rootRef}
       visualState={visualState}
       voicePreview={voicePreview}
-      inputBarMode={inputBarMode}
-      inputValue={inputValue}
       motionConfig={motionConfig}
+      onDragStart={() => {
+        void startShellBallWindowDragging();
+      }}
       onPrimaryClick={handlePrimaryClick}
       onRegionEnter={handleRegionEnter}
       onRegionLeave={handleRegionLeave}
-      onInputValueChange={setInputValue}
-      onAttachFile={handleAttachFile}
-      onSubmitText={handleSubmitText}
       onPressStart={handlePressStart}
       onPressMove={handlePressMove}
       onPressEnd={handlePressEnd}
-      onInputFocusChange={handleInputFocusChange}
-      onHostDragStart={handleHostDragStart}
     >
       {showDemoSwitcher ? (
         <ShellBallDevLayer value={visualState} onChange={handleForceState} />
