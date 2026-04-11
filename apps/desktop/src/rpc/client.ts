@@ -121,7 +121,8 @@ export class JsonRpcClientError extends Error {
 
 // createTransport 处理当前模块的相关逻辑。
 function createTransport(): JsonRpcTransport {
-  const transportMode = import.meta.env.VITE_CIALLOCLAW_RPC_TRANSPORT ?? "named_pipe";
+  const defaultTransport = import.meta.env.DEV ? "http" : "named_pipe";
+  const transportMode = import.meta.env.VITE_CIALLOCLAW_RPC_TRANSPORT ?? defaultTransport;
 
   if (transportMode === "http") {
     return new DebugHttpJsonRpcTransport(import.meta.env.VITE_CIALLOCLAW_DEBUG_RPC_ENDPOINT ?? "http://127.0.0.1:4317/rpc");

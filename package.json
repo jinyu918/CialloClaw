@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "pnpm --dir apps/desktop dev",
     "dev:desktop": "pnpm --dir apps/desktop dev",
-    "dev:service": "go run ./services/local-service/cmd/server",
+    "dev:service": "powershell -NoProfile -Command \"$env:OPENAI_API_KEY = [Environment]::GetEnvironmentVariable('OPENAI_API_KEY','User'); if ([string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) { throw 'OPENAI_API_KEY is not configured in user environment.' }; go run ./services/local-service/cmd/server\"",
     "test:service": "go test ./services/local-service/..."
   }
 }
