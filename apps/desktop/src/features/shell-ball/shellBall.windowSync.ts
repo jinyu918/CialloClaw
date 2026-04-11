@@ -1,9 +1,5 @@
-import {
-  cloneShellBallBubbleItems,
-  createLegacyShellBallBubbleMessages,
-  createShellBallBubbleItemsFromLegacyMessages,
-} from "./shellBall.bubble";
-import type { ShellBallBubbleItem, ShellBallBubbleMessage } from "./shellBall.bubble";
+import { cloneShellBallBubbleItems } from "./shellBall.bubble";
+import type { ShellBallBubbleItem } from "./shellBall.bubble";
 import type { ShellBallVoicePreview } from "./shellBall.interaction";
 import { getShellBallInputBarMode } from "./shellBall.interaction";
 import type { ShellBallInputBarMode, ShellBallVisualState } from "./shellBall.types";
@@ -33,7 +29,6 @@ export type ShellBallWindowSnapshot = {
   inputValue: string;
   voicePreview: ShellBallVoicePreview;
   bubbleItems: ShellBallBubbleItem[];
-  bubbleMessages?: ShellBallBubbleMessage[];
   visibility: ShellBallHelperWindowVisibility;
 };
 
@@ -88,29 +83,15 @@ export function createShellBallWindowSnapshot(input: {
   inputValue: string;
   voicePreview: ShellBallVoicePreview;
   bubbleItems?: ShellBallBubbleItem[];
-  bubbleMessages?: ShellBallBubbleMessage[];
 }): ShellBallWindowSnapshot {
-  const bubbleItems = cloneShellBallBubbleItems(
-    input.bubbleItems ?? createShellBallBubbleItemsFromLegacyMessages(input.bubbleMessages ?? []),
-  );
-  const snapshot: ShellBallWindowSnapshot = {
+  return {
     visualState: input.visualState,
     inputBarMode: getShellBallInputBarMode(input.visualState),
     inputValue: input.inputValue,
     voicePreview: input.voicePreview,
-    bubbleItems,
+    bubbleItems: cloneShellBallBubbleItems(input.bubbleItems ?? []),
     visibility: getShellBallHelperWindowVisibility(input.visualState),
   };
-
-  Object.defineProperty(snapshot, "bubbleMessages", {
-    enumerable: false,
-    configurable: true,
-    get() {
-      return createLegacyShellBallBubbleMessages(bubbleItems);
-    },
-  });
-
-  return snapshot;
 }
 
 export function createDefaultShellBallWindowSnapshot(): ShellBallWindowSnapshot {

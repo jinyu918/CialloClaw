@@ -54,7 +54,7 @@ import {
   getShellBallHelperWindowVisibility,
   shellBallWindowSyncEvents,
 } from "./shellBall.windowSync";
-import type { ShellBallBubbleItem, ShellBallBubbleMessage } from "./shellBall.bubble";
+import type { ShellBallBubbleItem } from "./shellBall.bubble";
 import { cloneShellBallBubbleItems } from "./shellBall.bubble";
 import {
   SHELL_BALL_WINDOW_GAP_PX,
@@ -1178,6 +1178,7 @@ test("shell-ball bubble item contract wraps protocol payload and keeps desktop-o
   assert.equal("role" in bubbleItem.bubble, false);
   assert.equal("desktop" in bubbleItem.bubble, false);
   assert.doesNotMatch(bubbleContractSource, /"pulse"/);
+  assert.doesNotMatch(bubbleContractSource, /ShellBallBubbleMessage/);
 
   assert.deepEqual(createShellBallWindowSnapshot({
     visualState: "idle",
@@ -2155,12 +2156,21 @@ test("shell-ball bubble zone keeps the latest message visible on feed updates", 
 
   RuntimeShellBallBubbleZone({
     visualState: "processing",
-    bubbleMessages: [
+    bubbleItems: [
       {
-        id: "msg-scroll-1",
+        bubble: {
+          bubble_id: "msg-scroll-1",
+          task_id: "task-scroll-1",
+          type: "status",
+          text: "Newest status.",
+          pinned: false,
+          hidden: false,
+          created_at: "2026-04-11T10:08:00.000Z",
+        },
         role: "agent",
-        text: "Newest status.",
-        createdAt: "2026-04-11T10:08:00.000Z",
+        desktop: {
+          lifecycleState: "visible",
+        },
       },
     ],
   });
@@ -2170,17 +2180,26 @@ test("shell-ball bubble zone keeps the latest message visible on feed updates", 
   assert.equal(scrollElement.scrollTop, scrollElement.scrollHeight);
 });
 
-test("shell-ball bubble window resolves bubble messages from the helper-window snapshot", () => {
+test("shell-ball bubble window resolves bubble items from the helper-window snapshot", () => {
   const helperSnapshot = createShellBallWindowSnapshot({
     visualState: "processing",
     inputValue: "",
     voicePreview: null,
-    bubbleMessages: [
+    bubbleItems: [
       {
-        id: "msg-helper-1",
+        bubble: {
+          bubble_id: "msg-helper-1",
+          task_id: "task-helper-1",
+          type: "status",
+          text: "Drafting your update.",
+          pinned: false,
+          hidden: false,
+          created_at: "2026-04-11T10:04:00.000Z",
+        },
         role: "agent",
-        text: "Drafting your update.",
-        createdAt: "2026-04-11T10:04:00.000Z",
+        desktop: {
+          lifecycleState: "visible",
+        },
       },
     ],
   });
@@ -2210,7 +2229,7 @@ test("shell-ball bubble window resolves bubble messages from the helper-window s
 
   assert.deepEqual(capturedProps, {
     visualState: "processing",
-    bubbleMessages: helperSnapshot.bubbleMessages,
+    bubbleItems: helperSnapshot.bubbleItems,
   });
 });
 
@@ -2219,12 +2238,21 @@ test("shell-ball bubble window does not depend on only visualState to render its
     visualState: "idle",
     inputValue: "",
     voicePreview: null,
-    bubbleMessages: [
+    bubbleItems: [
       {
-        id: "msg-helper-2",
+        bubble: {
+          bubble_id: "msg-helper-2",
+          task_id: "task-helper-2",
+          type: "result",
+          text: "Open the dashboard.",
+          pinned: false,
+          hidden: false,
+          created_at: "2026-04-11T10:05:00.000Z",
+        },
         role: "user",
-        text: "Open the dashboard.",
-        createdAt: "2026-04-11T10:05:00.000Z",
+        desktop: {
+          lifecycleState: "visible",
+        },
       },
     ],
   });
@@ -2254,7 +2282,7 @@ test("shell-ball bubble window does not depend on only visualState to render its
 
   assert.deepEqual(capturedProps, {
     visualState: "voice_locked",
-    bubbleMessages: helperSnapshot.bubbleMessages,
+    bubbleItems: helperSnapshot.bubbleItems,
   });
 });
 
@@ -2262,20 +2290,38 @@ test("shell-ball bubble zone renders a real message list without placeholder chr
   const markup = renderToStaticMarkup(
     createElement(ShellBallBubbleZone, {
       visualState: "processing",
-      bubbleMessages: [
+      bubbleItems: [
         {
-          id: "msg-agent-1",
+          bubble: {
+            bubble_id: "msg-agent-1",
+            task_id: "task-agent-1",
+            type: "status",
+            text: "I found the latest dashboard status.",
+            pinned: false,
+            hidden: false,
+            created_at: "2026-04-11T10:06:00.000Z",
+          },
           role: "agent",
-          text: "I found the latest dashboard status.",
-          createdAt: "2026-04-11T10:06:00.000Z",
+          desktop: {
+            lifecycleState: "visible",
+          },
         },
         {
-          id: "msg-user-1",
+          bubble: {
+            bubble_id: "msg-user-1",
+            task_id: "task-user-1",
+            type: "result",
+            text: "Open it for me.",
+            pinned: false,
+            hidden: false,
+            created_at: "2026-04-11T10:06:05.000Z",
+          },
           role: "user",
-          text: "Open it for me.",
-          createdAt: "2026-04-11T10:06:05.000Z",
+          desktop: {
+            lifecycleState: "visible",
+          },
         },
-      ] satisfies ShellBallBubbleMessage[],
+      ] satisfies ShellBallBubbleItem[],
     }),
   );
 
@@ -2302,16 +2348,25 @@ test("shell-ball bubble window styles stay transparent, faded, and motion-ready"
   const markup = renderToStaticMarkup(
     createElement(ShellBallBubbleZone, {
       visualState: "processing",
-      bubbleMessages: [
+      bubbleItems: [
         {
-          id: "msg-style-1",
+          bubble: {
+            bubble_id: "msg-style-1",
+            task_id: "task-style-1",
+            type: "status",
+            text: "Draft ready.",
+            pinned: false,
+            hidden: false,
+            created_at: "2026-04-11T10:07:00.000Z",
+          },
           role: "agent",
-          text: "Draft ready.",
-          createdAt: "2026-04-11T10:07:00.000Z",
-          freshnessHint: "fresh",
-          motionHint: "settle",
+          desktop: {
+            lifecycleState: "visible",
+            freshnessHint: "fresh",
+            motionHint: "settle",
+          },
         },
-      ] satisfies ShellBallBubbleMessage[],
+      ] satisfies ShellBallBubbleItem[],
     }),
   );
 

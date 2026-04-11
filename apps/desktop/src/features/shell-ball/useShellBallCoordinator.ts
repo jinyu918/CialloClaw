@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { shellBallWindowLabels } from "../../platform/shellBallWindowController";
-import type { ShellBallBubbleMessage } from "./shellBall.bubble";
+import type { ShellBallBubbleItem } from "./shellBall.bubble";
 import type { ShellBallVoicePreview } from "./shellBall.interaction";
 import type { ShellBallInputBarMode, ShellBallVisualState } from "./shellBall.types";
 import {
@@ -34,20 +34,38 @@ type ShellBallHelperSnapshotInput = {
   role: ShellBallHelperWindowRole;
 };
 
-const SHELL_BALL_LOCAL_BUBBLE_MESSAGES: ShellBallBubbleMessage[] = [
+const SHELL_BALL_LOCAL_BUBBLE_ITEMS: ShellBallBubbleItem[] = [
   {
-    id: "shell-ball-local-agent-1",
+    bubble: {
+      bubble_id: "shell-ball-local-agent-1",
+      task_id: "",
+      type: "status",
+      text: "Drafting your update.",
+      pinned: false,
+      hidden: false,
+      created_at: "2026-04-11T10:04:00.000Z",
+    },
     role: "agent",
-    text: "Drafting your update.",
-    createdAt: "2026-04-11T10:04:00.000Z",
+    desktop: {
+      lifecycleState: "visible",
+    },
   },
   {
-    id: "shell-ball-local-user-1",
+    bubble: {
+      bubble_id: "shell-ball-local-user-1",
+      task_id: "",
+      type: "result",
+      text: "Open the dashboard.",
+      pinned: false,
+      hidden: false,
+      created_at: "2026-04-11T10:05:00.000Z",
+    },
     role: "user",
-    text: "Open the dashboard.",
-    createdAt: "2026-04-11T10:05:00.000Z",
-    freshnessHint: "fresh",
-    motionHint: "settle",
+    desktop: {
+      lifecycleState: "visible",
+      freshnessHint: "fresh",
+      motionHint: "settle",
+    },
   },
 ];
 
@@ -58,7 +76,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         visualState: input.visualState,
         inputValue: input.inputValue,
         voicePreview: input.voicePreview,
-        bubbleMessages: SHELL_BALL_LOCAL_BUBBLE_MESSAGES,
+        bubbleItems: SHELL_BALL_LOCAL_BUBBLE_ITEMS,
       }),
     [input.inputValue, input.visualState, input.voicePreview],
   );
