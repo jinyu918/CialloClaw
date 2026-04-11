@@ -1,3 +1,4 @@
+import { resolveDashboardModuleRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import type { DashboardDecorOrbConfig, DashboardEntranceOrbConfig } from "./dashboardHome.types";
 
 export const dashboardEntranceOrbs: DashboardEntranceOrbConfig[] = [
@@ -10,7 +11,7 @@ export const dashboardEntranceOrbs: DashboardEntranceOrbConfig[] = [
     orbitRadius: 286,
     orbitSpeed: 2.2,
     orbitOffset: 264,
-    route: "/tasks",
+    route: resolveDashboardModuleRoutePath("tasks"),
     size: 66,
   },
   {
@@ -22,7 +23,7 @@ export const dashboardEntranceOrbs: DashboardEntranceOrbConfig[] = [
     orbitRadius: 192,
     orbitSpeed: 1.76,
     orbitOffset: 28,
-    route: "/notes",
+    route: resolveDashboardModuleRoutePath("notes"),
     size: 58,
   },
   {
@@ -34,7 +35,7 @@ export const dashboardEntranceOrbs: DashboardEntranceOrbConfig[] = [
     orbitRadius: 278,
     orbitSpeed: 1.5,
     orbitOffset: 132,
-    route: "/memory",
+    route: resolveDashboardModuleRoutePath("memory"),
     size: 56,
   },
   {
@@ -46,7 +47,7 @@ export const dashboardEntranceOrbs: DashboardEntranceOrbConfig[] = [
     orbitRadius: 332,
     orbitSpeed: 1.22,
     orbitOffset: 324,
-    route: "/safety",
+    route: resolveDashboardModuleRoutePath("safety"),
     size: 58,
   },
 ];

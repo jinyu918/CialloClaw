@@ -1,9 +1,6 @@
-// 该文件封装托盘入口控制能力。 
-export function openControlPanelFromTray() {
-  return openWindowLabel("control-panel");
-}
+import { openOrFocusDesktopWindow } from "@/platform/windowController";
 
-// openWindowLabel 处理当前模块的相关逻辑。
-function openWindowLabel(label: string) {
-  return Promise.resolve(label);
+// 该文件封装托盘入口控制能力。
+export function openControlPanelFromTray() {
+  return openOrFocusDesktopWindow("control-panel");
 }

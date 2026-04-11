@@ -9,6 +9,7 @@ import {
   type PointerEvent,
 } from "react";
 import { Badge, Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
   History,
@@ -37,7 +38,7 @@ import {
   type SecurityModuleData,
   type SecurityRespondOutcome,
 } from "./securityService";
-import { openWindow } from "@/platform/windowController";
+import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import "./securityPage.css";
 
 type SecurityCardKey = "status" | "restore" | "budget" | "governance" | `approval:${string}`;
@@ -504,6 +505,7 @@ function getCardPreview(
 }
 
 export function SecurityApp() {
+  const navigate = useNavigate();
   const [moduleData, setModuleData] = useState(() => getInitialSecurityModuleData());
   const [activeApprovalId, setActiveApprovalId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -948,9 +950,12 @@ export function SecurityApp() {
               </article>
               <article className="security-page__detail-card">
                 <p className="security-page__detail-label">授权记录标识</p>
-                <p className="security-page__detail-value security-page__detail-value--mono">{authorizationRecord.authorization_record_id}</p>
+                <p className="security-page__detail-value security-page__detail-value--mono">
+                  {authorizationRecord.authorization_record_id}
+                </p>
                 <p className="security-page__detail-copy">
-                  approval_id：{authorizationRecord.approval_id} · task_id：{authorizationRecord.task_id} · created_at：{formatDateTime(authorizationRecord.created_at)}
+                  approval_id：{authorizationRecord.approval_id} · task_id：{authorizationRecord.task_id} · created_at：
+                  {formatDateTime(authorizationRecord.created_at)}
                 </p>
               </article>
               <article className="security-page__detail-card">
@@ -963,20 +968,24 @@ export function SecurityApp() {
               <article className="security-page__detail-card">
                 <p className="security-page__detail-label">任务来源与风险</p>
                 <p className="security-page__detail-value">{task.source_type}</p>
-                <p className="security-page__detail-copy">risk_level：{task.risk_level} · updated_at：{formatDateTime(task.updated_at)}</p>
+                <p className="security-page__detail-copy">
+                  risk_level：{task.risk_level} · updated_at：{formatDateTime(task.updated_at)}
+                </p>
               </article>
               <article className="security-page__detail-card">
                 <p className="security-page__detail-label">Bubble message</p>
                 <p className="security-page__detail-value">{bubbleMessage?.type ?? "未返回"}</p>
                 <p className="security-page__detail-copy">
-                  pinned：{formatBooleanLabel(bubbleMessage?.pinned ?? false)} · hidden：{formatBooleanLabel(bubbleMessage?.hidden ?? false)}
+                  pinned：{formatBooleanLabel(bubbleMessage?.pinned ?? false)} · hidden：
+                  {formatBooleanLabel(bubbleMessage?.hidden ?? false)}
                 </p>
               </article>
               <article className="security-page__detail-card">
                 <p className="security-page__detail-label">影响范围</p>
                 <p className="security-page__detail-value">{formatImpactScopeSummary(impactScope)}</p>
                 <p className="security-page__detail-copy">
-                  工作区外：{formatBooleanLabel(impactScope?.out_of_workspace ?? false)} · 覆盖/删除风险：{formatBooleanLabel(impactScope?.overwrite_or_delete_risk ?? false)}
+                  工作区外：{formatBooleanLabel(impactScope?.out_of_workspace ?? false)} · 覆盖/删除风险：
+                  {formatBooleanLabel(impactScope?.overwrite_or_delete_risk ?? false)}
                 </p>
               </article>
             </div>
@@ -1042,7 +1051,7 @@ export function SecurityApp() {
         {feedback ? <div className="security-page__detail-callout">{feedback}</div> : null}
 
         <Flex align="center" gap="3" wrap="wrap">
-          <Button variant="soft" color="gray" onClick={() => void openWindow("dashboard")}>
+          <Button variant="soft" color="gray" onClick={() => navigate(resolveDashboardRoutePath("home"))}>
             返回 Dashboard
             <ArrowUpRight className="h-4 w-4" />
           </Button>
@@ -1050,7 +1059,7 @@ export function SecurityApp() {
       </div>
     );
   };
-
+  
   const renderApprovalDetail = (approval: ApprovalRequest | undefined) => {
     if (!approval) {
       return <p className="security-page__empty-state">该待确认授权已经从当前列表中移除。</p>;

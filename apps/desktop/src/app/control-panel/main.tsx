@@ -4,6 +4,9 @@ import "@radix-ui/themes/styles.css";
 import ReactDOM from "react-dom/client";
 import { ControlPanelApp } from "@/features/control-panel/ControlPanelApp";
 import { AppProviders } from "@/features/shared/AppProviders";
+import { installHideOnCloseRequest } from "@/platform/hideOnCloseRequest";
+
+void installHideOnCloseRequest();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <Theme appearance="light" panelBackground="solid" accentColor="orange" grayColor="sand" radius="large">

@@ -175,14 +175,19 @@ func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 func TestTaskInspectorRunAggregatesRuntimeState(t *testing.T) {
 	service, workspaceRoot := newTestServiceWithExecution(t, "inspector output")
 	now := time.Now().UTC()
+	dueToday := now.Add(15 * time.Minute)
+	if dueToday.Day() != now.Day() {
+		dueToday = now.Add(1 * time.Minute)
+	}
+
 	service.runEngine.ReplaceNotepadItems([]map[string]any{
 		{
 			"item_id":          "todo_today",
-			"title":            "translate daily notes",
+			"title":            "translate release notes",
 			"bucket":           "upcoming",
 			"status":           "normal",
 			"type":             "todo_item",
-			"due_at":           now.Add(2 * time.Hour).Format(time.RFC3339),
+			"due_at":           dueToday.Format(time.RFC3339),
 			"agent_suggestion": "translate",
 		},
 	})

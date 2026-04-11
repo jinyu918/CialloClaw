@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CircleDashed, LayoutList } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { subscribeTask } from "@/rpc/subscriptions";
+import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { dashboardModules } from "@/features/dashboard/shared/dashboardRoutes";
 import { cn } from "@/utils/cn";
 import { getFinishedTaskGroups, isTaskEnded, sortTasksByLatest } from "./taskPage.mapper";
@@ -144,7 +145,7 @@ export function TaskPage() {
     }
 
     if (action === "open-safety") {
-      navigate("/safety");
+      navigate(resolveDashboardRoutePath("safety"));
       return;
     }
 
@@ -209,7 +210,7 @@ export function TaskPage() {
   return (
     <main className="dashboard-page task-preview-page" style={pageStyle}>
       <header className="dashboard-page__topbar">
-        <Link className="dashboard-page__home-link" to="/">
+        <Link className="dashboard-page__home-link" to={resolveDashboardRoutePath("home")}>
           <ArrowLeft className="h-4 w-4" />
           返回首页
         </Link>

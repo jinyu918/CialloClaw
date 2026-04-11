@@ -5,15 +5,40 @@
     "moduleResolution": "Node",
     "noEmit": false,
     "outDir": "./.cache/shell-ball-tests",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "strict": false,
+    "noImplicitAny": false,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/rpc/methods": ["./src/features/shell-ball/test-stubs/rpcMethods.ts"],
+      "@/rpc/client": ["./src/features/shell-ball/test-stubs/rpcClient.ts"],
+      "@/rpc/subscriptions": ["./src/features/shell-ball/test-stubs/rpcSubscriptions.ts"],
+      "@/features/dashboard/tasks/TasksPage": ["./src/features/shell-ball/test-stubs/dashboardTasksPage.tsx"],
+      "@/features/dashboard/notes/NotesPage": ["./src/features/shell-ball/test-stubs/dashboardNotesPage.tsx"],
+      "@/features/dashboard/memory/MemoryPage": ["./src/features/shell-ball/test-stubs/dashboardMemoryPage.tsx"],
+      "@cialloclaw/protocol": ["./src/features/shell-ball/test-stubs/protocol.ts"],
+      "@cialloclaw/ui": ["./src/features/shell-ball/test-stubs/ui.tsx"]
+    }
   },
   "include": [
+    "src/app/dashboard/DashboardRoot.tsx",
+    "src/app/dashboard/DashboardHome.tsx",
+    "src/features/dashboard/DashboardApp.tsx",
+    "src/features/dashboard/home/**/*",
+    "src/features/dashboard/safety/SafetyPage.tsx",
+    "src/features/dashboard/safety/SecurityPageShell.tsx",
+    "src/features/dashboard/safety/SecurityApp.tsx",
+    "src/features/dashboard/shared/DashboardBackHomeLink.tsx",
+    "src/features/dashboard/shared/dashboardRouteTargets.ts",
+    "src/features/shell-ball/test-stubs/*",
     "src/features/shell-ball/shellBall.contract.test.ts",
     "src/features/shell-ball/ShellBallApp.tsx",
     "src/features/shell-ball/ShellBallSurface.tsx",
     "src/features/shell-ball/shellBall.types.ts",
     "src/features/shell-ball/shellBall.demo.ts",
     "src/features/shell-ball/shellBall.motion.ts",
-    "src/stores/shellBallStore.ts"
+    "src/stores/shellBallStore.ts",
+    "src/platform/windowController.ts",
+    "src/platform/trayController.ts"
   ]
 }

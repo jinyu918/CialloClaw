@@ -11,11 +11,13 @@ type ShellBallSurfaceProps = {
   motionConfig: ShellBallMotionConfig;
   onDragStart: () => void;
   onPrimaryClick: () => void;
+  onDoubleClick: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
   onPressStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressEnd: (event: PointerEvent<HTMLButtonElement>) => boolean;
+  onPressCancel: (event: PointerEvent<HTMLButtonElement>) => void;
 };
 
 export function ShellBallSurface({
@@ -26,30 +28,18 @@ export function ShellBallSurface({
   motionConfig,
   onDragStart,
   onPrimaryClick,
+  onDoubleClick,
   onRegionEnter,
   onRegionLeave,
   onPressStart,
   onPressMove,
   onPressEnd,
+  onPressCancel,
 }: ShellBallSurfaceProps) {
   return (
     <div ref={containerRef} className="shell-ball-surface" aria-label="Shell-ball floating surface">
       <div className="shell-ball-surface__core">
         <div className="shell-ball-surface__interaction-shell">
-          <div
-            className="shell-ball-surface__host-drag-zone"
-            data-shell-ball-zone="host-drag"
-            data-shell-ball-drag-handle="true"
-            aria-hidden="true"
-            onPointerDown={(event) => {
-              if (event.button !== 0) {
-                return;
-              }
-
-              event.preventDefault();
-              onDragStart();
-            }}
-          />
           <div
             className="shell-ball-surface__interaction-zone"
             data-shell-ball-zone="interaction"
@@ -63,9 +53,12 @@ export function ShellBallSurface({
                   voicePreview={voicePreview}
                   motionConfig={motionConfig}
                   onPrimaryClick={onPrimaryClick}
+                  onDoubleClick={onDoubleClick}
+                  onHotspotDragStart={onDragStart}
                   onPressStart={onPressStart}
                   onPressMove={onPressMove}
                   onPressEnd={onPressEnd}
+                  onPressCancel={onPressCancel}
                 />
               </div>
             </div>

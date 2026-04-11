@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-d
 import { MemoryPage } from "@/features/dashboard/memory/MemoryPage";
 import { NotesPage } from "@/features/dashboard/notes/NotesPage";
 import { SafetyPage } from "@/features/dashboard/safety/SafetyPage";
+import { resolveDashboardModuleRoutePath, resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { TasksPage } from "@/features/dashboard/tasks/TasksPage";
 import { DashboardHome } from "./DashboardHome";
 import "./dashboard.css";
@@ -22,12 +23,12 @@ function DashboardRoutes() {
           transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
         >
           <Routes location={location}>
-            <Route element={<DashboardHome />} path="/" />
-            <Route element={<TasksPage />} path="/tasks/*" />
-            <Route element={<NotesPage />} path="/notes/*" />
-            <Route element={<MemoryPage />} path="/memory/*" />
-            <Route element={<SafetyPage />} path="/safety/*" />
-            <Route element={<Navigate replace to="/" />} path="*" />
+            <Route element={<DashboardHome />} path={resolveDashboardRoutePath("home")} />
+            <Route element={<TasksPage />} path={`${resolveDashboardModuleRoutePath("tasks")}/*`} />
+            <Route element={<NotesPage />} path={`${resolveDashboardModuleRoutePath("notes")}/*`} />
+            <Route element={<MemoryPage />} path={`${resolveDashboardModuleRoutePath("memory")}/*`} />
+            <Route element={<SafetyPage />} path={`${resolveDashboardModuleRoutePath("safety")}/*`} />
+            <Route element={<Navigate replace to={resolveDashboardRoutePath("home")} />} path="*" />
           </Routes>
         </motion.div>
       </AnimatePresence>
