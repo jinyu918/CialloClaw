@@ -1464,6 +1464,23 @@ test("shell-ball interaction consumed sequence lifecycle stays explicit", () => 
 
   const afterVoiceFlowConsumed = getShellBallInteractionConsumedForEvent("voice_flow_consumed");
   assert.equal(afterVoiceFlowConsumed, true);
+  assert.equal(
+    shouldOpenShellBallDashboardFromDoubleClick({
+      state: "hover_input",
+      interactionConsumed: afterVoiceFlowConsumed,
+    }),
+    false,
+  );
+
+  const afterNextPressStart = getShellBallInteractionConsumedForEvent("press_start");
+  assert.equal(afterNextPressStart, false);
+  assert.equal(
+    shouldOpenShellBallDashboardFromDoubleClick({
+      state: "hover_input",
+      interactionConsumed: afterNextPressStart,
+    }),
+    true,
+  );
 
   const afterForceStateReset = getShellBallInteractionConsumedForEvent("force_state_reset");
   assert.equal(afterForceStateReset, false);
