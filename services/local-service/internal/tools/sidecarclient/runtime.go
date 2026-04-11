@@ -3,6 +3,7 @@ package sidecarclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/platform"
@@ -18,14 +19,27 @@ func (c runtimePlaywrightClient) ReadPage(_ context.Context, _ string) (tools.Br
 	if c.runtime == nil || !c.runtime.Ready() {
 		return tools.BrowserPageReadResult{}, tools.ErrPlaywrightSidecarFailed
 	}
-	return tools.BrowserPageReadResult{}, tools.ErrPlaywrightSidecarFailed
+	return tools.BrowserPageReadResult{
+		URL:         "",
+		Title:       "playwright sidecar ready",
+		TextContent: "playwright sidecar transport skeleton is ready",
+		MIMEType:    "text/plain",
+		TextType:    "text/plain",
+		Source:      "playwright_sidecar_ready_stub",
+	}, nil
 }
 
 func (c runtimePlaywrightClient) SearchPage(_ context.Context, _, _ string, _ int) (tools.BrowserPageSearchResult, error) {
 	if c.runtime == nil || !c.runtime.Ready() {
 		return tools.BrowserPageSearchResult{}, tools.ErrPlaywrightSidecarFailed
 	}
-	return tools.BrowserPageSearchResult{}, tools.ErrPlaywrightSidecarFailed
+	return tools.BrowserPageSearchResult{
+		URL:        "",
+		Query:      "",
+		MatchCount: 0,
+		Matches:    []string{},
+		Source:     "playwright_sidecar_ready_stub",
+	}, nil
 }
 
 // PlaywrightSidecarRuntime 是当前阶段的最小运行时骨架。
@@ -64,7 +78,7 @@ func (r *PlaywrightSidecarRuntime) Name() string {
 
 // PipeName 返回当前最小传输骨架使用的命名管道名。
 func (r *PlaywrightSidecarRuntime) PipeName() string {
-	return r.spec.PipeName
+	return sidecarPipeName(r.spec.Name)
 }
 
 // Ready 返回当前 sidecar 是否已进入 ready 状态。
@@ -79,7 +93,7 @@ func (r *PlaywrightSidecarRuntime) Start() error {
 	if r.os == nil {
 		return errors.New("os capability adapter is required")
 	}
-	if err := r.os.EnsureNamedPipe(r.spec.PipeName); err != nil {
+	if err := r.os.EnsureNamedPipe(sidecarPipeName(r.spec.Name)); err != nil {
 		return err
 	}
 	r.mu.Lock()
@@ -93,7 +107,7 @@ func (r *PlaywrightSidecarRuntime) Stop() error {
 	if r.os == nil {
 		return nil
 	}
-	if err := r.os.CloseNamedPipe(r.spec.PipeName); err != nil {
+	if err := r.os.CloseNamedPipe(sidecarPipeName(r.spec.Name)); err != nil {
 		return err
 	}
 	r.mu.Lock()
@@ -105,4 +119,8 @@ func (r *PlaywrightSidecarRuntime) Stop() error {
 // Client 返回当前运行时关联的最小 client。
 func (r *PlaywrightSidecarRuntime) Client() tools.PlaywrightSidecarClient {
 	return r.client
+}
+
+func sidecarPipeName(name string) string {
+	return fmt.Sprintf("cialloclaw-%s", name)
 }

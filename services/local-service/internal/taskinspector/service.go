@@ -49,7 +49,7 @@ func NewService(fileSystem platform.FileSystemAdapter) *Service {
 func (s *Service) Run(input RunInput) RunResult {
 	sources := resolveSources(input.TargetSources, input.Config)
 	parsedFiles, fileItems := s.inspectSources(sources)
-	dueToday, overdue := countDueBuckets(input.NotepadItems)
+	dueToday, overdue := countDueBuckets(input.NotepadItems, s.now())
 	staleCount := countStaleTasks(input.UnfinishedTasks, inspectionDuration(input.Config), s.now())
 	identifiedItems := fileItems + countOpenNotepadItems(input.NotepadItems)
 
@@ -197,10 +197,9 @@ func countOpenNotepadItems(items []map[string]any) int {
 	return count
 }
 
-func countDueBuckets(items []map[string]any) (int, int) {
+func countDueBuckets(items []map[string]any, now time.Time) (int, int) {
 	dueToday := 0
 	overdue := 0
-	now := time.Now()
 	for _, item := range items {
 		status := stringValue(item, "status")
 		if status == "normal" {

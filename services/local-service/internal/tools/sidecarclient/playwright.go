@@ -116,8 +116,17 @@ func (t *PageSearchTool) Execute(ctx context.Context, execCtx *tools.ToolExecute
 	url := strings.TrimSpace(input["url"].(string))
 	query := strings.TrimSpace(input["query"].(string))
 	limit := defaultPageSearchLimit
-	if rawLimit, ok := input["limit"].(int); ok && rawLimit > 0 {
-		limit = rawLimit
+	if rawLimit, ok := input["limit"]; ok {
+		switch typed := rawLimit.(type) {
+		case int:
+			if typed > 0 {
+				limit = typed
+			}
+		case float64:
+			if int(typed) > 0 {
+				limit = int(typed)
+			}
+		}
 	}
 	result, err := execCtx.Playwright.SearchPage(ctx, url, query, limit)
 	if err != nil {

@@ -6,7 +6,6 @@ import "strings"
 type SidecarSpec struct {
 	Name      string
 	Transport string
-	PipeName  string
 }
 
 // Service 提供当前模块的服务能力。
@@ -63,6 +62,5 @@ func (s *Service) SidecarSpec(name string) (SidecarSpec, bool) {
 	return SidecarSpec{
 		Name:      name,
 		Transport: "named_pipe",
-		PipeName:  `\\.\pipe\cialloclaw-` + name,
 	}, true
 }
