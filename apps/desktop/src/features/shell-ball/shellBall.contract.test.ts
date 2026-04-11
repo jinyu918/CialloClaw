@@ -741,6 +741,14 @@ test("shell-ball desktop navigation keeps route changes separate from desktop wi
     "utf8",
   );
   const dashboardRoutesSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/shared/dashboardRoutes.ts"), "utf8");
+  const dashboardEventPanelSource = readFileSync(
+    resolve(desktopRoot, "src/features/dashboard/home/components/DashboardEventPanel.tsx"),
+    "utf8",
+  );
+  const dashboardPlaceholderPageSource = readFileSync(
+    resolve(desktopRoot, "src/features/dashboard/shared/DashboardPlaceholderPage.tsx"),
+    "utf8",
+  );
   const securityAppSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/safety/SecurityApp.tsx"), "utf8");
   const dashboardRouteTargetsSource = readFileSync(
     resolve(desktopRoot, "src/features/dashboard/shared/dashboardRouteTargets.ts"),
@@ -805,6 +813,10 @@ test("shell-ball desktop navigation keeps route changes separate from desktop wi
   assert.doesNotMatch(dashboardHomeConfigSource, /route: "\/notes"/);
   assert.doesNotMatch(dashboardHomeConfigSource, /route: "\/memory"/);
   assert.doesNotMatch(dashboardHomeConfigSource, /route: "\/safety"/);
+  assert.match(dashboardEventPanelSource, /resolveDashboardModuleRoutePath\(module\)/);
+  assert.doesNotMatch(dashboardEventPanelSource, /navigate\(`\/\$\{module\}`\)/);
+  assert.match(dashboardPlaceholderPageSource, /resolveDashboardRoutePath\("home"\)/);
+  assert.doesNotMatch(dashboardPlaceholderPageSource, /to="\/"/);
   assert.match(dashboardRoutesSource, /resolveDashboardModuleRoutePath\("tasks"\)/);
   assert.match(dashboardRoutesSource, /resolveDashboardModuleRoutePath\("notes"\)/);
   assert.match(dashboardRoutesSource, /resolveDashboardModuleRoutePath\("memory"\)/);

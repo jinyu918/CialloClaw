@@ -1,6 +1,7 @@
 import { ArrowLeft, CircleDashed } from "lucide-react";
 import { Link, NavLink } from "react-router-dom";
 import { cn } from "@/utils/cn";
+import { resolveDashboardRoutePath } from "./dashboardRouteTargets";
 import { dashboardModuleMap, dashboardModules, type DashboardModuleRoute } from "./dashboardRoutes";
 
 type DashboardPlaceholderPageProps = {
@@ -14,7 +15,7 @@ export function DashboardPlaceholderPage({ route }: DashboardPlaceholderPageProp
   return (
     <main className="dashboard-page">
       <header className="dashboard-page__topbar">
-        <Link className="dashboard-page__home-link" to="/">
+        <Link className="dashboard-page__home-link" to={resolveDashboardRoutePath("home")}>
           <ArrowLeft className="h-4 w-4" />
           返回首页
         </Link>
