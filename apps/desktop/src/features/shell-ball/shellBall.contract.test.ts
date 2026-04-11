@@ -1741,6 +1741,10 @@ test("shell-ball mascot pointer policy keeps cancellation separate from successf
     getShellBallMascotPointerPhaseAction({ phase: "pointer_cancel", button: 0, isPrimary: false, pressHandled: false }),
     "noop",
   );
+  assert.equal(
+    getShellBallMascotPointerPhaseAction({ phase: "pointer_cancel", button: -1, isPrimary: true, pressHandled: false }),
+    "cleanup_only",
+  );
 });
 
 test("shell-ball press cancel policy clears pending press state and cancels active listening", () => {

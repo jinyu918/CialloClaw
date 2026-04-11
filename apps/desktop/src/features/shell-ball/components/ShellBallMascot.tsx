@@ -53,11 +53,11 @@ export function getShellBallMascotPointerPhaseAction(input: {
   isPrimary: boolean;
   pressHandled: boolean;
 }): ShellBallMascotPointerPhaseAction {
-  const isPrimaryButtonSequence = input.button === 0 && input.isPrimary;
-
   if (input.phase === "pointer_cancel") {
-    return isPrimaryButtonSequence ? "cleanup_only" : "noop";
+    return input.isPrimary ? "cleanup_only" : "noop";
   }
+
+  const isPrimaryButtonSequence = input.button === 0 && input.isPrimary;
 
   if (!isPrimaryButtonSequence) {
     return "noop";
