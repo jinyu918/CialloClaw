@@ -1,6 +1,8 @@
 // 该文件负责插件管理层的最小骨架。
 package plugin
 
+import "strings"
+
 // Service 提供当前模块的服务能力。
 type Service struct {
 	workers  []string
@@ -23,4 +25,26 @@ func (s *Service) Workers() []string {
 // Sidecars 返回当前已知 sidecar 名称列表。
 func (s *Service) Sidecars() []string {
 	return append([]string(nil), s.sidecars...)
+}
+
+// HasSidecar 判断当前声明中是否包含指定 sidecar。
+func (s *Service) HasSidecar(name string) bool {
+	needle := strings.TrimSpace(name)
+	if needle == "" {
+		return false
+	}
+	for _, sidecar := range s.sidecars {
+		if sidecar == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// PrimarySidecar 返回当前最重要的 sidecar 名称。
+func (s *Service) PrimarySidecar() string {
+	if len(s.sidecars) == 0 {
+		return ""
+	}
+	return s.sidecars[0]
 }
