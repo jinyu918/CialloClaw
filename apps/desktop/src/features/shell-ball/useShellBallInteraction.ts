@@ -27,6 +27,26 @@ export function shouldOpenShellBallDashboardFromDoubleClick(input: {
   return !input.interactionConsumed && canOpenShellBallDashboard(input.state);
 }
 
+type ShellBallInteractionConsumedEvent =
+  | "press_start"
+  | "long_press_voice_entry"
+  | "voice_flow_consumed"
+  | "force_state_reset";
+
+export function getNextShellBallInteractionConsumed(input: {
+  interactionConsumed: boolean;
+  event: ShellBallInteractionConsumedEvent;
+}) {
+  switch (input.event) {
+    case "press_start":
+    case "force_state_reset":
+      return false;
+    case "long_press_voice_entry":
+    case "voice_flow_consumed":
+      return true;
+  }
+}
+
 export function getShellBallVoicePreviewFromEvent(input: {
   startX: number | null;
   startY: number | null;
@@ -116,11 +136,21 @@ export function useShellBallInteraction() {
   }
 
   function resetInteractionConsumed() {
-    setInteractionConsumed(false);
+    setInteractionConsumed((current) =>
+      getNextShellBallInteractionConsumed({
+        interactionConsumed: current,
+        event: "press_start",
+      }),
+    );
   }
 
   function consumeInteraction() {
-    setInteractionConsumed(true);
+    setInteractionConsumed((current) =>
+      getNextShellBallInteractionConsumed({
+        interactionConsumed: current,
+        event: "voice_flow_consumed",
+      }),
+    );
   }
 
   function setCurrentVoicePreview(preview: ShellBallVoicePreview) {
@@ -220,7 +250,12 @@ export function useShellBallInteraction() {
 
     longPressHandleRef.current = globalThis.setTimeout(() => {
       longPressHandleRef.current = null;
-      consumeInteraction();
+      setInteractionConsumed((current) =>
+        getNextShellBallInteractionConsumed({
+          interactionConsumed: current,
+          event: "long_press_voice_entry",
+        }),
+      );
       dispatch("press_start");
     }, SHELL_BALL_LONG_PRESS_MS);
   }
@@ -288,7 +323,12 @@ export function useShellBallInteraction() {
 
   function handleForceState(state: ShellBallVisualState) {
     clearLongPressTimer();
-    resetInteractionConsumed();
+    setInteractionConsumed((current) =>
+      getNextShellBallInteractionConsumed({
+        interactionConsumed: current,
+        event: "force_state_reset",
+      }),
+    );
     pressStartXRef.current = null;
     pressStartYRef.current = null;
     setCurrentVoicePreview(null);
