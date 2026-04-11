@@ -200,8 +200,13 @@ func countOpenNotepadItems(items []map[string]any) int {
 func countDueBuckets(items []map[string]any) (int, int) {
 	dueToday := 0
 	overdue := 0
+	now := time.Now()
 	for _, item := range items {
-		switch stringValue(item, "status") {
+		status := stringValue(item, "status")
+		if status == "normal" {
+			status = normalizeTodoStatus(stringValue(item, "due_at"), now)
+		}
+		switch status {
 		case "due_today":
 			dueToday++
 		case "overdue":
@@ -209,6 +214,25 @@ func countDueBuckets(items []map[string]any) (int, int) {
 		}
 	}
 	return dueToday, overdue
+}
+
+func normalizeTodoStatus(dueAt string, now time.Time) string {
+	if strings.TrimSpace(dueAt) == "" {
+		return "normal"
+	}
+	parsed, err := time.Parse(time.RFC3339, dueAt)
+	if err != nil {
+		return "normal"
+	}
+	if parsed.Before(now) {
+		return "overdue"
+	}
+	yearNow, monthNow, dayNow := now.Date()
+	yearDue, monthDue, dayDue := parsed.Date()
+	if yearNow == yearDue && monthNow == monthDue && dayNow == dayDue {
+		return "due_today"
+	}
+	return "normal"
 }
 
 func countStaleTasks(tasks []runengine.TaskRecord, interval time.Duration, now time.Time) int {
