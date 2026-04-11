@@ -1046,7 +1046,7 @@ test("shell-ball helper window sync maps visual states into visibility and snaps
       bubbleMessages: [
         {
           id: "msg-1",
-          role: "assistant",
+          role: "agent",
           text: "Still listening.",
           createdAt: "2026-04-11T10:00:00.000Z",
           freshnessHint: "fresh",
@@ -1062,7 +1062,7 @@ test("shell-ball helper window sync maps visual states into visibility and snaps
       bubbleMessages: [
         {
           id: "msg-1",
-          role: "assistant",
+          role: "agent",
           text: "Still listening.",
           createdAt: "2026-04-11T10:00:00.000Z",
           freshnessHint: "fresh",

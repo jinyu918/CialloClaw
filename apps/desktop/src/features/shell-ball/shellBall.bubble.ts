@@ -1,4 +1,4 @@
-export type ShellBallBubbleMessageRole = "assistant" | "user" | "system";
+export type ShellBallBubbleMessageRole = "user" | "agent";
 
 export type ShellBallBubbleMessageFreshnessHint = "fresh" | "stale";
 
