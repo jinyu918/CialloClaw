@@ -2130,6 +2130,39 @@ test("shell-ball bubble zone renders a real message list without placeholder chr
   assert.doesNotMatch(markup, /toolbar/i);
 });
 
+test("shell-ball bubble window styles stay transparent, faded, and motion-ready", () => {
+  const shellBallStyles = readFileSync(resolve(desktopRoot, "src/features/shell-ball/shellBall.css"), "utf8");
+  const markup = renderToStaticMarkup(
+    createElement(ShellBallBubbleZone, {
+      visualState: "processing",
+      bubbleMessages: [
+        {
+          id: "msg-style-1",
+          role: "agent",
+          text: "Draft ready.",
+          createdAt: "2026-04-11T10:07:00.000Z",
+          freshnessHint: "fresh",
+          motionHint: "settle",
+        },
+      ] satisfies ShellBallBubbleMessage[],
+    }),
+  );
+
+  assert.match(shellBallStyles, /\.shell-ball-window--bubble\s*\{[\s\S]*background:\s*transparent;/);
+  assert.match(shellBallStyles, /\.shell-ball-window--bubble\s*\{[\s\S]*border:\s*0;/);
+  assert.match(shellBallStyles, /\.shell-ball-window--bubble\s*\{[\s\S]*box-shadow:\s*none;/);
+  assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll\s*\{[\s\S]*scrollbar-width:\s*none;/);
+  assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll::-webkit-scrollbar\s*\{[\s\S]*display:\s*none;/);
+  assert.match(shellBallStyles, /\.shell-ball-bubble-zone__scroll\s*\{[\s\S]*mask-image:\s*linear-gradient\(/);
+  assert.match(shellBallStyles, /@keyframes shell-ball-bubble-message-enter/);
+  assert.match(
+    shellBallStyles,
+    /\.shell-ball-bubble-zone__message-entry\[data-freshness="fresh"\]\[data-motion="settle"\]\s*\{[\s\S]*animation:\s*shell-ball-bubble-message-enter/,
+  );
+  assert.match(markup, /data-freshness="fresh"/);
+  assert.match(markup, /data-motion="settle"/);
+});
+
 test("shell-ball input window owns the input rendering", () => {
   const markup = renderToStaticMarkup(
     createElement(ShellBallInputWindow, {

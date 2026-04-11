@@ -12,7 +12,14 @@ export function ShellBallBubbleZone({ visualState, bubbleMessages = [] }: ShellB
     <section className="shell-ball-bubble-zone" data-state={visualState}>
       <div className="shell-ball-bubble-zone__scroll">
         {bubbleMessages.map((message) => (
-          <ShellBallBubbleMessageView key={message.id} message={message} />
+          <div
+            key={message.id}
+            className="shell-ball-bubble-zone__message-entry"
+            data-freshness={message.freshnessHint ?? "stale"}
+            data-motion={message.motionHint ?? "settle"}
+          >
+            <ShellBallBubbleMessageView message={message} />
+          </div>
         ))}
       </div>
     </section>
