@@ -604,10 +604,10 @@
 .shell-ball-mascot {
   align-items: center;
   display: flex;
-  height: clamp(13.5rem, 25.5vw, 18rem);
+  height: clamp(16.2rem, 30.6vw, 21.6rem);
   justify-content: center;
   position: relative;
-  width: clamp(12.38rem, 23.25vw, 14.25rem);
+  width: clamp(14.86rem, 27.9vw, 17.1rem);
 }
 
 .shell-ball-mascot__hotspot {
@@ -640,11 +640,11 @@
 }
 
 .shell-ball-mascot__hold-ring {
-  height: 11.5rem;
+  height: 13.8rem;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 11.5rem;
+  width: 13.8rem;
   z-index: 1;
 }
 
@@ -658,26 +658,26 @@
 
 .shell-ball-mascot__orbital--back {
   background: radial-gradient(circle, rgba(255, 255, 255, 0.8), transparent 68%);
-  height: 11.25rem;
+  height: 13.5rem;
   opacity: 0.74;
-  width: 11.25rem;
+  width: 13.5rem;
 }
 
 .shell-ball-mascot__orbital--front {
   background: radial-gradient(circle, rgba(255, 255, 255, 0.35), transparent 72%);
-  height: 8.63rem;
+  height: 10.36rem;
   opacity: 0.72;
-  width: 8.63rem;
+  width: 10.36rem;
 }
 
 .shell-ball-mascot__shadow {
   background: radial-gradient(circle, rgba(88, 72, 45, 0.24), rgba(88, 72, 45, 0));
-  bottom: 1.58rem;
+  bottom: 1.9rem;
   filter: blur(12px);
-  height: 2.18rem;
+  height: 2.62rem;
   left: 50%;
   transform: translateX(-50%);
-  width: 7.5rem;
+  width: 9rem;
 }
 
 .shell-ball-mascot__float {
@@ -701,18 +701,18 @@
   border: 1px solid rgba(255, 255, 255, 0.92);
   border-radius: 48% 48% 46% 46% / 44% 44% 52% 52%;
   box-shadow:
-    0 20px 32px -21px rgba(122, 106, 79, 0.32),
+    0 24px 38px -25px rgba(122, 106, 79, 0.32),
     0 1px 0 rgba(255, 255, 255, 0.76) inset;
-  height: clamp(8.63rem, 16.5vw, 10.5rem);
+  height: clamp(10.36rem, 19.8vw, 12.6rem);
   overflow: hidden;
   position: relative;
-  width: clamp(8.1rem, 15.75vw, 9.9rem);
+  width: clamp(9.72rem, 18.9vw, 11.88rem);
 }
 
 .shell-ball-mascot__belly {
   background: linear-gradient(180deg, rgba(255, 251, 246, 0.9), rgba(245, 236, 224, 0.92));
   border-radius: 50%;
-  bottom: 0.86rem;
+  bottom: 1.03rem;
   height: 48%;
   left: 18%;
   opacity: 0.96;
@@ -721,13 +721,13 @@
 }
 
 .shell-ball-mascot__tail-shell {
-  bottom: 2.1rem;
+  bottom: 2.52rem;
   display: flex;
   justify-content: center;
-  left: calc(50% + 2.18rem);
+  left: calc(50% + 2.62rem);
   position: absolute;
   transform-origin: left center;
-  width: 3.38rem;
+  width: 4.06rem;
   z-index: 0;
 }
 
@@ -735,54 +735,54 @@
   animation: shell-ball-tail var(--shell-ball-tail-duration) ease-in-out infinite;
   background: linear-gradient(180deg, rgba(111, 117, 126, 0.96), rgba(78, 83, 95, 0.98));
   border-radius: 999px;
-  height: 0.6rem;
+  height: 0.72rem;
   position: relative;
   transform-origin: left center;
-  width: 3.15rem;
+  width: 3.78rem;
 }
 
 .shell-ball-mascot__tail::after {
   background: linear-gradient(180deg, rgba(146, 151, 159, 0.92), rgba(84, 90, 101, 0.98));
   border-radius: 999px;
   content: "";
-  height: 0.33rem;
+  height: 0.4rem;
   position: absolute;
   right: -0.15rem;
-  top: 0.14rem;
-  width: 2.25rem;
+  top: 0.17rem;
+  width: 2.7rem;
 }
 
 .shell-ball-mascot__wing-shell {
   position: absolute;
-  top: 3.23rem;
+  top: 3.88rem;
   z-index: 0;
 }
 
 .shell-ball-mascot__wing-shell--left {
-  left: -0.75rem;
+  left: -0.9rem;
 }
 
 .shell-ball-mascot__wing-shell--right {
-  right: -0.75rem;
+  right: -0.9rem;
 }
 
 .shell-ball-mascot__wing {
   background: linear-gradient(180deg, rgba(109, 115, 126, 0.96), rgba(74, 80, 93, 0.98));
   border-radius: 58% 58% 74% 74%;
-  box-shadow: 0 12px 20px -17px rgba(46, 51, 61, 0.45);
-  height: 4.05rem;
+  box-shadow: 0 14px 24px -20px rgba(46, 51, 61, 0.45);
+  height: 4.86rem;
   position: relative;
-  width: 2.44rem;
+  width: 2.93rem;
 }
 
 .shell-ball-mascot__wing[data-side="left"] {
   transform: translateX(calc(-1 * var(--shell-ball-wing-spread))) rotate(-18deg);
-  transform-origin: right 0.9rem;
+  transform-origin: right 1.08rem;
 }
 
 .shell-ball-mascot__wing[data-side="right"] {
   transform: translateX(var(--shell-ball-wing-spread)) rotate(18deg);
-  transform-origin: left 0.9rem;
+  transform-origin: left 1.08rem;
 }
 
 .shell-ball-mascot__wing[data-mode="lift"][data-side="left"] {
@@ -815,11 +815,11 @@
 
 .shell-ball-mascot__crest {
   display: flex;
-  gap: 0.14rem;
+  gap: 0.17rem;
   justify-content: center;
   left: 50%;
   position: absolute;
-  top: -0.71rem;
+  top: -0.85rem;
   transform: translateX(-50%);
   z-index: 3;
 }
@@ -833,8 +833,8 @@
 
 .shell-ball-mascot__crest-feather--left,
 .shell-ball-mascot__crest-feather--right {
-  height: 0.75rem;
-  width: 0.35rem;
+  height: 0.9rem;
+  width: 0.42rem;
 }
 
 .shell-ball-mascot__crest-feather--left {
@@ -842,8 +842,8 @@
 }
 
 .shell-ball-mascot__crest-feather--center {
-  height: 0.92rem;
-  width: 0.41rem;
+  height: 1.1rem;
+  width: 0.49rem;
 }
 
 .shell-ball-mascot__crest-feather--right {
@@ -856,7 +856,7 @@
   justify-items: center;
   left: 50%;
   position: absolute;
-  top: 2.25rem;
+  top: 2.7rem;
   transform: translateX(-50%);
   z-index: 2;
 }
@@ -864,71 +864,71 @@
 .shell-ball-mascot__eyes {
   animation: shell-ball-blink 7.4s ease-in-out infinite;
   display: flex;
-  gap: 0.9rem;
+  gap: 1.08rem;
 }
 
 .shell-ball-mascot__eye {
   background: #23282f;
   border-radius: 999px;
   display: block;
-  width: 0.47rem;
+  width: 0.56rem;
 }
 
 .shell-ball-mascot__eyes[data-eye="soft"] .shell-ball-mascot__eye {
-  height: 0.74rem;
+  height: 0.89rem;
 }
 
 .shell-ball-mascot__eyes[data-eye="curious"] .shell-ball-mascot__eye,
 .shell-ball-mascot__eyes[data-eye="listening"] .shell-ball-mascot__eye {
-  height: 0.68rem;
-  width: 0.44rem;
+  height: 0.82rem;
+  width: 0.53rem;
 }
 
 .shell-ball-mascot__eyes[data-eye="focus"] .shell-ball-mascot__eye {
-  height: 0.54rem;
+  height: 0.65rem;
 }
 
 .shell-ball-mascot__eyes[data-eye="careful"] .shell-ball-mascot__eye,
 .shell-ball-mascot__eyes[data-eye="locked"] .shell-ball-mascot__eye {
-  height: 0.38rem;
-  width: 0.56rem;
+  height: 0.46rem;
+  width: 0.67rem;
 }
 
 .shell-ball-mascot__beak {
   background: linear-gradient(180deg, #f7c981, #d8943a);
   border-radius: 48% 48% 70% 70%;
-  height: 0.69rem;
-  margin-top: 0.34rem;
-  width: 0.75rem;
+  height: 0.83rem;
+  margin-top: 0.41rem;
+  width: 0.9rem;
 }
 
 .shell-ball-mascot__cheek {
   background: radial-gradient(circle, rgba(255, 198, 190, 0.5), rgba(255, 198, 190, 0));
   border-radius: 999px;
-  height: 1.5rem;
+  height: 1.8rem;
   position: absolute;
-  top: 3rem;
-  width: 1.2rem;
+  top: 3.6rem;
+  width: 1.44rem;
   z-index: 1;
 }
 
 .shell-ball-mascot__cheek--left {
-  left: 0.9rem;
+  left: 1.08rem;
 }
 
 .shell-ball-mascot__cheek--right {
-  right: 0.9rem;
+  right: 1.08rem;
 }
 
 .shell-ball-mascot__rings {
   align-items: center;
   display: flex;
-  height: 12rem;
+  height: 14.4rem;
   justify-content: center;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 12rem;
+  width: 14.4rem;
 }
 
 .shell-ball-mascot__ring,
@@ -946,31 +946,31 @@
 }
 
 .shell-ball-mascot__ring--outer {
-  height: 9.75rem;
-  width: 9.75rem;
+  height: 11.7rem;
+  width: 11.7rem;
 }
 
 .shell-ball-mascot__ring--inner {
   animation-delay: 0.8s;
-  height: 7.88rem;
-  width: 7.88rem;
+  height: 9.46rem;
+  width: 9.46rem;
 }
 
 .shell-ball-mascot__ring-core {
   align-items: center;
   background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 11px 20px -17px rgba(92, 142, 186, 0.44);
+  box-shadow: 0 13px 24px -20px rgba(92, 142, 186, 0.44);
   display: inline-flex;
-  height: 1.88rem;
+  height: 2.26rem;
   justify-content: center;
   transform: translate(-50%, -50%);
-  width: 1.88rem;
+  width: 2.26rem;
 }
 
 .shell-ball-mascot__ring-icon {
   color: #5b87bf;
-  height: 0.75rem;
-  width: 0.75rem;
+  height: 0.9rem;
+  width: 0.9rem;
 }
 
 .shell-ball-mascot__rings[data-ring="locked"] .shell-ball-mascot__ring {
@@ -988,16 +988,16 @@
   border-radius: 999px;
   color: rgba(255, 255, 255, 0.92);
   display: inline-flex;
-  gap: 0.28rem;
+  gap: 0.55rem;
   left: 50%;
-  padding: 0.28rem 0.48rem;
+  padding: 0.62rem 0.96rem;
   position: absolute;
   transform: translateX(-50%);
   z-index: 6;
 }
 
 .shell-ball-mascot__voice-hint span {
-  font-size: 0.62rem;
+  font-size: 1.12rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -1005,13 +1005,13 @@
 .shell-ball-mascot__voice-hint--lock {
   background: rgba(205, 87, 87, 0.22);
   border: 1px solid rgba(205, 87, 87, 0.42);
-  top: 0.15rem;
+  top: -0.45rem;
 }
 
 .shell-ball-mascot__voice-hint--cancel {
   background: rgba(86, 132, 196, 0.2);
   border: 1px solid rgba(86, 132, 196, 0.36);
-  bottom: 0.1rem;
+  bottom: -0.4rem;
 }
 
 .shell-ball-mascot__voice-hint.is-active,
@@ -1030,8 +1030,8 @@
 
 .shell-ball-mascot__voice-arrow,
 .shell-ball-mascot__voice-icon {
-  height: 0.68rem;
-  width: 0.68rem;
+  height: 1.18rem;
+  width: 1.18rem;
 }
 
 .shell-ball-mascot__auth-marker {
@@ -1039,21 +1039,21 @@
   background: rgba(255, 247, 234, 0.96);
   border: 1px solid rgba(220, 163, 68, 0.28);
   border-radius: 999px;
-  box-shadow: 0 12px 18px -15px rgba(177, 124, 31, 0.44);
+  box-shadow: 0 14px 22px -18px rgba(177, 124, 31, 0.44);
   color: #c88529;
   display: inline-flex;
-  height: 1.8rem;
+  height: 2.16rem;
   justify-content: center;
   position: absolute;
-  right: -0.6rem;
-  top: 1.05rem;
-  width: 1.8rem;
+  right: -0.72rem;
+  top: 1.26rem;
+  width: 2.16rem;
   z-index: 4;
 }
 
 .shell-ball-mascot__auth-icon {
-  height: 0.75rem;
-  width: 0.75rem;
+  height: 0.9rem;
+  width: 0.9rem;
 }
 
 .shell-ball-mascot--preview-lock .shell-ball-mascot__hotspot:focus-visible,

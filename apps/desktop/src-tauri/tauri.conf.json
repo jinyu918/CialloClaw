@@ -14,8 +14,8 @@
       {
         "label": "shell-ball",
         "title": "CialloClaw Shell Ball",
-        "width": 120,
-        "height": 130,
+        "width": 144,
+        "height": 156,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

@@ -17,7 +17,7 @@ type ShellBallSurfaceProps = {
   onDoubleClick: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
-  onInputProxyClick: () => void;
+  onInputProxyClick?: () => void;
   onPressStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressEnd: (event: PointerEvent<HTMLButtonElement>) => boolean;
@@ -38,7 +38,7 @@ export function ShellBallSurface({
   onDoubleClick,
   onRegionEnter,
   onRegionLeave,
-  onInputProxyClick,
+  onInputProxyClick = () => {},
   onPressStart,
   onPressMove,
   onPressEnd,
@@ -49,7 +49,6 @@ export function ShellBallSurface({
       ref={containerRef}
       className="shell-ball-surface"
       data-dashboard-transition-phase={dashboardTransitionPhase}
-      aria-label="Shell-ball floating surface"
     >
       <div className="shell-ball-surface__core">
         <div className="shell-ball-surface__interaction-shell">
