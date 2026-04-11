@@ -2578,6 +2578,267 @@ test("shell-ball coordinator bubble actions pin and delete local items", () => {
   assert.equal(unpinnedItems[0]?.bubble.pinned, false);
 });
 
+test("shell-ball coordinator bubble actions restore unpinned bubbles by timestamp then id", () => {
+  const sourceItems: ShellBallBubbleItem[] = [
+    {
+      bubble: {
+        bubble_id: "msg-order-2",
+        task_id: "task-order-2",
+        type: "status",
+        text: "Pinned later twin.",
+        pinned: true,
+        hidden: false,
+        created_at: "2026-04-11T10:10:00.000Z",
+      },
+      role: "agent",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "msg-order-3",
+        task_id: "task-order-3",
+        type: "result",
+        text: "Newest visible bubble.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:11:00.000Z",
+      },
+      role: "user",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "msg-order-1",
+        task_id: "task-order-1",
+        type: "status",
+        text: "Oldest visible bubble.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:09:00.000Z",
+      },
+      role: "agent",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "msg-order-0",
+        task_id: "task-order-0",
+        type: "status",
+        text: "Pinned earlier twin.",
+        pinned: true,
+        hidden: false,
+        created_at: "2026-04-11T10:10:00.000Z",
+      },
+      role: "agent",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+  ];
+
+  const unpinnedItems = applyShellBallBubbleAction(sourceItems, {
+    action: "unpin",
+    bubbleId: "msg-order-2",
+  });
+
+  assert.deepEqual(
+    unpinnedItems.map((item) => ({
+      bubbleId: item.bubble.bubble_id,
+      pinned: item.bubble.pinned,
+      createdAt: item.bubble.created_at,
+    })),
+    [
+      {
+        bubbleId: "msg-order-1",
+        pinned: false,
+        createdAt: "2026-04-11T10:09:00.000Z",
+      },
+      {
+        bubbleId: "msg-order-0",
+        pinned: true,
+        createdAt: "2026-04-11T10:10:00.000Z",
+      },
+      {
+        bubbleId: "msg-order-2",
+        pinned: false,
+        createdAt: "2026-04-11T10:10:00.000Z",
+      },
+      {
+        bubbleId: "msg-order-3",
+        pinned: false,
+        createdAt: "2026-04-11T10:11:00.000Z",
+      },
+    ],
+  );
+});
+
+test("shell-ball detached bubble actions close pinned windows and delete detached bubbles entirely", () => {
+  const listeners = new Map<string, (event: { payload: unknown }) => void>();
+  const closeCalls: string[] = [];
+  let bubbleItemsState: ShellBallBubbleItem[] = [
+    {
+      bubble: {
+        bubble_id: "msg-detached-1",
+        task_id: "task-detached-1",
+        type: "status",
+        text: "Pinned bubble.",
+        pinned: true,
+        hidden: false,
+        created_at: "2026-04-11T10:10:00.000Z",
+      },
+      role: "agent",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "msg-detached-2",
+        task_id: "task-detached-2",
+        type: "result",
+        text: "Keep me visible.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:11:00.000Z",
+      },
+      role: "user",
+      desktop: {
+        lifecycleState: "visible",
+      },
+    },
+  ];
+
+  const { useShellBallCoordinator } = withShellBallModuleRuntime("useShellBallCoordinator.ts", {
+    react: {
+      ...require("react"),
+      useEffect(callback: () => void) {
+        callback();
+      },
+      useMemo<T>(factory: () => T) {
+        return factory();
+      },
+      useRef<T>(value: T) {
+        return { current: value };
+      },
+      useState<T>(value: T) {
+        const resolvedValue = typeof value === "function" ? (value as () => T)() : value;
+
+        if (
+          Array.isArray(resolvedValue) &&
+          resolvedValue.every((item) => item && typeof item === "object" && "bubble" in item) &&
+          bubbleItemsState.length === 0
+        ) {
+          bubbleItemsState = resolvedValue as ShellBallBubbleItem[];
+        }
+
+        return [bubbleItemsState as unknown as T || resolvedValue, (nextValue: T | ((currentValue: T) => T)) => {
+          bubbleItemsState = typeof nextValue === "function"
+            ? (nextValue as (currentValue: T) => T)(bubbleItemsState as unknown as T) as unknown as ShellBallBubbleItem[]
+            : nextValue as unknown as ShellBallBubbleItem[];
+        }] as const;
+      },
+    },
+    "@tauri-apps/api/window": {
+      getCurrentWindow() {
+        return {
+          label: shellBallWindowLabels.ball,
+          listen(eventName: string, callback: (event: { payload: unknown }) => void) {
+            listeners.set(eventName, callback);
+            return Promise.resolve(() => {});
+          },
+          onMoved() {
+            return Promise.resolve(() => {});
+          },
+          onResized() {
+            return Promise.resolve(() => {});
+          },
+          outerPosition() {
+            return Promise.resolve({ toLogical: () => ({ x: 0, y: 0 }) });
+          },
+          outerSize() {
+            return Promise.resolve({ toLogical: () => ({ width: 124, height: 104 }) });
+          },
+          scaleFactor() {
+            return Promise.resolve(1);
+          },
+        };
+      },
+    },
+    "../../platform/shellBallWindowController": {
+      SHELL_BALL_PINNED_BUBBLE_WINDOW_FRAME: { width: 240, height: 140 },
+      closeShellBallPinnedBubbleWindow(bubbleId: string) {
+        closeCalls.push(bubbleId);
+        return Promise.resolve();
+      },
+      emitToShellBallWindowLabel() {
+        return Promise.resolve();
+      },
+      getShellBallPinnedBubbleIdFromLabel() {
+        return null;
+      },
+      getShellBallPinnedBubbleWindowAnchor() {
+        return { x: 0, y: 0 };
+      },
+      getShellBallPinnedBubbleWindowLabel(bubbleId: string) {
+        return `shell-ball-bubble-pinned-${bubbleId}`;
+      },
+      openShellBallPinnedBubbleWindow() {
+        return Promise.resolve();
+      },
+      shellBallWindowLabels,
+    },
+    "./shellBall.bubble": require(resolve(desktopRoot, ".cache/shell-ball-tests/features/shell-ball/shellBall.bubble.js")),
+    "./shellBall.windowSync": require(resolve(desktopRoot, ".cache/shell-ball-tests/features/shell-ball/shellBall.windowSync.js")),
+    "./useShellBallWindowMetrics": {
+      getShellBallBubbleAnchor() {
+        return { x: 0, y: 0 };
+      },
+    },
+  }, (moduleExports) => moduleExports as { useShellBallCoordinator: typeof import("./useShellBallCoordinator").useShellBallCoordinator });
+
+  useShellBallCoordinator({
+    visualState: "hover_input",
+    inputValue: "",
+    voicePreview: null,
+    setInputValue: () => {},
+    onRegionEnter: () => {},
+    onRegionLeave: () => {},
+    onInputFocusChange: () => {},
+    onSubmitText: () => {},
+    onAttachFile: () => {},
+    onPrimaryClick: () => {},
+  });
+
+  listeners.get(shellBallWindowSyncEvents.pinnedWindowDetached)?.({
+    payload: { bubbleId: "msg-detached-1" },
+  });
+  listeners.get(shellBallWindowSyncEvents.bubbleAction)?.({
+    payload: { source: "pinned_window", action: "unpin", bubbleId: "msg-detached-1" },
+  });
+
+  assert.deepEqual(closeCalls, ["msg-detached-1"]);
+  assert.deepEqual(bubbleItemsState.map((item) => ({ bubbleId: item.bubble.bubble_id, pinned: item.bubble.pinned })), [
+    { bubbleId: "msg-detached-1", pinned: false },
+    { bubbleId: "msg-detached-2", pinned: false },
+  ]);
+
+  listeners.get(shellBallWindowSyncEvents.pinnedWindowDetached)?.({
+    payload: { bubbleId: "msg-detached-1" },
+  });
+  listeners.get(shellBallWindowSyncEvents.bubbleAction)?.({
+    payload: { source: "pinned_window", action: "delete", bubbleId: "msg-detached-1" },
+  });
+
+  assert.deepEqual(closeCalls, ["msg-detached-1", "msg-detached-1"]);
+  assert.deepEqual(bubbleItemsState.map((item) => item.bubble.bubble_id), ["msg-detached-2"]);
+});
+
 test("shell-ball bubble actions stay coordinator-owned and detached-position free", () => {
   const bubbleActionPayload = {
     source: "pinned_window",

@@ -84,31 +84,47 @@ const SHELL_BALL_LOCAL_BUBBLE_ITEMS: ShellBallBubbleItem[] = [
   },
 ];
 
+export function compareShellBallBubbleItemsByTimestamp(left: ShellBallBubbleItem, right: ShellBallBubbleItem) {
+  const createdAtOrder = left.bubble.created_at.localeCompare(right.bubble.created_at);
+
+  if (createdAtOrder !== 0) {
+    return createdAtOrder;
+  }
+
+  return left.bubble.bubble_id.localeCompare(right.bubble.bubble_id);
+}
+
+export function sortShellBallBubbleItemsByTimestamp(items: ShellBallBubbleItem[]) {
+  return [...items].sort(compareShellBallBubbleItemsByTimestamp);
+}
+
 export function applyShellBallBubbleAction(
   items: ShellBallBubbleItem[],
   payload: Pick<ShellBallBubbleActionPayload, "action" | "bubbleId">,
 ): ShellBallBubbleItem[] {
   if (payload.action === "delete") {
-    return items.filter((item) => item.bubble.bubble_id !== payload.bubbleId);
+    return sortShellBallBubbleItemsByTimestamp(items.filter((item) => item.bubble.bubble_id !== payload.bubbleId));
   }
 
-  return items.map((item) => {
-    if (item.bubble.bubble_id !== payload.bubbleId) {
-      return item;
-    }
+  return sortShellBallBubbleItemsByTimestamp(
+    items.map((item) => {
+      if (item.bubble.bubble_id !== payload.bubbleId) {
+        return item;
+      }
 
-    return {
-      ...item,
-      bubble: {
-        ...item.bubble,
-        pinned: payload.action === "pin",
-      },
-    };
-  });
+      return {
+        ...item,
+        bubble: {
+          ...item.bubble,
+          pinned: payload.action === "pin",
+        },
+      };
+    }),
+  );
 }
 
 export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
-  const [bubbleItems, setBubbleItems] = useState(() => cloneShellBallBubbleItems(SHELL_BALL_LOCAL_BUBBLE_ITEMS));
+  const [bubbleItems, setBubbleItems] = useState(() => sortShellBallBubbleItemsByTimestamp(cloneShellBallBubbleItems(SHELL_BALL_LOCAL_BUBBLE_ITEMS)));
   const snapshot = useMemo(
     () =>
       createShellBallWindowSnapshot({
