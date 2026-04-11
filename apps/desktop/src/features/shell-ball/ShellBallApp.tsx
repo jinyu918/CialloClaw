@@ -2,7 +2,9 @@ import { ShellBallDevLayer } from "./ShellBallDevLayer";
 import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { ShellBallSurface } from "./ShellBallSurface";
 import { useShellBallInteraction } from "./useShellBallInteraction";
+import { useShellBallWindow } from "./useShellBallWindow";
 import { getShellBallMotionConfig } from "./shellBall.motion";
+import { isTauriWindowEnvironment } from "@/platform/shellBallWindow";
 
 type ShellBallAppProps = {
   isDev?: boolean;
@@ -16,8 +18,8 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
     voicePreview,
     inputBarMode,
     handlePrimaryClick,
-    handleRegionEnter,
-    handleRegionLeave,
+    handleRegionEnter: handleRegionEnterInteraction,
+    handleRegionLeave: handleRegionLeaveInteraction,
     handleSubmitText,
     handleAttachFile,
     handlePressStart,
@@ -26,11 +28,37 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
     handleInputFocusChange,
     handleForceState,
   } = useShellBallInteraction();
+  const {
+    contentRef,
+    dragZoneRef,
+    interactionRef,
+    surfaceRef,
+    handleInteractionEnter: handleWindowInteractionEnter,
+    handleInteractionLeave: handleWindowInteractionLeave,
+    handleHostDragStart,
+  } = useShellBallWindow({
+    inputBarMode,
+    visualState,
+  });
   const motionConfig = getShellBallMotionConfig(visualState);
-  const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev);
+  const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev) && !isTauriWindowEnvironment();
+
+  function handleRegionEnter() {
+    handleWindowInteractionEnter();
+    handleRegionEnterInteraction();
+  }
+
+  function handleRegionLeave() {
+    handleRegionLeaveInteraction();
+    handleWindowInteractionLeave();
+  }
 
   return (
     <ShellBallSurface
+      contentRef={contentRef}
+      dragZoneRef={dragZoneRef}
+      interactionRef={interactionRef}
+      surfaceRef={surfaceRef}
       visualState={visualState}
       voicePreview={voicePreview}
       inputBarMode={inputBarMode}
@@ -46,6 +74,7 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
       onPressMove={handlePressMove}
       onPressEnd={handlePressEnd}
       onInputFocusChange={handleInputFocusChange}
+      onHostDragStart={handleHostDragStart}
     >
       {showDemoSwitcher ? (
         <ShellBallDevLayer value={visualState} onChange={handleForceState} />

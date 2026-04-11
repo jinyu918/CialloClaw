@@ -1,3 +1,26 @@
+[data-shell-ball-app="true"] {
+  background: transparent !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+html[data-shell-ball-app="true"],
+body[data-shell-ball-app="true"] {
+  background: transparent !important;
+  height: auto;
+  margin: 0;
+  min-height: 0;
+  overflow: hidden;
+  width: fit-content;
+}
+
+body[data-shell-ball-app="true"] #root {
+  display: block;
+  height: auto;
+  min-height: 0;
+  width: fit-content;
+}
+
 .shell-ball-surface {
   --shell-ball-paper: rgba(255, 251, 244, 0.88);
   --shell-ball-paper-strong: rgba(255, 253, 249, 0.96);
@@ -12,15 +35,15 @@
   --shell-ball-teal: #4f9da7;
   --shell-ball-slate: #8f9aa5;
   color: var(--shell-ball-ink);
-  display: grid;
+  display: inline-grid;
   gap: 1.1rem;
   justify-items: center;
-  margin: 0 auto;
-  max-width: 36rem;
+  margin: 0;
+  max-width: none;
   min-height: 0;
-  padding: 0.85rem 0.85rem 1rem;
+  padding: 0.1rem 0.1rem 0.18rem;
   position: relative;
-  width: 100%;
+  width: fit-content;
 }
 
 .shell-ball-surface::before {
@@ -29,7 +52,7 @@
     radial-gradient(circle at 82% 14%, rgba(242, 219, 182, 0.32), transparent 20%),
     radial-gradient(circle at 50% 100%, rgba(202, 180, 143, 0.09), transparent 30%);
   content: "";
-  inset: 0;
+  inset: 14% 18% 12% 18%;
   pointer-events: none;
   position: absolute;
 }
@@ -44,7 +67,14 @@
   display: grid;
   gap: 0.95rem;
   justify-items: center;
-  width: 100%;
+  width: fit-content;
+}
+
+.shell-ball-surface__window-box {
+  display: grid;
+  justify-items: center;
+  position: relative;
+  width: fit-content;
 }
 
 .shell-ball-switcher__eyebrow,
@@ -76,7 +106,7 @@
   display: grid;
   gap: clamp(0.85rem, 1.8vw, 1.35rem);
   justify-items: center;
-  width: 100%;
+  width: fit-content;
 }
 
 .shell-ball-bubble-zone {
@@ -146,20 +176,36 @@
 .shell-ball-surface__interaction-shell {
   display: grid;
   justify-items: center;
-  width: 100%;
+  position: relative;
+  width: fit-content;
 }
 
 .shell-ball-surface__host-drag-zone {
-  height: clamp(0.75rem, 2vw, 1rem);
-  pointer-events: none;
-  width: min(100%, 18rem);
+  border-radius: 999px;
+  cursor: grab;
+  height: 1rem;
+  left: 50%;
+  position: absolute;
+  pointer-events: auto;
+  top: -0.15rem;
+  transform: translateX(-50%);
+  width: 8.5rem;
+  z-index: 2;
+}
+
+.shell-ball-surface__host-drag-zone:hover {
+  background: linear-gradient(90deg, transparent, rgba(209, 176, 122, 0.16), transparent);
+}
+
+.shell-ball-surface__host-drag-zone:active {
+  cursor: grabbing;
 }
 
 .shell-ball-surface__interaction-zone {
   align-items: center;
   display: grid;
   justify-items: center;
-  width: 100%;
+  width: fit-content;
 }
 
 .shell-ball-surface__body {
@@ -167,16 +213,16 @@
   display: grid;
   gap: clamp(0.85rem, 1.6vw, 1.35rem);
   justify-items: center;
-  min-height: clamp(20rem, 34vw, 27rem);
+  min-height: 0;
   padding: 0.15rem 0 0.25rem;
-  width: min(100%, 28rem);
+  width: fit-content;
 }
 
 .shell-ball-surface__mascot-shell {
   align-items: center;
   display: flex;
   justify-content: center;
-  width: 100%;
+  width: fit-content;
 }
 
 .shell-ball-input-bar,
@@ -1091,8 +1137,8 @@
   }
 
   .shell-ball-surface__body {
-    min-height: 20.5rem;
-    width: 100%;
+    min-height: 0;
+    width: fit-content;
   }
 
   .shell-ball-mascot {
