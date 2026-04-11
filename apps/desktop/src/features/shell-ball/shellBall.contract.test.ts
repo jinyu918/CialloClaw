@@ -32,6 +32,7 @@ import { ShellBallBubbleWindow } from "./ShellBallBubbleWindow";
 import { ShellBallDevLayer } from "./ShellBallDevLayer";
 import { ShellBallInputWindow } from "./ShellBallInputWindow";
 import { ShellBallMascot } from "./components/ShellBallMascot";
+import { ShellBallBubbleZone } from "./components/ShellBallBubbleZone";
 import { getShellBallMascotHotspotGestureAction } from "./components/ShellBallMascot";
 import { getShellBallMascotPointerPhaseAction } from "./components/ShellBallMascot";
 import { shouldStartShellBallMascotWindowDrag } from "./components/ShellBallMascot";
@@ -2096,6 +2097,37 @@ test("shell-ball bubble window does not depend on only visualState to render its
     visualState: "voice_locked",
     bubbleMessages: helperSnapshot.bubbleMessages,
   });
+});
+
+test("shell-ball bubble zone renders a real message list without placeholder chrome", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ShellBallBubbleZone, {
+      visualState: "processing",
+      bubbleMessages: [
+        {
+          id: "msg-agent-1",
+          role: "agent",
+          text: "I found the latest dashboard status.",
+          createdAt: "2026-04-11T10:06:00.000Z",
+        },
+        {
+          id: "msg-user-1",
+          role: "user",
+          text: "Open it for me.",
+          createdAt: "2026-04-11T10:06:05.000Z",
+        },
+      ] satisfies ShellBallBubbleMessage[],
+    }),
+  );
+
+  assert.match(markup, /I found the latest dashboard status\./);
+  assert.match(markup, /Open it for me\./);
+  assert.match(markup, /shell-ball-bubble-zone__message-row shell-ball-bubble-zone__message-row--agent/);
+  assert.match(markup, /shell-ball-bubble-zone__message-row shell-ball-bubble-zone__message-row--user/);
+  assert.doesNotMatch(markup, /shell-ball-bubble-zone__shell/);
+  assert.doesNotMatch(markup, /<header/);
+  assert.doesNotMatch(markup, /<input/);
+  assert.doesNotMatch(markup, /toolbar/i);
 });
 
 test("shell-ball input window owns the input rendering", () => {
