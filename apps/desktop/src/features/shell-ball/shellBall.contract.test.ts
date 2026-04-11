@@ -1735,7 +1735,11 @@ test("shell-ball mascot pointer policy keeps cancellation separate from successf
   );
   assert.equal(
     getShellBallMascotPointerPhaseAction({ phase: "pointer_cancel", button: 1, isPrimary: false, pressHandled: false }),
-    "cleanup_only",
+    "noop",
+  );
+  assert.equal(
+    getShellBallMascotPointerPhaseAction({ phase: "pointer_cancel", button: 0, isPrimary: false, pressHandled: false }),
+    "noop",
   );
 });
 
