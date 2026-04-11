@@ -1575,6 +1575,7 @@ test("shell-ball surface renders the mascot-only floating structure without the 
       voicePreview: null,
       motionConfig: getShellBallMotionConfig("hover_input"),
       onPrimaryClick: () => {},
+      onDoubleClick: () => {},
       onRegionEnter: () => {},
       onRegionLeave: () => {},
       onDragStart: () => {},
@@ -1599,6 +1600,7 @@ test("shell-ball surface reserves a host drag zone separate from the interaction
       voicePreview: null,
       motionConfig: getShellBallMotionConfig("hover_input"),
       onPrimaryClick: () => {},
+      onDoubleClick: () => {},
       onRegionEnter: () => {},
       onRegionLeave: () => {},
       onDragStart: () => {},
@@ -1614,6 +1616,42 @@ test("shell-ball surface reserves a host drag zone separate from the interaction
   assert.match(markup, /data-shell-ball-zone="voice-hotspot"/);
   assert.match(markup, /shell-ball-surface__host-drag-zone/);
   assert.match(markup, /shell-ball-surface__interaction-zone/);
+});
+
+test("shell-ball mascot exposes distinct single-click and double-click hotspot handlers", () => {
+  const mascotSource = readFileSync(
+    resolve(desktopRoot, "src/features/shell-ball/components/ShellBallMascot.tsx"),
+    "utf8",
+  );
+
+  assert.match(mascotSource, /onDoubleClick\?: \(\) => void;/);
+  assert.match(mascotSource, /onDoubleClick = \(\) => \{\},/);
+  assert.match(mascotSource, /function handleClick\(event: MouseEvent<HTMLButtonElement>\)/);
+  assert.match(mascotSource, /function handleDoubleClick\(event: MouseEvent<HTMLButtonElement>\)/);
+  assert.match(mascotSource, /onClick=\{handleClick\}/);
+  assert.match(mascotSource, /onDoubleClick=\{handleDoubleClick\}/);
+  assert.notEqual(mascotSource.indexOf("onClick={handleClick}"), mascotSource.indexOf("onDoubleClick={handleDoubleClick}"));
+});
+
+test("shell-ball surface passes mascot double-click wiring without collapsing the drag zone", () => {
+  const surfaceSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallSurface.tsx"), "utf8");
+
+  assert.match(surfaceSource, /onDoubleClick: \(\) => void;/);
+  assert.match(surfaceSource, /<ShellBallMascot[\s\S]*onDoubleClick=\{onDoubleClick\}/);
+  assert.match(surfaceSource, /data-shell-ball-zone="host-drag"/);
+  assert.match(surfaceSource, /data-shell-ball-zone="interaction"/);
+});
+
+test("shell-ball app gates dashboard opening on mascot double click", () => {
+  const appSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallApp.tsx"), "utf8");
+
+  assert.match(appSource, /import \{ openOrFocusDesktopWindow \} from "\.\.\/\.\.\/platform\/windowController";/);
+  assert.match(appSource, /shouldOpenDashboardFromDoubleClick,/);
+  assert.match(appSource, /function handleDoubleClick\(\)/);
+  assert.match(appSource, /if \(!shouldOpenDashboardFromDoubleClick\) \{/);
+  assert.match(appSource, /void openOrFocusDesktopWindow\("dashboard"\);/);
+  assert.match(appSource, /onPrimaryClick=\{handlePrimaryClick\}/);
+  assert.match(appSource, /onDoubleClick=\{handleDoubleClick\}/);
 });
 
 test("shell-ball demo switcher visibility stays dev-only", () => {

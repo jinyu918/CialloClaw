@@ -6,6 +6,7 @@ import { getShellBallMotionConfig } from "./shellBall.motion";
 import { useShellBallCoordinator } from "./useShellBallCoordinator";
 import { useShellBallWindowMetrics } from "./useShellBallWindowMetrics";
 import { startShellBallWindowDragging } from "../../platform/shellBallWindowController";
+import { openOrFocusDesktopWindow } from "../../platform/windowController";
 
 type ShellBallAppProps = {
   isDev?: boolean;
@@ -17,6 +18,7 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
     inputValue,
     voicePreview,
     handlePrimaryClick,
+    shouldOpenDashboardFromDoubleClick,
     handleRegionEnter,
     handleRegionLeave,
     handlePressStart,
@@ -31,6 +33,14 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
   const motionConfig = getShellBallMotionConfig(visualState);
   const showDemoSwitcher = shouldShowShellBallDemoSwitcher(isDev);
   const { rootRef } = useShellBallWindowMetrics({ role: "ball" });
+
+  function handleDoubleClick() {
+    if (!shouldOpenDashboardFromDoubleClick) {
+      return;
+    }
+
+    void openOrFocusDesktopWindow("dashboard");
+  }
 
   useShellBallCoordinator({
     visualState,
@@ -55,6 +65,7 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
         void startShellBallWindowDragging();
       }}
       onPrimaryClick={handlePrimaryClick}
+      onDoubleClick={handleDoubleClick}
       onRegionEnter={handleRegionEnter}
       onRegionLeave={handleRegionLeave}
       onPressStart={handlePressStart}

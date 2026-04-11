@@ -10,6 +10,7 @@ type ShellBallMascotProps = {
   voicePreview?: ShellBallVoicePreview;
   motionConfig: ShellBallMotionConfig;
   onPrimaryClick?: () => void;
+  onDoubleClick?: () => void;
   onPressStart?: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressMove?: (event: PointerEvent<HTMLButtonElement>) => void;
   onPressEnd?: (event: PointerEvent<HTMLButtonElement>) => boolean;
@@ -22,11 +23,12 @@ export function ShellBallMascot({
   voicePreview = null,
   motionConfig,
   onPrimaryClick = () => {},
+  onDoubleClick = () => {},
   onPressStart = () => {},
   onPressMove = () => {},
   onPressEnd = () => false,
 }: ShellBallMascotProps) {
-  const suppressClickRef = useRef(false);
+  const suppressGestureRef = useRef(false);
 
   const floatStyle: MotionStyle = {
     "--shell-ball-float-distance": `${motionConfig.floatOffsetY}px`,
@@ -56,6 +58,7 @@ export function ShellBallMascot({
   };
 
   function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    suppressGestureRef.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
     onPressStart(event);
   }
@@ -74,19 +77,23 @@ export function ShellBallMascot({
       return;
     }
 
-    suppressClickRef.current = true;
-    globalThis.setTimeout(() => {
-      suppressClickRef.current = false;
-    }, 0);
+    suppressGestureRef.current = true;
   }
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
+    if (suppressGestureRef.current) {
       return;
     }
 
     onPrimaryClick();
+  }
+
+  function handleDoubleClick(event: MouseEvent<HTMLButtonElement>) {
+    if (suppressGestureRef.current) {
+      return;
+    }
+
+    onDoubleClick();
   }
 
   return (
@@ -160,6 +167,7 @@ export function ShellBallMascot({
         aria-label="Shell-ball mascot"
         data-shell-ball-zone="voice-hotspot"
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}

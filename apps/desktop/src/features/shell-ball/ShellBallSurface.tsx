@@ -11,6 +11,7 @@ type ShellBallSurfaceProps = {
   motionConfig: ShellBallMotionConfig;
   onDragStart: () => void;
   onPrimaryClick: () => void;
+  onDoubleClick: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
   onPressStart: (event: PointerEvent<HTMLButtonElement>) => void;
@@ -26,6 +27,7 @@ export function ShellBallSurface({
   motionConfig,
   onDragStart,
   onPrimaryClick,
+  onDoubleClick,
   onRegionEnter,
   onRegionLeave,
   onPressStart,
@@ -63,6 +65,7 @@ export function ShellBallSurface({
                   voicePreview={voicePreview}
                   motionConfig={motionConfig}
                   onPrimaryClick={onPrimaryClick}
+                  onDoubleClick={onDoubleClick}
                   onPressStart={onPressStart}
                   onPressMove={onPressMove}
                   onPressEnd={onPressEnd}
