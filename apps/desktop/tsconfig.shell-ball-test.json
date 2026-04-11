@@ -18,6 +18,7 @@
     "src/features/shell-ball/shellBall.types.ts",
     "src/features/shell-ball/shellBall.demo.ts",
     "src/features/shell-ball/shellBall.motion.ts",
-    "src/stores/shellBallStore.ts"
+    "src/stores/shellBallStore.ts",
+    "src/platform/windowController.ts"
   ]
 }
