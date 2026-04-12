@@ -36,8 +36,10 @@ type ShellBallCoordinatorInput = {
   visualState: ShellBallVisualState;
   helperWindowsVisible?: boolean;
   inputValue: string;
+  finalizedSpeechPayload: string | null;
   voicePreview: ShellBallVoicePreview;
   setInputValue: (value: string) => void;
+  onFinalizedSpeechHandled: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
   onInputFocusChange: (focused: boolean) => void;
@@ -100,6 +102,30 @@ export function sortShellBallBubbleItemsByTimestamp(items: ShellBallBubbleItem[]
   return [...items].sort(compareShellBallBubbleItemsByTimestamp);
 }
 
+export function createShellBallFinalizedSpeechBubbleItem(input: {
+  text: string;
+  sequence: number;
+  createdAt: string;
+}): ShellBallBubbleItem {
+  return {
+    bubble: {
+      bubble_id: `shell-ball-local-user-voice-${input.sequence}`,
+      task_id: "",
+      type: "result",
+      text: input.text,
+      pinned: false,
+      hidden: false,
+      created_at: input.createdAt,
+    },
+    role: "user",
+    desktop: {
+      lifecycleState: "visible",
+      freshnessHint: "fresh",
+      motionHint: "settle",
+    },
+  };
+}
+
 export function applyShellBallBubbleAction(
   items: ShellBallBubbleItem[],
   payload: Pick<ShellBallBubbleActionPayload, "action" | "bubbleId">,
@@ -127,6 +153,8 @@ export function applyShellBallBubbleAction(
 
 export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const [bubbleItems, setBubbleItems] = useState(() => sortShellBallBubbleItemsByTimestamp(cloneShellBallBubbleItems(SHELL_BALL_LOCAL_BUBBLE_ITEMS)));
+  const appendedVoiceBubbleSequenceRef = useRef(0);
+  const handledFinalizedSpeechPayloadRef = useRef<string | null>(null);
   const snapshot = useMemo(
     () =>
       createShellBallWindowSnapshot({
@@ -143,6 +171,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const detachedPinnedBubbleIdsRef = useRef(new Set<string>());
   const handlersRef = useRef({
     setInputValue: input.setInputValue,
+    onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
     onInputFocusChange: input.onInputFocusChange,
@@ -155,6 +184,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   bubbleItemsRef.current = bubbleItems;
   handlersRef.current = {
     setInputValue: input.setInputValue,
+    onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
     onInputFocusChange: input.onInputFocusChange,
@@ -162,6 +192,34 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     onAttachFile: input.onAttachFile,
     onPrimaryClick: input.onPrimaryClick,
   };
+
+  useEffect(() => {
+    const finalizedSpeechPayload = input.finalizedSpeechPayload;
+
+    if (finalizedSpeechPayload === null) {
+      handledFinalizedSpeechPayloadRef.current = null;
+      return;
+    }
+
+    if (handledFinalizedSpeechPayloadRef.current === finalizedSpeechPayload) {
+      return;
+    }
+
+    handledFinalizedSpeechPayloadRef.current = finalizedSpeechPayload;
+    appendedVoiceBubbleSequenceRef.current += 1;
+
+    setBubbleItems((currentItems) =>
+      sortShellBallBubbleItemsByTimestamp([
+        ...currentItems,
+        createShellBallFinalizedSpeechBubbleItem({
+          text: finalizedSpeechPayload,
+          sequence: appendedVoiceBubbleSequenceRef.current,
+          createdAt: new Date().toISOString(),
+        }),
+      ]),
+    );
+    handlersRef.current.onFinalizedSpeechHandled();
+  }, [input.finalizedSpeechPayload]);
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();

@@ -113,6 +113,7 @@
   --shell-ball-bubble-accent: rgba(106, 145, 200, 0.18);
   align-items: stretch;
   display: grid;
+  gap: 0.4rem;
   justify-items: stretch;
   min-height: clamp(5.25rem, 12vw, 8.5rem);
   overflow: hidden;

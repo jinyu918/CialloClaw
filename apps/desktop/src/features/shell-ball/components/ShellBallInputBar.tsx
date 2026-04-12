@@ -91,7 +91,7 @@ export function ShellBallInputBar({
         readOnly={!isInteractive}
         tabIndex={isInteractive ? 0 : -1}
         aria-label="Shell-ball input"
-        placeholder={isVoice ? "Voice capture is active" : "Type a request for shell-ball"}
+        placeholder={isVoice ? "Listening has started — speak now" : "Type a request for shell-ball"}
       />
       {previewLabel === null ? null : (
         <span className="shell-ball-input-bar__preview" aria-live="polite">

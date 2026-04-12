@@ -7,7 +7,7 @@ import type {
 
 export const SHELL_BALL_HOVER_INTENT_MS = 360;
 export const SHELL_BALL_LEAVE_GRACE_MS = 180;
-export const SHELL_BALL_LONG_PRESS_MS = 420;
+export const SHELL_BALL_LONG_PRESS_MS = 300;
 export const SHELL_BALL_LOCK_DELTA_PX = 48;
 export const SHELL_BALL_CANCEL_DELTA_PX = 48;
 export const SHELL_BALL_VERTICAL_PRIORITY_RATIO = 1.25;
@@ -123,19 +123,6 @@ export function getShellBallVoicePreview(input: { deltaX: number; deltaY: number
   return null;
 }
 
-export function resolveShellBallVoiceReleaseEvent(
-  preview: ShellBallVoicePreview,
-): Extract<ShellBallInteractionEvent, "voice_lock" | "voice_cancel" | "voice_finish"> {
-  switch (preview) {
-    case "lock":
-      return "voice_lock";
-    case "cancel":
-      return "voice_cancel";
-    default:
-      return "voice_finish";
-  }
-}
-
 export function resolveShellBallHoverTiming(input: {
   current: ShellBallVisualState;
   event: ShellBallHoverTimingEvent;
@@ -248,12 +235,6 @@ export function resolveShellBallTransition(input: {
 
     case "voice_cancel":
       return { next: current === "voice_listening" ? "idle" : current };
-
-    case "voice_finish":
-      return { next: current === "voice_listening" ? "processing" : current };
-
-    case "primary_click_locked_voice_end":
-      return { next: current === "voice_locked" ? "processing" : current };
 
     case "auto_advance":
       if (current === "confirming_intent" || current === "waiting_auth") {

@@ -14,7 +14,6 @@ import {
   shouldPreviewShellBallVoiceGesture,
   getShellBallVoicePreview,
   resolveShellBallTransition,
-  resolveShellBallVoiceReleaseEvent,
   shouldRetainShellBallHoverInput,
   SHELL_BALL_CANCEL_DELTA_PX,
   SHELL_BALL_CONFIRMING_MS,
@@ -27,6 +26,7 @@ import {
   SHELL_BALL_WAITING_AUTH_MS,
 } from "./shellBall.interaction";
 import { getShellBallMotionConfig } from "./shellBall.motion";
+import { collectShellBallSpeechTranscript, composeShellBallSpeechDraft } from "./shellBall.speech";
 import { ShellBallApp } from "./ShellBallApp";
 import { ShellBallBubbleWindow } from "./ShellBallBubbleWindow";
 import { ShellBallDevLayer } from "./ShellBallDevLayer";
@@ -74,6 +74,7 @@ import {
   getShellBallPostSubmitInputReset,
   getShellBallDashboardOpenGesturePolicy,
   getShellBallPressCancelEvent,
+  resolveShellBallVoiceRecognitionFinalState,
   getShellBallVoicePreviewFromEvent,
   mapShellBallInteractionConsumedEventToFlag,
   shouldKeepShellBallVoicePreviewOnRegionLeave,
@@ -1710,7 +1711,7 @@ test("shell-ball interaction contract starts voice listening only from resting i
   );
 });
 
-test("shell-ball interaction contract supports voice lock and locked voice completion", () => {
+test("shell-ball interaction contract supports voice lock during long-press capture", () => {
   assert.deepEqual(
     resolveShellBallTransition({
       current: "voice_listening",
@@ -1719,18 +1720,9 @@ test("shell-ball interaction contract supports voice lock and locked voice compl
     }),
     { next: "voice_locked" },
   );
-
-  assert.deepEqual(
-    resolveShellBallTransition({
-      current: "voice_locked",
-      event: "primary_click_locked_voice_end",
-      regionActive: true,
-    }),
-    { next: "processing" },
-  );
 });
 
-test("shell-ball interaction contract supports voice cancel and voice finish", () => {
+test("shell-ball interaction contract supports voice cancel", () => {
   assert.deepEqual(
     resolveShellBallTransition({
       current: "voice_listening",
@@ -1739,14 +1731,66 @@ test("shell-ball interaction contract supports voice cancel and voice finish", (
     }),
     { next: "idle" },
   );
+});
+
+test("shell-ball speech draft composition keeps English spacing and Chinese adjacency stable", () => {
+  assert.equal(composeShellBallSpeechDraft("Draft", "ready now"), "Draft ready now");
+  assert.equal(composeShellBallSpeechDraft("打开仪表盘", "然后开始处理"), "打开仪表盘然后开始处理");
+  assert.equal(composeShellBallSpeechDraft("", "  hello   world  "), "hello world");
+});
+
+test("shell-ball speech transcript collection merges recognition chunks", () => {
+  assert.equal(
+    collectShellBallSpeechTranscript({
+      0: { 0: { transcript: "hello" }, isFinal: true, length: 1 },
+      1: { 0: { transcript: "dashboard" }, isFinal: false, length: 1 },
+      length: 2,
+    }),
+    "hello dashboard",
+  );
+});
+
+test("shell-ball voice recognition final state routes final transcript out of the input draft and restores draft on cancel", () => {
+  assert.deepEqual(
+    resolveShellBallVoiceRecognitionFinalState({
+      reason: "finish",
+      transcript: "开始处理",
+      baseDraft: "打开仪表盘",
+      startState: "idle",
+    }),
+    {
+      finalizedSpeechPayload: "开始处理",
+      nextInputValue: "打开仪表盘",
+      nextVisualState: "hover_input",
+    },
+  );
 
   assert.deepEqual(
-    resolveShellBallTransition({
-      current: "voice_listening",
-      event: "voice_finish",
-      regionActive: true,
+    resolveShellBallVoiceRecognitionFinalState({
+      reason: "finish",
+      transcript: "开始处理",
+      baseDraft: "",
+      startState: "idle",
     }),
-    { next: "processing" },
+    {
+      finalizedSpeechPayload: "开始处理",
+      nextInputValue: "",
+      nextVisualState: "idle",
+    },
+  );
+
+  assert.deepEqual(
+    resolveShellBallVoiceRecognitionFinalState({
+      reason: "cancel",
+      transcript: "ignored",
+      baseDraft: "保留原稿",
+      startState: "hover_input",
+    }),
+    {
+      finalizedSpeechPayload: null,
+      nextInputValue: "保留原稿",
+      nextVisualState: "hover_input",
+    },
   );
 });
 
@@ -1929,7 +1973,7 @@ test("shell-ball controller forceState applies processing entry side effects", (
   controller.dispose();
 });
 
-test("shell-ball controller keeps locked voice active until explicit end", () => {
+test("shell-ball controller keeps locked voice active without legacy finish events", () => {
   const scheduler = createFakeScheduler();
   const controller = createShellBallInteractionController({
     initialState: "voice_locked",
@@ -1938,30 +1982,21 @@ test("shell-ball controller keeps locked voice active until explicit end", () =>
   });
 
   controller.dispatch("pointer_leave_region", { regionActive: false });
-  controller.dispatch("voice_finish", { regionActive: false });
   controller.dispatch("auto_advance", { regionActive: false });
 
   assert.equal(controller.getState(), "voice_locked");
-
-  controller.dispatch("primary_click_locked_voice_end", { regionActive: true });
-  assert.equal(controller.getState(), "processing");
-  assert.equal(scheduler.size, 1);
-
-  scheduler.flush();
-  assert.equal(controller.getState(), "hover_input");
-  assert.equal(scheduler.size, 0);
   controller.dispose();
 });
 
 test("shell-ball processing return follows the latest region activity when the timer completes", () => {
   const scheduler = createFakeScheduler();
   const controller = createShellBallInteractionController({
-    initialState: "voice_locked",
+    initialState: "idle",
     schedule: scheduler.schedule,
     cancel: scheduler.cancel,
   });
 
-  controller.dispatch("primary_click_locked_voice_end", { regionActive: true });
+  controller.forceState("processing", { regionActive: true });
   controller.dispatch("pointer_leave_region", { regionActive: false });
 
   scheduler.flush();
@@ -2008,9 +2043,6 @@ test("shell-ball voice preview helpers keep preview and release resolution pure"
   );
   assert.equal(getShellBallVoicePreview({ deltaX: SHELL_BALL_LOCK_DELTA_PX, deltaY: 0 }), null);
 
-  assert.equal(resolveShellBallVoiceReleaseEvent("lock"), "voice_lock");
-  assert.equal(resolveShellBallVoiceReleaseEvent("cancel"), "voice_cancel");
-  assert.equal(resolveShellBallVoiceReleaseEvent(null), "voice_finish");
 });
 
 test("shell-ball gesture helpers classify vertical intent explicitly for drag-safe voice previews", () => {
@@ -2079,6 +2111,7 @@ test("shell-ball input bar surfaces voice preview guidance to the UI", () => {
   );
 
   assert.match(markup, /data-voice-preview="cancel"/);
+  assert.match(markup, /Listening has started — speak now/);
   assert.match(markup, /Release to cancel/);
 });
 
@@ -2300,8 +2333,10 @@ test("shell-ball coordinator snapshots carry shell-ball-local bubble messages", 
   const { snapshot } = useShellBallCoordinator({
     visualState: "hover_input",
     inputValue: "draft",
+    finalizedSpeechPayload: null,
     voicePreview: null,
     setInputValue: () => {},
+    onFinalizedSpeechHandled: () => {},
     onRegionEnter: () => {},
     onRegionLeave: () => {},
     onInputFocusChange: () => {},
@@ -2880,8 +2915,10 @@ test("shell-ball detached bubble actions close pinned windows and delete detache
   useShellBallCoordinator({
     visualState: "hover_input",
     inputValue: "",
+    finalizedSpeechPayload: null,
     voicePreview: null,
     setInputValue: () => {},
+    onFinalizedSpeechHandled: () => {},
     onRegionEnter: () => {},
     onRegionLeave: () => {},
     onInputFocusChange: () => {},
@@ -3094,6 +3131,7 @@ test("shell-ball bubble window styles stay transparent, faded, and motion-ready"
   assert.match(shellBallStyles, /--shell-ball-helper-width:\s*min\(22rem, calc\(100vw - 1rem\)\);/);
   assert.match(shellBallStyles, /@media \(max-width: 720px\)\s*\{[\s\S]*--shell-ball-helper-width:\s*min\(20rem, calc\(100vw - 0\.75rem\)\);/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone\s*\{[\s\S]*width:\s*var\(--shell-ball-helper-width\);/);
+  assert.match(shellBallStyles, /\.shell-ball-bubble-zone\s*\{[\s\S]*gap:\s*0\.4rem;/);
   assert.match(shellBallStyles, /\.shell-ball-bubble-zone\s*\{[\s\S]*overflow:\s*hidden;/);
   assert.match(shellBallStyles, /\.shell-ball-input-bar,\s*\.shell-ball-input-bar--hidden\s*\{[\s\S]*width:\s*var\(--shell-ball-helper-width\);/);
   assert.match(mobileBubbleZoneBlock, /min-height:\s*4\.6rem;/);
@@ -3341,29 +3379,25 @@ test("shell-ball mascot drag policy lets the full hotspot start window dragging 
 
 test("shell-ball voice swipe contract keeps upward lock and downward cancel explicit", () => {
   assert.equal(
-    resolveShellBallVoiceReleaseEvent(
-      getShellBallVoicePreviewFromEvent({
-        startX: 100,
-        startY: 100,
-        clientX: 100,
-        clientY: 100 - SHELL_BALL_LOCK_DELTA_PX,
-        fallbackPreview: null,
-      }),
-    ),
-    "voice_lock",
+    getShellBallVoicePreviewFromEvent({
+      startX: 100,
+      startY: 100,
+      clientX: 100,
+      clientY: 100 - SHELL_BALL_LOCK_DELTA_PX,
+      fallbackPreview: null,
+    }),
+    "lock",
   );
 
   assert.equal(
-    resolveShellBallVoiceReleaseEvent(
-      getShellBallVoicePreviewFromEvent({
-        startX: 100,
-        startY: 100,
-        clientX: 100,
-        clientY: 100 + SHELL_BALL_CANCEL_DELTA_PX,
-        fallbackPreview: null,
-      }),
-    ),
-    "voice_cancel",
+    getShellBallVoicePreviewFromEvent({
+      startX: 100,
+      startY: 100,
+      clientX: 100,
+      clientY: 100 + SHELL_BALL_CANCEL_DELTA_PX,
+      fallbackPreview: null,
+    }),
+    "cancel",
   );
 });
 
@@ -3470,7 +3504,7 @@ test("shell-ball input bar mode stays aligned with visual states", () => {
 test("shell-ball interaction timing constants stay frozen", () => {
   assert.equal(SHELL_BALL_HOVER_INTENT_MS, 360);
   assert.equal(SHELL_BALL_LEAVE_GRACE_MS, 180);
-  assert.equal(SHELL_BALL_LONG_PRESS_MS, 420);
+  assert.equal(SHELL_BALL_LONG_PRESS_MS, 300);
   assert.equal(SHELL_BALL_LOCK_DELTA_PX, 48);
   assert.equal(SHELL_BALL_CANCEL_DELTA_PX, 48);
   assert.equal(SHELL_BALL_VERTICAL_PRIORITY_RATIO, 1.25);
