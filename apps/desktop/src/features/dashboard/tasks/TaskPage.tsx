@@ -5,11 +5,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, CircleDashed, LayoutList, RefreshCcw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { subscribeTask } from "@/rpc/subscriptions";
+import { loadDashboardDataMode, saveDashboardDataMode } from "@/features/dashboard/shared/dashboardDataMode";
+import { DashboardMockToggle } from "@/features/dashboard/shared/DashboardMockToggle";
 import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { dashboardModules } from "@/features/dashboard/shared/dashboardRoutes";
 import { cn } from "@/utils/cn";
 import { describeCurrentStep, getFinishedTaskGroups, isTaskEnded, sortTasksByLatest } from "./taskPage.mapper";
-import { buildFallbackTaskDetailData, controlTaskByAction, loadTaskBucketPage, loadTaskDetailData } from "./taskPage.service";
+import { buildFallbackTaskDetailData, controlTaskByAction, loadTaskBucketPage, loadTaskDetailData, type TaskPageDataMode } from "./taskPage.service";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskPreviewCard } from "./components/TaskPreviewCard";
 import "./taskPage.css";
@@ -26,13 +28,14 @@ export function TaskPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [showMoreFinished, setShowMoreFinished] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [dataMode, setDataMode] = useState<TaskPageDataMode>(() => loadDashboardDataMode("tasks") as TaskPageDataMode);
   const [unfinishedLimit, setUnfinishedLimit] = useState(INITIAL_UNFINISHED_LIMIT);
   const [finishedLimit, setFinishedLimit] = useState(INITIAL_FINISHED_LIMIT);
   const feedbackTimeoutRef = useRef<number | null>(null);
 
   const unfinishedQuery = useQuery({
-    queryKey: ["dashboard", "tasks", "bucket", "unfinished", unfinishedLimit],
-    queryFn: () => loadTaskBucketPage("unfinished", { limit: unfinishedLimit }),
+    queryKey: ["dashboard", "tasks", "bucket", dataMode, "unfinished", unfinishedLimit],
+    queryFn: () => loadTaskBucketPage("unfinished", { limit: unfinishedLimit, source: dataMode }),
     placeholderData: (previousData) => previousData,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -41,8 +44,8 @@ export function TaskPage() {
   });
 
   const finishedQuery = useQuery({
-    queryKey: ["dashboard", "tasks", "bucket", "finished", finishedLimit],
-    queryFn: () => loadTaskBucketPage("finished", { limit: finishedLimit }),
+    queryKey: ["dashboard", "tasks", "bucket", dataMode, "finished", finishedLimit],
+    queryFn: () => loadTaskBucketPage("finished", { limit: finishedLimit, source: dataMode }),
     placeholderData: (previousData) => previousData,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -99,8 +102,8 @@ export function TaskPage() {
 
   const taskDetailQuery = useQuery({
     enabled: Boolean(selectedTaskId && detailOpen && selectedTaskItem),
-    queryKey: ["dashboard", "tasks", "detail", selectedTaskId],
-    queryFn: () => loadTaskDetailData(selectedTaskId!),
+    queryKey: ["dashboard", "tasks", "detail", dataMode, selectedTaskId],
+    queryFn: () => loadTaskDetailData(selectedTaskId!, dataMode),
     refetchOnMount: false,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
@@ -123,15 +126,19 @@ export function TaskPage() {
       : "先浏览任务，再点开查看完整进展与上下文。");
 
   useEffect(() => {
-    if (!selectedTaskId) {
+    saveDashboardDataMode("tasks", dataMode);
+  }, [dataMode]);
+
+  useEffect(() => {
+    if (dataMode === "mock" || !selectedTaskId) {
       return;
     }
 
     return subscribeTask(selectedTaskId, () => {
-      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", selectedTaskId] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket", dataMode] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", dataMode, selectedTaskId] });
     });
-  }, [queryClient, selectedTaskId]);
+  }, [dataMode, queryClient, selectedTaskId]);
 
   useEffect(() => {
     return () => {
@@ -150,11 +157,11 @@ export function TaskPage() {
   }
 
   const taskControlMutation = useMutation({
-    mutationFn: ({ action, taskId }: { action: "pause" | "resume" | "cancel" | "restart"; taskId: string }) => controlTaskByAction(taskId, action),
+    mutationFn: ({ action, taskId }: { action: "pause" | "resume" | "cancel" | "restart"; taskId: string }) => controlTaskByAction(taskId, action, dataMode),
     onSuccess: (outcome) => {
       showFeedback(outcome.result.bubble_message?.text ?? "任务操作已执行。");
-      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", selectedTaskId] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket", dataMode] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", dataMode, selectedTaskId] });
     },
     onError: () => {
       showFeedback("任务操作暂时没有成功返回，请稍后再试。");
@@ -412,6 +419,14 @@ export function TaskPage() {
           </motion.aside>
         ) : null}
       </AnimatePresence>
+
+      <DashboardMockToggle
+        enabled={dataMode === "mock"}
+        onToggle={() => {
+          setFeedback(null);
+          setDataMode((current) => (current === "rpc" ? "mock" : "rpc"));
+        }}
+      />
     </main>
   );
 }

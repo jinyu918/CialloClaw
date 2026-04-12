@@ -28,10 +28,11 @@ export function ShellBallInputBar({
 }: ShellBallInputBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmedValue = value.trim();
+  const isHidden = mode === "hidden";
   const isInteractive = mode === "interactive";
   const isReadonly = mode === "readonly";
   const isVoice = mode === "voice";
-  const buttonsDisabled = isReadonly || isVoice;
+  const buttonsDisabled = isHidden || isReadonly || isVoice;
   const submitDisabled = !isInteractive || trimmedValue === "";
 
   useEffect(() => {
@@ -75,10 +76,6 @@ export function ShellBallInputBar({
     onSubmit();
   }
 
-  if (mode === "hidden") {
-    return null;
-  }
-
   return (
     <div
       className={cn(
@@ -98,8 +95,8 @@ export function ShellBallInputBar({
         onKeyDown={handleKeyDown}
         onFocus={() => onFocusChange(true)}
         onBlur={() => onFocusChange(false)}
-        readOnly={isReadonly || isVoice}
-        tabIndex={isVoice ? -1 : 0}
+        readOnly={isHidden || isReadonly || isVoice}
+        tabIndex={isHidden || isVoice ? -1 : 0}
         aria-label="Shell-ball input"
         placeholder={isVoice ? "Voice capture is active" : ""}
       />

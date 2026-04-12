@@ -8,6 +8,7 @@ import type { ShellBallMotionConfig, ShellBallVisualState } from "../shellBall.t
 type ShellBallMascotProps = {
   visualState: ShellBallVisualState;
   voicePreview?: ShellBallVoicePreview;
+  showVoiceHints?: boolean;
   voiceHoldProgress?: number;
   motionConfig: ShellBallMotionConfig;
   onPrimaryClick?: () => void;
@@ -95,6 +96,7 @@ export function shouldStartShellBallMascotWindowDrag(input: {
 export function ShellBallMascot({
   visualState,
   voicePreview = null,
+  showVoiceHints = true,
   voiceHoldProgress = 0,
   motionConfig,
   onPrimaryClick = () => {},
@@ -140,7 +142,7 @@ export function ShellBallMascot({
   const holdRingCircumference = 2 * Math.PI * 84;
   const holdRingDashOffset = holdRingCircumference * (1 - voiceHoldProgress);
   const showVoiceHoldRing = voiceHoldProgress > 0 && visualState !== "voice_listening" && visualState !== "voice_locked";
-  const showVoiceHints = visualState === "voice_listening" || visualState === "voice_locked";
+  const shouldRenderVoiceHints = showVoiceHints && (visualState === "voice_listening" || visualState === "voice_locked");
 
   function resetPointerSequence() {
     activeSequenceRef.current = false;
@@ -161,6 +163,9 @@ export function ShellBallMascot({
       return;
     }
 
+    // Prevent pointer drag from leaving a focus ring on the hotspot button.
+    event.preventDefault();
+    event.currentTarget.blur();
     suppressGestureRef.current = false;
     activeSequenceRef.current = true;
     draggingSequenceRef.current = false;
@@ -290,6 +295,7 @@ export function ShellBallMascot({
       className={cn("shell-ball-mascot", voicePreview !== null && `shell-ball-mascot--preview-${voicePreview}`)}
       data-state={visualState}
       data-tone={motionConfig.accentTone}
+      data-voice-hints={shouldRenderVoiceHints ? "true" : "false"}
       data-voice-preview={voicePreview ?? undefined}
     >
       <div className="shell-ball-mascot__orbital shell-ball-mascot__orbital--back" />
@@ -323,7 +329,7 @@ export function ShellBallMascot({
         </div>
       )}
 
-      {showVoiceHints ? (
+      {shouldRenderVoiceHints ? (
         <>
           <div className={cn("shell-ball-mascot__voice-hint shell-ball-mascot__voice-hint--lock", voicePreview === "lock" && "is-active", visualState === "voice_locked" && "is-locked")}
           >
@@ -340,6 +346,8 @@ export function ShellBallMascot({
           </div>
         </>
       ) : null}
+
+
 
       <div className="shell-ball-mascot__float" style={floatStyle}>
         <div className="shell-ball-mascot__attitude" style={attitudeStyle}>

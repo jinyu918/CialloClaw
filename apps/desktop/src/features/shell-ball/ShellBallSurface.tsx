@@ -44,6 +44,8 @@ export function ShellBallSurface({
   onPressEnd,
   onPressCancel,
 }: ShellBallSurfaceProps) {
+  const showInputProxy = visualState === "hover_input" && !inputFocused;
+
   return (
     <div
       ref={containerRef}
@@ -74,9 +76,14 @@ export function ShellBallSurface({
                     onPressCancel={onPressCancel}
                   />
                 </div>
-                {visualState === "hover_input" && !inputFocused ? (
-                  <button className="shell-ball-surface__input-line-proxy" onClick={onInputProxyClick} type="button" />
-                ) : null}
+                <button
+                  aria-hidden={!showInputProxy}
+                  className="shell-ball-surface__input-line-proxy"
+                  data-visible={showInputProxy}
+                  onClick={onInputProxyClick}
+                  tabIndex={showInputProxy ? 0 : -1}
+                  type="button"
+                />
               </div>
           </div>
         </div>

@@ -11,7 +11,9 @@ import type { MirrorOverviewUpdatedNotification } from "@cialloclaw/protocol";
 import { BookMarked, BrainCircuit, CalendarDays, Clock3, X } from "lucide-react";
 import { PanelSurface, StatusBadge } from "@cialloclaw/ui";
 import { subscribeMirrorOverviewUpdated } from "@/rpc/subscriptions";
-import { loadMirrorOverviewData, type MirrorOverviewData } from "./mirrorService";
+import { loadDashboardDataMode, saveDashboardDataMode } from "@/features/dashboard/shared/dashboardDataMode";
+import { DashboardMockToggle } from "@/features/dashboard/shared/DashboardMockToggle";
+import { loadMirrorOverviewData, type MirrorOverviewData, type MirrorOverviewSource } from "./mirrorService";
 import { loadMirrorFloatingPositions, saveMirrorFloatingPositions } from "./mirrorLayoutStorage";
 import { MirrorDecorativeBirds } from "./MirrorDecorativeBirds";
 import {
@@ -519,6 +521,8 @@ export function MirrorApp() {
   const storedFloatingPositionsRef = useRef(loadMirrorFloatingPositions());
   const hasStoredFloatingPositionsRef = useRef(storedFloatingPositionsRef.current !== null);
   const [mirrorData, setMirrorData] = useState<MirrorOverviewData | null>(null);
+  const [dataMode, setDataMode] = useState<MirrorOverviewSource>(() => loadDashboardDataMode("memory") as MirrorOverviewSource);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modulePositions, setModulePositions] = useState<ModulePositions>(() => ({
     ...DEFAULT_MODULE_POSITIONS,
     ...(storedFloatingPositionsRef.current ?? {}),
@@ -540,6 +544,18 @@ export function MirrorApp() {
   const lastSavedFloatingPositionsRef = useRef<string | null>(null);
 
   const refreshMirrorData = useCallback(() => {
+    if (dataMode === "mock") {
+      pendingRefreshRef.current = false;
+      fetchInFlightRef.current = false;
+      setLoadError(null);
+      void loadMirrorOverviewData("mock").then((nextData) => {
+        if (isMountedRef.current) {
+          setMirrorData(nextData);
+        }
+      });
+      return;
+    }
+
     if (fetchInFlightRef.current) {
       pendingRefreshRef.current = true;
       return;
@@ -551,26 +567,49 @@ export function MirrorApp() {
       try {
         do {
           pendingRefreshRef.current = false;
-          const nextData = await loadMirrorOverviewData();
+          const nextData = await loadMirrorOverviewData("rpc");
 
           if (!isMountedRef.current) {
             return;
           }
 
+          setLoadError(null);
           setMirrorData(nextData);
         } while (pendingRefreshRef.current);
+      } catch (error) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setLoadError(error instanceof Error ? error.message : "镜子数据请求失败");
       } finally {
         fetchInFlightRef.current = false;
 
-        if (pendingRefreshRef.current && isMountedRef.current) {
+        if (pendingRefreshRef.current && isMountedRef.current && dataMode === "rpc") {
           refreshMirrorData();
         }
       }
     })();
-  }, []);
+  }, [dataMode]);
+
+  useEffect(() => {
+    saveDashboardDataMode("memory", dataMode);
+  }, [dataMode]);
 
   useEffect(() => {
     isMountedRef.current = true;
+
+    if (dataMode === "mock") {
+      setLastMirrorUpdate(null);
+      refreshMirrorData();
+
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
+    setMirrorData(null);
+
     const unsubscribe = subscribeMirrorOverviewUpdated((notification) => {
       setLastMirrorUpdate(notification);
       refreshMirrorData();
@@ -582,7 +621,7 @@ export function MirrorApp() {
       isMountedRef.current = false;
       unsubscribe();
     };
-  }, [refreshMirrorData]);
+  }, [dataMode, refreshMirrorData]);
 
   const bringModuleToFront = useCallback((key: MirrorDirectionKey) => {
     setModuleStack((currentStack) => [...currentStack.filter((item) => item !== key), key]);
@@ -720,8 +759,9 @@ export function MirrorApp() {
     return (
       <main className="app-shell mirror-page">
         <div className="mirror-page__canvas mirror-page__canvas--full mirror-page__canvas--loading">
-          <p className="mirror-page__loading-copy">正在点亮检片台…</p>
+          <p className="mirror-page__loading-copy">{loadError ? `镜子页同步失败：${loadError}` : "正在点亮检片台…"}</p>
         </div>
+        <DashboardMockToggle enabled={dataMode === "mock"} onToggle={() => setDataMode((current) => (current === "rpc" ? "mock" : "rpc"))} />
       </main>
     );
   }
@@ -730,7 +770,7 @@ export function MirrorApp() {
   const dataSourceDetails = [
     mirrorData.source === "rpc"
       ? "当前展示来自本地 JSON-RPC 服务。"
-      : "JSON-RPC 不可用，当前展示本地回退数据。",
+      : "当前展示的是本地 mock 数据。",
   ];
 
   if (mirrorData.rpcContext.serverTime) {
@@ -747,6 +787,10 @@ export function MirrorApp() {
 
   if (mirrorData.rpcContext.warnings.length) {
     dataSourceDetails.push(`warnings：${mirrorData.rpcContext.warnings.join("；")}`);
+  }
+
+  if (loadError && dataMode === "rpc") {
+    dataSourceDetails.push(`error：${loadError}`);
   }
 
   const dataSourceBadge =
@@ -1199,6 +1243,7 @@ export function MirrorApp() {
         {moduleStack.map(renderDraggableModule)}
         {renderDetailOverlay()}
       </div>
+      <DashboardMockToggle enabled={dataMode === "mock"} onToggle={() => setDataMode((current) => (current === "rpc" ? "mock" : "rpc"))} />
     </main>
   );
 }
