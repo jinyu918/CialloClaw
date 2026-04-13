@@ -354,6 +354,11 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `1006xxx`：worker / sidecar / plugin
 - `1007xxx`：系统与平台
 
+当前仓库错误码真源 `packages/protocol/errors/codes.ts` 已正式登记到 `1007xxx`。此外，为后续功能扩展预留：
+
+- `1008xxx`：模型与前馈配置
+- `1009xxx`：评估与人工升级
+
 ### 6.2 如何理解错误段
 
 - `1001xxx`：任务不存在、状态非法、task/run 映射问题。
@@ -363,6 +368,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `1005xxx`：数据库、Artifact、恢复点、Stronghold、RAG 等落盘能力异常。
 - `1006xxx`：worker / sidecar / plugin 进程不可用或输出非法。
 - `1007xxx`：平台和执行环境问题。
+- `1008xxx`：模型、Skill、Blueprint、Prompt 模板、LSP 前馈能力异常，当前为预留段。
+- `1009xxx`：结果审查、Doom Loop、Eval、Human-in-the-loop 升级异常，当前为预留段。
 
 ### 6.3 推荐错误码表
 
@@ -413,6 +420,16 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `1006003` `OCR_WORKER_FAILED`
 - `1006004` `MEDIA_WORKER_FAILED`
 
+#### 预留错误码（尚未登记到错误码真源）
+
+以下错误码常量保留给后续功能使用。在它们正式写入 `packages/protocol/errors/codes.ts` 前，只能作为规划预留，不得被文档误解为当前仓库已经实现：
+
+##### Worker / Plugin 扩展预留
+
+- `1006005` `PLUGIN_NOT_AVAILABLE`
+- `1006006` `PLUGIN_PERMISSION_DENIED`
+- `1006007` `PLUGIN_OUTPUT_INVALID`
+
 #### 系统 / 平台
 
 - `1007001` `PLATFORM_NOT_SUPPORTED`
@@ -421,12 +438,30 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `1007004` `SANDBOX_PROFILE_INVALID`
 - `1007005` `PATH_POLICY_VIOLATION`
 
+##### 模型与前馈配置预留
+
+- `1008001` `MODEL_PROVIDER_NOT_FOUND`
+- `1008002` `MODEL_NOT_ALLOWED`
+- `1008003` `SKILL_NOT_FOUND`
+- `1008004` `BLUEPRINT_NOT_FOUND`
+- `1008005` `PROMPT_TEMPLATE_NOT_FOUND`
+- `1008006` `LSP_DIAGNOSTIC_UNAVAILABLE`
+
+##### 评估与升级预留
+
+- `1009001` `REVIEW_FAILED`
+- `1009002` `DOOM_LOOP_DETECTED`
+- `1009003` `EVAL_SNAPSHOT_WRITE_FAILED`
+- `1009004` `HUMAN_REVIEW_REQUIRED`
+
 ### 6.4 错误处理规则
 
 - 前端只认错误码和错误类型，不猜字符串。
 - Go 返回错误时必须带 `id` 或 `trace_id`。
 - worker / sidecar / plugin 错误必须包装成统一错误码。
 - 插件安装 / 启停失败必须落到 `1006xxx`。
+- 多模型切换失败在对应能力正式落地后应落到 `1008xxx`。
+- 审查失败 / 熔断 / 人工升级在对应能力正式落地后应落到 `1009xxx`。
 
 ## 7. 方法集合与原子功能映射
 
