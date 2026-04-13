@@ -1430,6 +1430,95 @@ func TestServiceDashboardOverviewUsesRuntimeAggregation(t *testing.T) {
 	}
 }
 
+func TestServiceDashboardOverviewRespectsIncludeFilter(t *testing.T) {
+	service := newTestService()
+
+	result, err := service.DashboardOverviewGet(map[string]any{
+		"include": []any{"focus_summary", "quick_actions"},
+	})
+	if err != nil {
+		t.Fatalf("dashboard overview failed: %v", err)
+	}
+
+	overview := result["overview"].(map[string]any)
+	if _, ok := overview["focus_summary"]; !ok {
+		t.Fatal("expected focus_summary field to be present")
+	}
+	if _, ok := overview["quick_actions"]; !ok {
+		t.Fatal("expected quick_actions field to be present")
+	}
+	if overview["trust_summary"] != nil {
+		t.Fatalf("expected trust_summary to be omitted when not requested, got %+v", overview["trust_summary"])
+	}
+	if overview["global_state"] != nil {
+		t.Fatalf("expected global_state to be omitted when not requested, got %+v", overview["global_state"])
+	}
+	if overview["high_value_signal"] != nil {
+		t.Fatalf("expected high_value_signal to be omitted when not requested, got %+v", overview["high_value_signal"])
+	}
+}
+
+func TestServiceDashboardOverviewFocusModeNarrowsSecondaryData(t *testing.T) {
+	service := newTestService()
+
+	_, err := service.StartTask(map[string]any{
+		"session_id": "sess_focus",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "completed task for focus mode",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start completed task failed: %v", err)
+	}
+
+	_, err = service.StartTask(map[string]any{
+		"session_id": "sess_focus",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "waiting authorization task for focus mode",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start waiting auth task failed: %v", err)
+	}
+
+	result, err := service.DashboardOverviewGet(map[string]any{
+		"focus_mode": true,
+	})
+	if err != nil {
+		t.Fatalf("dashboard overview failed: %v", err)
+	}
+
+	overview := result["overview"].(map[string]any)
+	quickActions := overview["quick_actions"].([]string)
+	for _, action := range quickActions {
+		if action == "查看最近结果" {
+			t.Fatalf("expected focus mode to drop secondary quick action, got %v", quickActions)
+		}
+	}
+	highValueSignals := overview["high_value_signal"].([]string)
+	if len(highValueSignals) > 2 {
+		t.Fatalf("expected focus mode to narrow signal list, got %v", highValueSignals)
+	}
+}
+
 func TestServiceMirrorOverviewUsesRuntimeMirrorReferences(t *testing.T) {
 	service := newTestService()
 

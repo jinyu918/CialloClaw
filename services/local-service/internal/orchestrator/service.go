@@ -593,14 +593,20 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 
 // DashboardOverviewGet 处理 agent.dashboard.overview.get。
 func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, error) {
-	_ = params
 	unfinishedTasks, _ := s.runEngine.ListTasks("unfinished", "updated_at", "desc", 0, 0)
 	finishedTasks, _ := s.runEngine.ListTasks("finished", "finished_at", "desc", 0, 0)
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
+	focusMode := boolValue(params, "focus_mode", false)
+	requestedIncludes := stringSliceValue(params["include"])
+	includeAll := len(requestedIncludes) == 0
+	includeSet := make(map[string]struct{}, len(requestedIncludes))
+	for _, value := range requestedIncludes {
+		includeSet[value] = struct{}{}
+	}
 
 	focusTask, hasFocusTask := focusTaskForOverview(unfinishedTasks, finishedTasks)
 	var focusSummary map[string]any
-	if hasFocusTask {
+	if hasFocusTask && shouldIncludeOverviewField(includeAll, includeSet, "focus_summary") {
 		focusSummary = map[string]any{
 			"task_id":      focusTask.TaskID,
 			"title":        focusTask.Title,
@@ -620,21 +626,52 @@ func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, e
 	if latestAudit == nil {
 		latestAudit = s.latestAuditRecordFromStorage("")
 	}
+	quickActions := []string(nil)
+	if shouldIncludeOverviewField(includeAll, includeSet, "quick_actions") {
+		quickActions = buildDashboardQuickActions(hasFocusTask, pendingTotal, len(finishedTasks))
+		if focusMode {
+			quickActions = filterDashboardQuickActionsForFocus(quickActions)
+		}
+	}
+	var globalState map[string]any
+	if shouldIncludeOverviewField(includeAll, includeSet, "global_state") {
+		globalState = s.Snapshot()
+	}
+	highValueSignal := []string(nil)
+	if shouldIncludeOverviewField(includeAll, includeSet, "high_value_signal") {
+		highValueSignal = buildDashboardSignalsWithAudit(unfinishedTasks, finishedTasks, pendingApprovals, latestAudit)
+		if focusMode {
+			highValueSignal = filterDashboardSignalsForFocus(highValueSignal)
+		}
+	}
+	var trustSummary map[string]any
+	if shouldIncludeOverviewField(includeAll, includeSet, "trust_summary") {
+		trustSummary = map[string]any{
+			"risk_level":             aggregateRiskLevel(allTasks, pendingApprovals, s.risk.DefaultLevel()),
+			"pending_authorizations": pendingTotal,
+			"has_restore_point":      hasRestorePoint,
+			"workspace_path":         workspacePathFromSettings(s.runEngine.Settings()),
+		}
+	}
 
-	return map[string]any{
-		"overview": map[string]any{
-			"focus_summary": focusSummary,
-			"trust_summary": map[string]any{
-				"risk_level":             aggregateRiskLevel(allTasks, pendingApprovals, s.risk.DefaultLevel()),
-				"pending_authorizations": pendingTotal,
-				"has_restore_point":      hasRestorePoint,
-				"workspace_path":         workspacePathFromSettings(s.runEngine.Settings()),
-			},
-			"quick_actions":     buildDashboardQuickActions(hasFocusTask, pendingTotal, len(finishedTasks)),
-			"global_state":      s.Snapshot(),
-			"high_value_signal": buildDashboardSignalsWithAudit(unfinishedTasks, finishedTasks, pendingApprovals, latestAudit),
-		},
-	}, nil
+	overview := map[string]any{}
+	if shouldIncludeOverviewField(includeAll, includeSet, "focus_summary") {
+		overview["focus_summary"] = focusSummary
+	}
+	if shouldIncludeOverviewField(includeAll, includeSet, "trust_summary") {
+		overview["trust_summary"] = trustSummary
+	}
+	if shouldIncludeOverviewField(includeAll, includeSet, "quick_actions") {
+		overview["quick_actions"] = quickActions
+	}
+	if shouldIncludeOverviewField(includeAll, includeSet, "global_state") {
+		overview["global_state"] = globalState
+	}
+	if shouldIncludeOverviewField(includeAll, includeSet, "high_value_signal") {
+		overview["high_value_signal"] = highValueSignal
+	}
+
+	return map[string]any{"overview": overview}, nil
 }
 
 // DashboardModuleGet 处理当前模块的相关逻辑。
@@ -1194,6 +1231,35 @@ func buildDashboardQuickActions(hasFocusTask bool, pendingTotal, finishedCount i
 		actions = append(actions, "等待新任务")
 	}
 	return actions
+}
+
+func shouldIncludeOverviewField(includeAll bool, includeSet map[string]struct{}, field string) bool {
+	if includeAll {
+		return true
+	}
+	_, ok := includeSet[field]
+	return ok
+}
+
+func filterDashboardQuickActionsForFocus(actions []string) []string {
+	filtered := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if action == "查看最近结果" {
+			continue
+		}
+		filtered = append(filtered, action)
+	}
+	if len(filtered) == 0 {
+		return []string{"打开任务详情"}
+	}
+	return filtered
+}
+
+func filterDashboardSignalsForFocus(signals []string) []string {
+	if len(signals) <= 2 {
+		return signals
+	}
+	return append([]string(nil), signals[:2]...)
 }
 
 func buildDashboardSignals(unfinishedTasks, finishedTasks []runengine.TaskRecord, pendingApprovals []map[string]any) []string {
