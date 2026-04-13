@@ -262,6 +262,22 @@ test("readDashboardSafetyNavigationState accepts valid routed state and rejects 
   );
   assert.equal(
     readDashboardSafetyNavigationState({
+      approvalRequest: createApprovalRequest({ task_id: "task_dashboard_999" }),
+      source: "task-detail",
+      taskId: "task_dashboard_001",
+    }),
+    null,
+  );
+  assert.equal(
+    readDashboardSafetyNavigationState({
+      restorePoint: createRecoveryPoint({ task_id: "task_dashboard_999" }),
+      source: "task-detail",
+      taskId: "task_dashboard_001",
+    }),
+    null,
+  );
+  assert.equal(
+    readDashboardSafetyNavigationState({
       source: "other",
       taskId: "task_dashboard_001",
     }),
@@ -463,6 +479,70 @@ test("task detail normalization rejects pending authorization counts outside the
           }),
         ),
       /security summary|pending authorization/i,
+    );
+  });
+});
+
+test("task detail normalization enforces approval and restore-point task invariants", () => {
+  withDesktopAliasRuntime((requireFn) => {
+    const service = requireFn(resolve(desktopRoot, ".cache/dashboard-tests/features/dashboard/tasks/taskPage.service.js")) as {
+      normalizeTaskDetailResult: (detail: AgentTaskDetailGetResult) => AgentTaskDetailGetResult;
+    };
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            approval_request: null,
+            security_summary: {
+              latest_restore_point: createRecoveryPoint(),
+              pending_authorizations: 1,
+              risk_level: "yellow",
+              security_status: "pending_confirmation",
+            },
+          }),
+        ),
+      /pending authorization|approval/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            security_summary: {
+              latest_restore_point: createRecoveryPoint(),
+              pending_authorizations: 0,
+              risk_level: "yellow",
+              security_status: "pending_confirmation",
+            },
+          }),
+        ),
+      /pending authorization|approval/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            approval_request: createApprovalRequest({ task_id: "task_dashboard_999" }),
+          }),
+        ),
+      /approval_request|task_id/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            security_summary: {
+              latest_restore_point: createRecoveryPoint({ task_id: "task_dashboard_999" }),
+              pending_authorizations: 1,
+              risk_level: "yellow",
+              security_status: "pending_confirmation",
+            },
+          }),
+        ),
+      /restore point|task_id/i,
     );
   });
 });

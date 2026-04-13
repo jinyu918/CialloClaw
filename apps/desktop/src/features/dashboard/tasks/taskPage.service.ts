@@ -112,6 +112,8 @@ export function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): Age
     throw new Error("task detail payload is missing task information");
   }
 
+  const taskId = detail.task.task_id;
+
   if (!hasValidSecuritySummary(detail)) {
     throw new Error("task detail payload is missing security summary");
   }
@@ -121,6 +123,22 @@ export function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): Age
   const artifacts = normalizeArray(detail.artifacts, isArtifact, "task detail payload artifacts");
   const mirrorReferences = normalizeArray(detail.mirror_references, isMirrorReference, "task detail payload mirror_references");
   const timeline = normalizeArray(detail.timeline, (value): value is (typeof detail.timeline)[number] => isTaskStep(value, taskStepStatuses), "task detail payload timeline");
+
+  if (approvalRequest === null && detail.security_summary.pending_authorizations !== 0) {
+    throw new Error("task detail payload pending authorization summary does not match approval_request");
+  }
+
+  if (approvalRequest !== null && detail.security_summary.pending_authorizations !== 1) {
+    throw new Error("task detail payload pending authorization summary does not match approval_request");
+  }
+
+  if (approvalRequest !== null && approvalRequest.task_id !== taskId) {
+    throw new Error("task detail payload approval_request task_id does not match task.task_id");
+  }
+
+  if (latestRestorePoint !== null && latestRestorePoint.task_id !== taskId) {
+    throw new Error("task detail payload restore point task_id does not match task.task_id");
+  }
 
   return {
     approval_request: approvalRequest,

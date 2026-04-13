@@ -70,7 +70,15 @@ export function readDashboardSafetyNavigationState(value: unknown): DashboardSaf
     return null;
   }
 
+  if (approvalRequest !== undefined && approvalRequest.task_id !== candidate.taskId) {
+    return null;
+  }
+
   if (restorePoint !== undefined && !isRecoveryPoint(restorePoint)) {
+    return null;
+  }
+
+  if (restorePoint !== undefined && restorePoint.task_id !== candidate.taskId) {
     return null;
   }
 
