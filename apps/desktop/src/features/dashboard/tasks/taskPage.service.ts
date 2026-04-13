@@ -75,6 +75,7 @@ function getTaskListSortBy(group: TaskListGroup) {
 
 function createFallbackTaskDetail(task: Task): AgentTaskDetailGetResult {
   return {
+    approval_request: null,
     artifacts: [],
     mirror_references: [],
     security_summary: {
@@ -133,6 +134,7 @@ function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): AgentTaskD
   }
 
   return {
+    approval_request: detail.approval_request ?? null,
     artifacts: Array.isArray(detail.artifacts) ? detail.artifacts : [],
     mirror_references: Array.isArray(detail.mirror_references) ? detail.mirror_references : [],
     security_summary: detail.security_summary,

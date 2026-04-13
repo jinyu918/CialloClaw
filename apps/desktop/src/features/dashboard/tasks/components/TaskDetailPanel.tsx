@@ -200,9 +200,7 @@ export function TaskDetailPanel({ detailData, detailErrorMessage, detailState, f
                         <p className="task-detail-current-card__label">恢复点</p>
                         <p className="task-detail-current-card__text">
                           {detail.security_summary.latest_restore_point
-                            ? typeof detail.security_summary.latest_restore_point === "string"
-                              ? detail.security_summary.latest_restore_point
-                              : detail.security_summary.latest_restore_point.summary || detail.security_summary.latest_restore_point.recovery_point_id
+                            ? detail.security_summary.latest_restore_point.summary || detail.security_summary.latest_restore_point.recovery_point_id
                             : "当前没有恢复点"}
                         </p>
                       </div>

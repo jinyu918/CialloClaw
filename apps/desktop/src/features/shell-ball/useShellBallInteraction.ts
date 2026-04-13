@@ -188,6 +188,10 @@ export function resolveShellBallVoiceRecognitionFinalState(input: {
   };
 }
 
+function resolveShellBallVoiceReleaseEvent(preview: ShellBallVoicePreview): Extract<ShellBallInteractionEvent, "voice_cancel" | "voice_finish"> {
+  return preview === "cancel" ? "voice_cancel" : "voice_finish";
+}
+
 export function useShellBallInteraction() {
   const visualState = useShellBallStore((state) => state.visualState);
   const setVisualState = useShellBallStore((state) => state.setVisualState);
