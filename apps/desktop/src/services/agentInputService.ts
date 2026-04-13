@@ -1,4 +1,9 @@
-import type { AgentInputSubmitParams } from "@cialloclaw/protocol";
+import type { AgentInputSubmitParams, AgentInputSubmitResult } from "@cialloclaw/protocol";
+import {
+  recordMirrorConversationFailure,
+  recordMirrorConversationStart,
+  recordMirrorConversationSuccess,
+} from "@/services/mirrorMemoryService";
 
 type SubmitTextInputParams = {
   text: string;
@@ -48,9 +53,19 @@ export async function submitTextInput(input: SubmitTextInputParams) {
     return null;
   }
 
+  recordMirrorConversationStart(params);
+
   const importRpcMethods = new Function("return import('../rpc/methods')") as () => Promise<{
-    submitInput: (request: AgentInputSubmitParams) => Promise<unknown>;
+    submitInput: (request: AgentInputSubmitParams) => Promise<AgentInputSubmitResult>;
   }>;
   const rpcMethods = await importRpcMethods();
-  return rpcMethods.submitInput(params);
+
+  try {
+    const result = await rpcMethods.submitInput(params);
+    recordMirrorConversationSuccess(params, result);
+    return result;
+  } catch (error) {
+    recordMirrorConversationFailure(params, error);
+    throw error;
+  }
 }
