@@ -413,10 +413,20 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	if securitySummary == nil {
 		securitySummary = map[string]any{}
 	}
-	if latestRestorePointFromSummary(securitySummary) == nil {
-		if restorePoint := s.latestRestorePointFromStorage(task.TaskID); restorePoint != nil {
-			securitySummary["latest_restore_point"] = restorePoint
-		}
+	approvalRequest := activeTaskDetailApprovalRequest(task)
+	approvalRequestValue := any(nil)
+	if approvalRequest != nil {
+		approvalRequestValue = approvalRequest
+	}
+	securitySummary["pending_authorizations"] = 0
+	if approvalRequest != nil {
+		securitySummary["pending_authorizations"] = 1
+	}
+	latestRestorePoint := s.normalizeTaskDetailRestorePoint(task.TaskID, securitySummary)
+	if latestRestorePoint == nil {
+		securitySummary["latest_restore_point"] = nil
+	} else {
+		securitySummary["latest_restore_point"] = latestRestorePoint
 	}
 
 	return map[string]any{
@@ -424,6 +434,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"timeline":          timelineMap(task.Timeline),
 		"artifacts":         cloneMapSlice(task.Artifacts),
 		"mirror_references": cloneMapSlice(task.MirrorReferences),
+		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
 	}, nil
 }
@@ -1398,6 +1409,23 @@ func latestRestorePointFromSummary(summary map[string]any) map[string]any {
 		return nil
 	}
 	return cloneMap(latestRestorePoint)
+}
+
+func activeTaskDetailApprovalRequest(task runengine.TaskRecord) map[string]any {
+	if task.Status != "waiting_auth" || len(task.ApprovalRequest) == 0 {
+		return nil
+	}
+	return cloneMap(task.ApprovalRequest)
+}
+
+func (s *Service) normalizeTaskDetailRestorePoint(taskID string, securitySummary map[string]any) map[string]any {
+	if latestRestorePoint := latestRestorePointFromSummary(securitySummary); latestRestorePoint != nil {
+		return latestRestorePoint
+	}
+	if restorePoint := s.latestRestorePointFromStorage(taskID); restorePoint != nil {
+		return restorePoint
+	}
+	return nil
 }
 
 func (s *Service) latestRestorePointFromStorage(taskID string) map[string]any {
