@@ -558,6 +558,9 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 	if itemID == "" {
 		return nil, fmt.Errorf("item_id is required")
 	}
+	if !boolValue(params, "confirmed", false) {
+		return nil, fmt.Errorf("confirmed must be true to convert notepad item")
+	}
 
 	item, ok := s.runEngine.NotepadItem(itemID)
 	if !ok {

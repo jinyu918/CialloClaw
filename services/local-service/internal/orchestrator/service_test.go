@@ -472,6 +472,33 @@ func TestServiceNotepadConvertToTaskUsesRuntimeItemWithoutClosingTodo(t *testing
 	}
 }
 
+func TestServiceNotepadConvertToTaskRequiresConfirmedFlag(t *testing.T) {
+	service := newTestService()
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_confirm",
+		"title":   "translate release draft",
+		"bucket":  "upcoming",
+		"status":  "normal",
+		"type":    "todo_item",
+	}})
+
+	_, err := service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_confirm",
+		"confirmed": false,
+	})
+	if err == nil {
+		t.Fatal("expected convert_to_task to reject unconfirmed requests")
+	}
+	if err.Error() != "confirmed must be true to convert notepad item" {
+		t.Fatalf("expected confirmed validation error, got %v", err)
+	}
+
+	items, total := service.runEngine.NotepadItems("upcoming", 10, 0)
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected notepad item to remain untouched after rejected convert, total=%d len=%d", total, len(items))
+	}
+}
+
 func TestServiceExecutionAuditIDsStayUniqueAcrossToolAndTaskRecords(t *testing.T) {
 	service, _ := newTestServiceWithExecution(t, "runtime output")
 
