@@ -34,6 +34,8 @@ export function TaskDetailPanel({ detailData, detailErrorMessage, detailState, f
   const detailNoticeBody = isDetailLoading
     ? "当前先展示基础任务信息，时间线、产出和安全摘要正在从本地服务拉取。"
     : `${detailErrorMessage ?? "任务详情请求失败"}。当前先展示基础任务信息，你可以稍后重试。`;
+  const shouldDeferPendingAuthorizationSummary = detailData.source === "fallback" || detailState !== "ready";
+  const pendingAuthorizationSummary = shouldDeferPendingAuthorizationSummary ? "等待详情同步" : String(detail.security_summary.pending_authorizations);
 
   return (
     <motion.section animate={{ opacity: 1, x: 0 }} className="task-detail-shell" initial={{ opacity: 0, x: 18 }} transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}>
@@ -184,7 +186,7 @@ export function TaskDetailPanel({ detailData, detailErrorMessage, detailState, f
                     <Clock3 className="h-4 w-4" />
                     <div>
                       <p className="task-detail-current-card__label">待授权数量</p>
-                      <p className="task-detail-current-card__text">{detail.security_summary.pending_authorizations}</p>
+                      <p className="task-detail-current-card__text">{pendingAuthorizationSummary}</p>
                     </div>
                   </article>
                   <article className="task-detail-current-card">

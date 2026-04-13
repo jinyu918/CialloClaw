@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
@@ -465,6 +465,13 @@ test("task detail normalization rejects pending authorization counts outside the
       /security summary|pending authorization/i,
     );
   });
+});
+
+test("TaskDetailPanel defers fallback auth summary copy until formal detail arrives", () => {
+  const panelSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/components/TaskDetailPanel.tsx"), "utf8");
+
+  assert.match(panelSource, /detailData\.source === "fallback" \|\| detailState !== "ready"/);
+  assert.match(panelSource, /等待详情同步/);
 });
 
 function createFallbackExperience() {
