@@ -1,26 +1,48 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { shellBallWindowLabels } from "../../platform/shellBallWindowController";
+import {
+  SHELL_BALL_PINNED_BUBBLE_WINDOW_FRAME,
+  closeShellBallPinnedBubbleWindow,
+  emitToShellBallWindowLabel,
+  getShellBallPinnedBubbleIdFromLabel,
+  getShellBallPinnedBubbleWindowAnchor,
+  getShellBallPinnedBubbleWindowLabel,
+  openShellBallPinnedBubbleWindow,
+  setShellBallPinnedBubbleWindowVisible,
+  shellBallWindowLabels,
+} from "../../platform/shellBallWindowController";
+import { cloneShellBallBubbleItems, type ShellBallBubbleItem } from "./shellBall.bubble";
 import type { ShellBallVoicePreview } from "./shellBall.interaction";
 import type { ShellBallInputBarMode, ShellBallVisualState } from "./shellBall.types";
 import {
   createDefaultShellBallWindowSnapshot,
   createShellBallWindowSnapshot,
+  getShellBallVisibleBubbleItems,
+  type ShellBallBubbleAction,
+  type ShellBallBubbleActionPayload,
+  type ShellBallBubbleVisibilityPhase,
   shellBallWindowSyncEvents,
   type ShellBallHelperReadyPayload,
   type ShellBallHelperWindowRole,
   type ShellBallInputDraftPayload,
   type ShellBallInputFocusPayload,
   type ShellBallInputHoverPayload,
+  type ShellBallInputRequestFocusPayload,
+  type ShellBallPinnedWindowDetachedPayload,
+  type ShellBallPinnedWindowReadyPayload,
   type ShellBallPrimaryAction,
   type ShellBallPrimaryActionPayload,
 } from "./shellBall.windowSync";
+import { getShellBallBubbleAnchor } from "./useShellBallWindowMetrics";
 
 type ShellBallCoordinatorInput = {
   visualState: ShellBallVisualState;
+  helperWindowsVisible?: boolean;
   inputValue: string;
+  finalizedSpeechPayload: string | null;
   voicePreview: ShellBallVoicePreview;
   setInputValue: (value: string) => void;
+  onFinalizedSpeechHandled: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
   onInputFocusChange: (focused: boolean) => void;
@@ -31,21 +53,109 @@ type ShellBallCoordinatorInput = {
 
 type ShellBallHelperSnapshotInput = {
   role: ShellBallHelperWindowRole;
+  windowLabel?: string;
 };
 
+const SHELL_BALL_LOCAL_BUBBLE_ITEMS: ShellBallBubbleItem[] = [];
+const SHELL_BALL_BUBBLE_HIDE_DELAY_MS = 5_000;
+const SHELL_BALL_BUBBLE_FADE_DURATION_MS = 420;
+
+export function compareShellBallBubbleItemsByTimestamp(left: ShellBallBubbleItem, right: ShellBallBubbleItem) {
+  const createdAtOrder = left.bubble.created_at.localeCompare(right.bubble.created_at);
+
+  if (createdAtOrder !== 0) {
+    return createdAtOrder;
+  }
+
+  return left.bubble.bubble_id.localeCompare(right.bubble.bubble_id);
+}
+
+export function sortShellBallBubbleItemsByTimestamp(items: ShellBallBubbleItem[]) {
+  return [...items].sort(compareShellBallBubbleItemsByTimestamp);
+}
+
+export function createShellBallFinalizedSpeechBubbleItem(input: {
+  text: string;
+  sequence: number;
+  createdAt: string;
+}): ShellBallBubbleItem {
+  return {
+    bubble: {
+      bubble_id: `shell-ball-local-user-voice-${input.sequence}`,
+      task_id: "",
+      type: "result",
+      text: input.text,
+      pinned: false,
+      hidden: false,
+      created_at: input.createdAt,
+    },
+    role: "user",
+    desktop: {
+      lifecycleState: "visible",
+      freshnessHint: "fresh",
+      motionHint: "settle",
+    },
+  };
+}
+
+export function applyShellBallBubbleAction(
+  items: ShellBallBubbleItem[],
+  payload: Pick<ShellBallBubbleActionPayload, "action" | "bubbleId">,
+): ShellBallBubbleItem[] {
+  if (payload.action === "delete") {
+    return sortShellBallBubbleItemsByTimestamp(items.filter((item) => item.bubble.bubble_id !== payload.bubbleId));
+  }
+
+  return sortShellBallBubbleItemsByTimestamp(
+    items.map((item) => {
+      if (item.bubble.bubble_id !== payload.bubbleId) {
+        return item;
+      }
+
+      return {
+        ...item,
+        bubble: {
+          ...item.bubble,
+          pinned: payload.action === "pin",
+        },
+      };
+    }),
+  );
+}
+
 export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
+  const [bubbleItems, setBubbleItems] = useState(() => sortShellBallBubbleItemsByTimestamp(cloneShellBallBubbleItems(SHELL_BALL_LOCAL_BUBBLE_ITEMS)));
+  const appendedVoiceBubbleSequenceRef = useRef(0);
+  const handledFinalizedSpeechPayloadRef = useRef<string | null>(null);
+  const [bubbleVisibilityPhase, setBubbleVisibilityPhase] = useState<ShellBallBubbleVisibilityPhase>("hidden");
+  const helpersVisible = input.helperWindowsVisible ?? true;
   const snapshot = useMemo(
     () =>
       createShellBallWindowSnapshot({
         visualState: input.visualState,
+        helpersVisible,
         inputValue: input.inputValue,
         voicePreview: input.voicePreview,
+        bubbleItems,
+        bubbleVisibilityPhase,
       }),
-    [input.inputValue, input.visualState, input.voicePreview],
+    [bubbleItems, bubbleVisibilityPhase, helpersVisible, input.inputValue, input.visualState, input.voicePreview],
   );
   const snapshotRef = useRef(snapshot);
+  const bubbleItemsRef = useRef(bubbleItems);
+  const bubbleVisibilityPhaseRef = useRef<ShellBallBubbleVisibilityPhase>(bubbleVisibilityPhase);
+  const visibleBubbleCountRef = useRef(getShellBallVisibleBubbleItems(bubbleItems).length);
+  const previousVisibleBubbleCountRef = useRef(visibleBubbleCountRef.current);
+  const detachedPinnedBubbleIdsRef = useRef(new Set<string>());
+  const helperWindowsVisibleRef = useRef(input.helperWindowsVisible ?? true);
+  const regionActiveRef = useRef(false);
+  const inputFocusedRef = useRef(false);
+  const bubbleHideDelayTimeoutRef = useRef<number | null>(null);
+  const bubbleHideCompleteTimeoutRef = useRef<number | null>(null);
+  helperWindowsVisibleRef.current = helpersVisible;
   const handlersRef = useRef({
     setInputValue: input.setInputValue,
+    onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
     onInputFocusChange: input.onInputFocusChange,
@@ -55,8 +165,11 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   });
 
   snapshotRef.current = snapshot;
+  bubbleItemsRef.current = bubbleItems;
+  bubbleVisibilityPhaseRef.current = bubbleVisibilityPhase;
   handlersRef.current = {
     setInputValue: input.setInputValue,
+    onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
     onInputFocusChange: input.onInputFocusChange,
@@ -65,18 +178,191 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     onPrimaryClick: input.onPrimaryClick,
   };
 
+  const clearBubbleVisibilityTimers = useCallback(() => {
+    if (bubbleHideDelayTimeoutRef.current !== null) {
+      window.clearTimeout(bubbleHideDelayTimeoutRef.current);
+      bubbleHideDelayTimeoutRef.current = null;
+    }
+
+    if (bubbleHideCompleteTimeoutRef.current !== null) {
+      window.clearTimeout(bubbleHideCompleteTimeoutRef.current);
+      bubbleHideCompleteTimeoutRef.current = null;
+    }
+  }, []);
+
+  const applyBubbleVisibilityPhase = useCallback((nextPhase: ShellBallBubbleVisibilityPhase) => {
+    bubbleVisibilityPhaseRef.current = nextPhase;
+    setBubbleVisibilityPhase((currentPhase) => (currentPhase === nextPhase ? currentPhase : nextPhase));
+  }, []);
+
+  const revealBubbleRegion = useCallback(() => {
+    clearBubbleVisibilityTimers();
+
+    if (!helperWindowsVisibleRef.current || visibleBubbleCountRef.current === 0) {
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    applyBubbleVisibilityPhase("visible");
+  }, [applyBubbleVisibilityPhase, clearBubbleVisibilityTimers]);
+
+  const scheduleBubbleRegionHide = useCallback(() => {
+    clearBubbleVisibilityTimers();
+
+    if (!helperWindowsVisibleRef.current || visibleBubbleCountRef.current === 0) {
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    if (regionActiveRef.current || inputFocusedRef.current) {
+      applyBubbleVisibilityPhase("visible");
+      return;
+    }
+
+    bubbleHideDelayTimeoutRef.current = window.setTimeout(() => {
+      if (!helperWindowsVisibleRef.current || visibleBubbleCountRef.current === 0) {
+        applyBubbleVisibilityPhase("hidden");
+        return;
+      }
+
+      if (regionActiveRef.current || inputFocusedRef.current) {
+        applyBubbleVisibilityPhase("visible");
+        return;
+      }
+
+      applyBubbleVisibilityPhase("fading");
+      bubbleHideCompleteTimeoutRef.current = window.setTimeout(() => {
+        if (regionActiveRef.current || inputFocusedRef.current) {
+          applyBubbleVisibilityPhase("visible");
+          return;
+        }
+
+        applyBubbleVisibilityPhase("hidden");
+      }, SHELL_BALL_BUBBLE_FADE_DURATION_MS);
+    }, SHELL_BALL_BUBBLE_HIDE_DELAY_MS);
+  }, [applyBubbleVisibilityPhase, clearBubbleVisibilityTimers]);
+
+  useEffect(() => {
+    const visibleBubbleCount = getShellBallVisibleBubbleItems(bubbleItems).length;
+    const previousVisibleBubbleCount = previousVisibleBubbleCountRef.current;
+
+    visibleBubbleCountRef.current = visibleBubbleCount;
+    previousVisibleBubbleCountRef.current = visibleBubbleCount;
+
+    if (!helperWindowsVisibleRef.current || visibleBubbleCount === 0) {
+      clearBubbleVisibilityTimers();
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    if (regionActiveRef.current || inputFocusedRef.current) {
+      revealBubbleRegion();
+      return;
+    }
+
+    if (visibleBubbleCount > previousVisibleBubbleCount) {
+      revealBubbleRegion();
+      scheduleBubbleRegionHide();
+    }
+  }, [applyBubbleVisibilityPhase, bubbleItems, clearBubbleVisibilityTimers, revealBubbleRegion, scheduleBubbleRegionHide]);
+
+  useEffect(() => {
+    if (!helpersVisible) {
+      clearBubbleVisibilityTimers();
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    if (visibleBubbleCountRef.current === 0) {
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    if (regionActiveRef.current || inputFocusedRef.current) {
+      revealBubbleRegion();
+      return;
+    }
+
+    scheduleBubbleRegionHide();
+  }, [applyBubbleVisibilityPhase, clearBubbleVisibilityTimers, helpersVisible, revealBubbleRegion, scheduleBubbleRegionHide]);
+
+  useEffect(() => {
+    const hoverDrivenState =
+      input.visualState === "hover_input" || input.visualState === "voice_listening" || input.visualState === "voice_locked";
+
+    if (hoverDrivenState) {
+      regionActiveRef.current = true;
+      revealBubbleRegion();
+      return;
+    }
+
+    if (input.visualState === "idle") {
+      regionActiveRef.current = false;
+
+      if (!inputFocusedRef.current) {
+        scheduleBubbleRegionHide();
+      }
+    }
+  }, [input.visualState, revealBubbleRegion, scheduleBubbleRegionHide]);
+
+  useEffect(() => {
+    return () => {
+      clearBubbleVisibilityTimers();
+    };
+  }, [clearBubbleVisibilityTimers]);
+
+  useEffect(() => {
+    const finalizedSpeechPayload = input.finalizedSpeechPayload;
+
+    if (finalizedSpeechPayload === null) {
+      handledFinalizedSpeechPayloadRef.current = null;
+      return;
+    }
+
+    if (handledFinalizedSpeechPayloadRef.current === finalizedSpeechPayload) {
+      return;
+    }
+
+    handledFinalizedSpeechPayloadRef.current = finalizedSpeechPayload;
+    appendedVoiceBubbleSequenceRef.current += 1;
+
+    setBubbleItems((currentItems) =>
+      sortShellBallBubbleItemsByTimestamp([
+        ...currentItems,
+        createShellBallFinalizedSpeechBubbleItem({
+          text: finalizedSpeechPayload,
+          sequence: appendedVoiceBubbleSequenceRef.current,
+          createdAt: new Date().toISOString(),
+        }),
+      ]),
+    );
+    handlersRef.current.onFinalizedSpeechHandled();
+  }, [input.finalizedSpeechPayload]);
+
   useEffect(() => {
     const currentWindow = getCurrentWindow();
+    const latestSnapshot = snapshot;
 
     if (currentWindow.label !== shellBallWindowLabels.ball) {
       return;
     }
 
-    async function emitSnapshotTo(role: ShellBallHelperWindowRole) {
-      await currentWindow.emitTo(shellBallWindowLabels[role], shellBallWindowSyncEvents.snapshot, snapshotRef.current);
+    async function emitSnapshotToLabel(label: string) {
+      await emitToShellBallWindowLabel(label, shellBallWindowSyncEvents.snapshot, latestSnapshot);
     }
 
-    void Promise.all([emitSnapshotTo("bubble"), emitSnapshotTo("input")]);
+    const pinnedBubbleLabels = latestSnapshot.bubbleItems
+      .filter((item) => item.bubble.pinned)
+      .map((item) => getShellBallPinnedBubbleWindowLabel(item.bubble.bubble_id));
+
+    void Promise.all([
+      emitSnapshotToLabel(shellBallWindowLabels.bubble),
+      emitSnapshotToLabel(shellBallWindowLabels.input),
+      ...pinnedBubbleLabels.map((label) => emitSnapshotToLabel(label)),
+      ...latestSnapshot.bubbleItems
+        .filter((item) => item.bubble.pinned)
+        .map((item) => setShellBallPinnedBubbleWindowVisible(item.bubble.bubble_id, latestSnapshot.visibility.bubble)),
+    ]);
   }, [snapshot]);
 
   useEffect(() => {
@@ -89,8 +375,73 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     let disposed = false;
     let cleanupFns: Array<() => void> = [];
 
-    async function emitSnapshotTo(role: ShellBallHelperWindowRole) {
-      await currentWindow.emitTo(shellBallWindowLabels[role], shellBallWindowSyncEvents.snapshot, snapshotRef.current);
+    async function emitSnapshotTo(role: Exclude<ShellBallHelperWindowRole, "pinned">) {
+      await emitToShellBallWindowLabel(shellBallWindowLabels[role], shellBallWindowSyncEvents.snapshot, snapshotRef.current);
+    }
+
+    async function syncPinnedBubbleWindowAnchor(bubbleId: string) {
+      if (detachedPinnedBubbleIdsRef.current.has(bubbleId)) {
+        return;
+      }
+
+      const bubbleItem = bubbleItemsRef.current.find((item) => item.bubble.bubble_id === bubbleId && item.bubble.pinned);
+
+      if (bubbleItem === undefined) {
+        return;
+      }
+
+      const outerPosition = await currentWindow.outerPosition();
+      const outerSize = await currentWindow.outerSize();
+      const scaleFactor = await currentWindow.scaleFactor();
+      const logicalPosition = outerPosition.toLogical(scaleFactor);
+      const logicalSize = outerSize.toLogical(scaleFactor);
+      const bubbleAnchor = getShellBallBubbleAnchor({
+        ballFrame: {
+          x: logicalPosition.x,
+          y: logicalPosition.y,
+          width: logicalSize.width,
+          height: logicalSize.height,
+        },
+        helperFrame: SHELL_BALL_PINNED_BUBBLE_WINDOW_FRAME,
+      });
+
+      await openShellBallPinnedBubbleWindow({
+        bubbleId,
+        position: getShellBallPinnedBubbleWindowAnchor({ bubbleAnchor }),
+        size: SHELL_BALL_PINNED_BUBBLE_WINDOW_FRAME,
+      });
+    }
+
+    async function syncAnchoredPinnedBubbleWindows() {
+      await Promise.all(
+        bubbleItemsRef.current
+          .filter((item) => item.bubble.pinned)
+          .map((item) => syncPinnedBubbleWindowAnchor(item.bubble.bubble_id)),
+      );
+    }
+
+    function handleCoordinatorRegionEnter() {
+      regionActiveRef.current = true;
+      revealBubbleRegion();
+      handlersRef.current.onRegionEnter();
+    }
+
+    function handleCoordinatorRegionLeave() {
+      regionActiveRef.current = false;
+      scheduleBubbleRegionHide();
+      handlersRef.current.onRegionLeave();
+    }
+
+    function handleCoordinatorInputFocusChange(focused: boolean) {
+      inputFocusedRef.current = focused;
+
+      if (focused) {
+        revealBubbleRegion();
+      } else if (!regionActiveRef.current) {
+        scheduleBubbleRegionHide();
+      }
+
+      handlersRef.current.onInputFocusChange(focused);
     }
 
     function handlePrimaryAction(action: ShellBallPrimaryAction) {
@@ -98,13 +449,27 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         case "attach_file":
           handlersRef.current.onAttachFile();
           break;
-        case "submit":
+        case "submit": {
           handlersRef.current.onSubmitText();
           break;
+        }
         case "primary_click":
           handlersRef.current.onPrimaryClick();
           break;
       }
+    }
+
+    function handleBubbleAction(payload: ShellBallBubbleActionPayload) {
+      setBubbleItems((currentItems) => applyShellBallBubbleAction(currentItems, payload));
+
+      if (payload.action === "pin") {
+        detachedPinnedBubbleIdsRef.current.delete(payload.bubbleId);
+        void syncPinnedBubbleWindowAnchor(payload.bubbleId);
+        return;
+      }
+
+      detachedPinnedBubbleIdsRef.current.delete(payload.bubbleId);
+      void closeShellBallPinnedBubbleWindow(payload.bubbleId);
     }
 
     void Promise.all([
@@ -114,16 +479,29 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           void emitSnapshotTo(payload.role);
         },
       ),
+      currentWindow.listen<ShellBallPinnedWindowReadyPayload>(
+        shellBallWindowSyncEvents.pinnedWindowReady,
+        ({ payload }) => {
+          void emitToShellBallWindowLabel(payload.windowLabel, shellBallWindowSyncEvents.snapshot, snapshotRef.current);
+          void syncPinnedBubbleWindowAnchor(payload.bubbleId);
+        },
+      ),
+      currentWindow.listen<ShellBallPinnedWindowDetachedPayload>(
+        shellBallWindowSyncEvents.pinnedWindowDetached,
+        ({ payload }) => {
+          detachedPinnedBubbleIdsRef.current.add(payload.bubbleId);
+        },
+      ),
       currentWindow.listen<ShellBallInputHoverPayload>(shellBallWindowSyncEvents.inputHover, ({ payload }) => {
         if (payload.active) {
-          handlersRef.current.onRegionEnter();
+          handleCoordinatorRegionEnter();
           return;
         }
 
-        handlersRef.current.onRegionLeave();
+        handleCoordinatorRegionLeave();
       }),
       currentWindow.listen<ShellBallInputFocusPayload>(shellBallWindowSyncEvents.inputFocus, ({ payload }) => {
-        handlersRef.current.onInputFocusChange(payload.focused);
+        handleCoordinatorInputFocusChange(payload.focused);
       }),
       currentWindow.listen<ShellBallInputDraftPayload>(shellBallWindowSyncEvents.inputDraft, ({ payload }) => {
         handlersRef.current.setInputValue(payload.value);
@@ -134,6 +512,15 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           handlePrimaryAction(payload.action);
         },
       ),
+      currentWindow.listen<ShellBallBubbleActionPayload>(shellBallWindowSyncEvents.bubbleAction, ({ payload }) => {
+        handleBubbleAction(payload);
+      }),
+      currentWindow.onMoved(() => {
+        void syncAnchoredPinnedBubbleWindows();
+      }),
+      currentWindow.onResized(() => {
+        void syncAnchoredPinnedBubbleWindows();
+      }),
     ]).then((unlisteners) => {
       if (disposed) {
         for (const unlisten of unlisteners) {
@@ -151,7 +538,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         cleanup();
       }
     };
-  }, []);
+  }, [revealBubbleRegion, scheduleBubbleRegionHide]);
 
   return { snapshot };
 }
@@ -162,7 +549,13 @@ export function useShellBallHelperWindowSnapshot({ role }: ShellBallHelperSnapsh
   useEffect(() => {
     const currentWindow = getCurrentWindow();
 
-    if (currentWindow.label !== shellBallWindowLabels[role]) {
+    const targetLabel = role === "pinned" ? currentWindow.label : shellBallWindowLabels[role];
+
+    if (role === "pinned" && getShellBallPinnedBubbleIdFromLabel(targetLabel) === null) {
+      return;
+    }
+
+    if (role !== "pinned" && currentWindow.label !== targetLabel) {
       return;
     }
 
@@ -180,6 +573,20 @@ export function useShellBallHelperWindowSnapshot({ role }: ShellBallHelperSnapsh
         }
 
         cleanup = unlisten;
+
+        if (role === "pinned") {
+          const bubbleId = getShellBallPinnedBubbleIdFromLabel(targetLabel);
+
+          if (bubbleId !== null) {
+            void currentWindow.emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.pinnedWindowReady, {
+              windowLabel: targetLabel,
+              bubbleId,
+            });
+          }
+
+          return;
+        }
+
         void currentWindow.emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.helperReady, { role });
       });
 
@@ -206,9 +613,31 @@ export async function emitShellBallInputDraft(value: string) {
   await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.inputDraft, { value });
 }
 
+export async function emitShellBallInputRequestFocus(token: number) {
+  await getCurrentWindow().emitTo(shellBallWindowLabels.input, shellBallWindowSyncEvents.inputRequestFocus, { token });
+}
+
 export async function emitShellBallPrimaryAction(action: ShellBallPrimaryAction, source: ShellBallHelperWindowRole) {
   await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.primaryAction, {
     action,
     source,
+  });
+}
+
+export async function emitShellBallBubbleAction(
+  action: ShellBallBubbleAction,
+  bubbleId: string,
+  source: ShellBallBubbleActionPayload["source"] = "bubble",
+) {
+  await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.bubbleAction, {
+    action,
+    bubbleId,
+    source,
+  });
+}
+
+export async function emitShellBallPinnedWindowDetached(bubbleId: string) {
+  await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.pinnedWindowDetached, {
+    bubbleId,
   });
 }

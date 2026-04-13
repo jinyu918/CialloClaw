@@ -3,6 +3,7 @@ import { Archive, ArrowRight, BadgeAlert, BarChart3, BellOff, BrainCircuit, Cale
 import { AnimatePresence, motion } from "motion/react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { resolveDashboardModuleRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { dashboardHomeStateGroups, dashboardHomeStates } from "../dashboardHome.mocks";
 import type { DashboardHomeContextItem, DashboardHomeEventStateKey, DashboardHomeModuleKey, DashboardHomeSignalItem, DashboardHomeStateData } from "../dashboardHome.types";
 
@@ -100,7 +101,7 @@ export function DashboardEventPanel({ activeState, onClose, onStateChange }: Das
   function handleOpenModule(module: DashboardHomeModuleKey) {
     onClose();
     window.setTimeout(() => {
-      navigate(`/${module}`);
+      navigate(resolveDashboardModuleRoutePath(module));
     }, 0);
   }
 

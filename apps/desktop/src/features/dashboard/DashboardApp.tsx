@@ -2,13 +2,14 @@
 import { ArrowUpRight, ShieldCheck, Workflow } from "lucide-react";
 import { PanelSurface, StatusBadge } from "@cialloclaw/ui";
 import { MetricCard } from "@/components/MetricCard";
+import { resolveDashboardRouteHref } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { mapTaskToDetailViewModel } from "@/models/TaskDetailViewModel";
-import { openWindow } from "@/platform/windowController";
 import { useTaskStore } from "@/stores/taskStore";
 
 // DashboardApp 处理当前模块的相关逻辑。
 export function DashboardApp() {
   const tasks = useTaskStore((state) => state.tasks).map(mapTaskToDetailViewModel);
+  const safetyHref = resolveDashboardRouteHref("safety");
 
   return (
     <main className="app-shell">
@@ -53,16 +54,13 @@ export function DashboardApp() {
                   <ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-300" />
                   <p>风险、审计、恢复点和工作区边界模块已在 Go harness 骨架中分层隔离。</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void openWindow("security");
-                  }}
+                <a
+                  href={safetyHref}
                   className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:border-cyan-300/40 hover:bg-cyan-300/10"
                 >
                   进入安全模块
                   <ArrowUpRight className="h-4 w-4" />
-                </button>
+                </a>
               </div>
             </PanelSurface>
 

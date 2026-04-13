@@ -1,6 +1,6 @@
 # CialloClaw
 
-CialloClaw 是一个面向 Windows 优先落地的桌面协作 Agent 工程骨架，当前仓库结构基于最新架构设计文档与开发统一规范 v10 搭建。
+CialloClaw 是一个面向 Windows 优先落地的桌面协作 Agent 工程骨架，当前仓库结构以根目录 `AGENTS.md` 与 `/docs` 下的最新设计文档为准。
 
 ## 技术基线
 
@@ -49,8 +49,13 @@ scripts/
 
 ## 文档入口
 
-- `docs/CialloClaw开发统一规范_修订版_v10.md`
-- `docs/CialloClaw_架构设计文档_修订版_v10.md`
+- `docs/architecture-overview.md`
+- `docs/development-guidelines.md`
+- `docs/data-design.md`
+- `docs/protocol-design.md`
+- `docs/module-design.md`
+- `docs/work-priority-plan.md`
+- `docs/atomic-features.md`
 - `AGENTS.md`
 
 ## 当前协议方向
@@ -74,4 +79,4 @@ pnpm --dir apps/desktop dev
 
 - 当前阶段重点是先冻结目录边界、协议真源和模块职责，再继续往 P0 主链路推进。
 - 业务实现仍然是最小骨架，下一步应继续接通真实的 JSON-RPC handler、task / run 状态映射、SQLite 落盘和 worker 编排。
-- 最高优先级约束仍以最新架构设计文档、开发统一规范 v10 与 `AGENTS.md` 为准。
+- 最高优先级约束以根目录 `AGENTS.md` 与 `/docs` 下最新英文命名文档为准，尤其是架构总览、开发统一规范、协议/数据/模块设计和分工文档。

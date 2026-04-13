@@ -27,6 +27,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/taskinspector"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools/builtin"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools/sidecarclient"
 )
 
 // TestServiceStartTaskAndConfirmFlow 验证确认后的普通任务会继续执行并完成交付。
@@ -70,7 +71,7 @@ func newTestServiceWithExecution(t *testing.T, modelOutput string) (*Service, st
 	toolExecutor := tools.NewToolExecutor(toolRegistry)
 	pluginService := plugin.NewService()
 	fileSystem := platform.NewLocalFileSystemAdapter(pathPolicy)
-	executor := execution.NewService(fileSystem, platform.LocalExecutionBackend{}, modelService, auditService, checkpoint.NewService(), deliveryService, toolRegistry, toolExecutor, pluginService)
+	executor := execution.NewService(fileSystem, platform.LocalExecutionBackend{}, sidecarclient.NewNoopPlaywrightSidecarClient(), modelService, auditService, checkpoint.NewService(), deliveryService, toolRegistry, toolExecutor, pluginService)
 	storageService := storage.NewService(platform.NewLocalStorageAdapter(filepath.Join(t.TempDir(), "service.db")))
 	t.Cleanup(func() { _ = storageService.Close() })
 
@@ -173,6 +174,23 @@ func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 
 func TestTaskInspectorRunAggregatesRuntimeState(t *testing.T) {
 	service, workspaceRoot := newTestServiceWithExecution(t, "inspector output")
+	now := time.Now().UTC()
+	dueToday := now.Add(15 * time.Minute)
+	if dueToday.Day() != now.Day() {
+		dueToday = now.Add(1 * time.Minute)
+	}
+
+	service.runEngine.ReplaceNotepadItems([]map[string]any{
+		{
+			"item_id":          "todo_today",
+			"title":            "translate release notes",
+			"bucket":           "upcoming",
+			"status":           "normal",
+			"type":             "todo_item",
+			"due_at":           dueToday.Format(time.RFC3339),
+			"agent_suggestion": "translate",
+		},
+	})
 
 	todosDir := filepath.Join(workspaceRoot, "todos")
 	if err := os.MkdirAll(todosDir, 0o755); err != nil {
@@ -1477,6 +1495,44 @@ func TestServiceDashboardModuleHighlightsIncludeAuditTrail(t *testing.T) {
 	}
 	if !foundAuditHighlight {
 		t.Fatalf("expected dashboard highlights to expose runtime audit trail, got %+v", highlights)
+	}
+}
+
+func TestServiceSecurityAuditListFallsBackToStoredAuditRecords(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed summary")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	err := service.storage.AuditWriter().WriteAuditRecord(context.Background(), audit.Record{
+		AuditID:   "audit_001",
+		TaskID:    "task_external",
+		Type:      "file",
+		Action:    "write_file",
+		Summary:   "stored audit record",
+		Target:    "workspace/result.md",
+		Result:    "success",
+		CreatedAt: "2026-04-08T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("write audit record failed: %v", err)
+	}
+
+	result, err := service.SecurityAuditList(map[string]any{"task_id": "task_external", "limit": 20, "offset": 0})
+	if err != nil {
+		t.Fatalf("security audit list failed: %v", err)
+	}
+
+	items := result["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["audit_id"] != "audit_001" {
+		t.Fatalf("expected storage-backed audit record, got %+v", items)
+	}
+}
+
+func TestServiceSecurityAuditListRequiresTaskID(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed summary")
+	_, err := service.SecurityAuditList(map[string]any{"limit": 20, "offset": 0})
+	if err == nil || err.Error() != "task_id is required" {
+		t.Fatalf("expected task_id required error, got %v", err)
 	}
 }
 

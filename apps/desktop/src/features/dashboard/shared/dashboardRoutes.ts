@@ -4,6 +4,7 @@ import flower1Image from "@/assets/lily-of-the-valley/flower1.png";
 import flower2Image from "@/assets/lily-of-the-valley/flower2.png";
 import flower3Image from "@/assets/lily-of-the-valley/flower3.png";
 import flower4Image from "@/assets/lily-of-the-valley/flower4.png";
+import { resolveDashboardModuleRoutePath } from "./dashboardRouteTargets";
 
 export type DashboardView = "home" | DashboardModuleRoute;
 export type DashboardModuleRoute = "tasks" | "notes" | "memory" | "safety";
@@ -33,7 +34,7 @@ type DashboardModule = {
 export const dashboardModules: DashboardModule[] = [
   {
     route: "tasks",
-    path: "/tasks",
+    path: resolveDashboardModuleRoutePath("tasks"),
     title: "任务",
     englishTitle: "Task Flow",
     description: "查看任务链路、状态回显与正式交付入口。",
@@ -53,7 +54,7 @@ export const dashboardModules: DashboardModule[] = [
   },
   {
     route: "notes",
-    path: "/notes",
+    path: resolveDashboardModuleRoutePath("notes"),
     title: "便签",
     englishTitle: "Notepad",
     description: "承接零散记录、草稿沉淀与转任务入口。",
@@ -73,7 +74,7 @@ export const dashboardModules: DashboardModule[] = [
   },
   {
     route: "memory",
-    path: "/memory",
+    path: resolveDashboardModuleRoutePath("memory"),
     title: "记忆",
     englishTitle: "Memory Mirror",
     description: "进入镜像概览、命中摘要与回填观察位。",
@@ -93,7 +94,7 @@ export const dashboardModules: DashboardModule[] = [
   },
   {
     route: "safety",
-    path: "/safety",
+    path: resolveDashboardModuleRoutePath("safety"),
     title: "安全",
     englishTitle: "Safety",
     description: "查看授权挂起、审计摘要与恢复点占位。",

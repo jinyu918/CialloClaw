@@ -5,6 +5,7 @@
   "identifier": "com.cialloclaw.desktop",
   "build": {
     "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
     "beforeDevCommand": "corepack pnpm dev",
     "beforeBuildCommand": "corepack pnpm build"
   },
@@ -13,8 +14,8 @@
       {
         "label": "shell-ball",
         "title": "CialloClaw Shell Ball",
-        "width": 240,
-        "height": 260,
+        "width": 144,
+        "height": 156,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
@@ -26,8 +27,8 @@
       {
         "label": "shell-ball-bubble",
         "title": "CialloClaw Shell Ball Bubble",
-        "width": 360,
-        "height": 140,
+        "width": 270,
+        "height": 105,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
@@ -40,8 +41,8 @@
       {
         "label": "shell-ball-input",
         "title": "CialloClaw Shell Ball Input",
-        "width": 420,
-        "height": 120,
+        "width": 315,
+        "height": 90,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
@@ -56,6 +57,8 @@
         "title": "CialloClaw Dashboard",
         "width": 1280,
         "height": 860,
+        "decorations": false,
+        "visible": false,
         "url": "dashboard.html"
       },
       {
@@ -63,6 +66,8 @@
         "title": "CialloClaw Control Panel",
         "width": 1080,
         "height": 760,
+        "decorations": false,
+        "visible": false,
         "url": "control-panel.html"
       }
     ]

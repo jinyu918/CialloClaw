@@ -1,18 +1,16 @@
-import type {
-  AgentTaskControlParams,
-  RequestMeta,
-  Task,
-  TaskControlAction,
-  TaskListGroup,
-} from "@cialloclaw/protocol";
+import type { AgentTaskDetailGetResult, AgentTaskControlParams, RequestMeta, Task, TaskControlAction, TaskListGroup, TaskStep } from "@cialloclaw/protocol";
+import { RISK_LEVELS, SECURITY_STATUSES, TASK_STEP_STATUSES } from "@cialloclaw/protocol";
 import { controlTask, getTaskDetail, listTasks } from "@/rpc/methods";
 import { getMockTaskBuckets, getMockTaskDetail, getTaskExperience, runMockTaskControl } from "./taskPage.mock";
 import type { TaskBucketPageData, TaskBucketsData, TaskControlOutcome, TaskDetailData, TaskExperience, TaskListItem } from "./taskPage.types";
+
+export type TaskPageDataMode = "rpc" | "mock";
 
 const INITIAL_TASK_PAGE_LIMIT: Record<TaskListGroup, number> = {
   finished: 24,
   unfinished: 12,
 };
+const TASK_RPC_TIMEOUT_MS = 2_500;
 
 function createRequestMeta(scope: string): RequestMeta {
   return {
@@ -21,8 +19,13 @@ function createRequestMeta(scope: string): RequestMeta {
   };
 }
 
-function allowMockFallback() {
-  return import.meta.env.DEV || import.meta.env.VITE_CIALLOCLAW_TASKS_USE_MOCK === "true";
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error(`${label} request timed out`)), TASK_RPC_TIMEOUT_MS);
+    }),
+  ]);
 }
 
 function createFallbackExperience(task: Task): TaskExperience {
@@ -70,17 +73,121 @@ function getTaskListSortBy(group: TaskListGroup) {
   return group === "finished" ? "finished_at" : "updated_at";
 }
 
-export async function loadTaskBucketPage(group: TaskListGroup, options?: { limit?: number; offset?: number }): Promise<TaskBucketPageData> {
+function createFallbackTaskDetail(task: Task): AgentTaskDetailGetResult {
+  return {
+    artifacts: [],
+    mirror_references: [],
+    security_summary: {
+      latest_restore_point: null,
+      pending_authorizations: task.status === "waiting_auth" ? 1 : 0,
+      risk_level: task.risk_level,
+      security_status: task.status === "waiting_auth" ? "pending_confirmation" : "normal",
+    },
+    task,
+    timeline: [],
+  };
+}
+
+const riskLevels = new Set<string>(RISK_LEVELS);
+const securityStatuses = new Set<string>(SECURITY_STATUSES);
+const taskStepStatuses = new Set<string>(TASK_STEP_STATUSES);
+
+function isTaskStep(step: unknown): step is TaskStep {
+  if (!step || typeof step !== "object") {
+    return false;
+  }
+
+  const candidate = step as Partial<TaskStep>;
+  return (
+    typeof candidate.step_id === "string" &&
+    typeof candidate.task_id === "string" &&
+    typeof candidate.name === "string" &&
+    typeof candidate.order_index === "number" &&
+    typeof candidate.input_summary === "string" &&
+    typeof candidate.output_summary === "string" &&
+    typeof candidate.status === "string" &&
+    taskStepStatuses.has(candidate.status)
+  );
+}
+
+function hasValidSecuritySummary(detail: AgentTaskDetailGetResult): boolean {
+  const summary = detail.security_summary as Partial<AgentTaskDetailGetResult["security_summary"]> | null | undefined;
+  return Boolean(
+    summary &&
+      typeof summary.pending_authorizations === "number" &&
+      typeof summary.risk_level === "string" &&
+      typeof summary.security_status === "string" &&
+      riskLevels.has(summary.risk_level) &&
+      securityStatuses.has(summary.security_status) &&
+      "latest_restore_point" in summary,
+  );
+}
+
+function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): AgentTaskDetailGetResult {
+  if (!detail || !detail.task || !detail.task.task_id) {
+    throw new Error("task detail payload is missing task information");
+  }
+
+  if (!hasValidSecuritySummary(detail)) {
+    throw new Error("task detail payload is missing security summary");
+  }
+
+  return {
+    artifacts: Array.isArray(detail.artifacts) ? detail.artifacts : [],
+    mirror_references: Array.isArray(detail.mirror_references) ? detail.mirror_references : [],
+    security_summary: detail.security_summary,
+    task: detail.task,
+    timeline: Array.isArray(detail.timeline) ? detail.timeline.filter(isTaskStep) : [],
+  };
+}
+
+export function buildFallbackTaskDetailData(item: TaskListItem): TaskDetailData {
+  return {
+    detail: createFallbackTaskDetail(item.task),
+    experience: item.experience,
+    source: "fallback",
+    task: item.task,
+  };
+}
+
+function getMockTaskBucketPage(group: TaskListGroup, options?: { limit?: number; offset?: number }): TaskBucketPageData {
   const limit = options?.limit ?? INITIAL_TASK_PAGE_LIMIT[group];
   const offset = options?.offset ?? 0;
-  const result = await listTasks({
-    group,
-    limit,
-    offset,
-    request_meta: createRequestMeta(`task_list_${group}_${offset}_${limit}`),
-    sort_by: getTaskListSortBy(group),
-    sort_order: "desc",
-  });
+  const buckets = getMockTaskBuckets();
+  const bucket = group === "unfinished" ? buckets.unfinished : buckets.finished;
+  const items = bucket.items.slice(offset, offset + limit);
+
+  return {
+    items,
+    page: {
+      has_more: offset + limit < bucket.items.length,
+      limit,
+      offset,
+      total: bucket.items.length,
+    },
+  };
+}
+
+export async function loadTaskBucketPage(group: TaskListGroup, options?: { limit?: number; offset?: number; source?: TaskPageDataMode }): Promise<TaskBucketPageData> {
+  const source = options?.source ?? "rpc";
+
+  if (source === "mock") {
+    return getMockTaskBucketPage(group, options);
+  }
+
+  const limit = options?.limit ?? INITIAL_TASK_PAGE_LIMIT[group];
+  const offset = options?.offset ?? 0;
+  const result = await withTimeout(
+    listTasks({
+      group,
+      limit,
+      offset,
+      request_meta: createRequestMeta(`task_list_${group}_${offset}_${limit}`),
+      sort_by: getTaskListSortBy(group),
+      sort_order: "desc",
+    }),
+    `task bucket ${group}`,
+  );
 
   return {
     items: mapTasks(result.items),
@@ -88,69 +195,56 @@ export async function loadTaskBucketPage(group: TaskListGroup, options?: { limit
   };
 }
 
-export async function loadTaskBuckets(options?: { unfinishedLimit?: number; finishedLimit?: number }): Promise<TaskBucketsData> {
-  try {
-    const [unfinishedResult, finishedResult] = await Promise.all([
-      loadTaskBucketPage("unfinished", { limit: options?.unfinishedLimit }),
-      loadTaskBucketPage("finished", { limit: options?.finishedLimit }),
-    ]);
+export async function loadTaskBuckets(options?: { unfinishedLimit?: number; finishedLimit?: number; source?: TaskPageDataMode }): Promise<TaskBucketsData> {
+  const source = options?.source ?? "rpc";
+  const [unfinishedResult, finishedResult] = await Promise.all([
+    loadTaskBucketPage("unfinished", { limit: options?.unfinishedLimit, source }),
+    loadTaskBucketPage("finished", { limit: options?.finishedLimit, source }),
+  ]);
 
-    return {
-      finished: finishedResult,
-      source: "rpc",
-      unfinished: unfinishedResult,
-    };
-  } catch (error) {
-    if (!allowMockFallback()) {
-      throw error;
-    }
-
-    console.warn("Task buckets RPC unavailable, using local mock fallback.", error);
-    return getMockTaskBuckets();
-  }
+  return {
+    finished: finishedResult,
+    source,
+    unfinished: unfinishedResult,
+  };
 }
 
-export async function loadTaskDetailData(taskId: string): Promise<TaskDetailData> {
-  try {
-    const detail = await getTaskDetail({
-      request_meta: createRequestMeta(`task_detail_${taskId}`),
-      task_id: taskId,
-    });
-
-    return {
-      detail,
-      experience: getTaskExperience(taskId) ?? createFallbackExperience(detail.task),
-      source: "rpc",
-      task: detail.task,
-    };
-  } catch (error) {
-    if (!allowMockFallback()) {
-      throw error;
-    }
-
-    console.warn("Task detail RPC unavailable, using local mock fallback.", error);
+export async function loadTaskDetailData(taskId: string, source: TaskPageDataMode = "rpc"): Promise<TaskDetailData> {
+  if (source === "mock") {
     return getMockTaskDetail(taskId);
   }
+
+  const detail = normalizeTaskDetailResult(
+    await withTimeout(
+      getTaskDetail({
+        request_meta: createRequestMeta(`task_detail_${taskId}`),
+        task_id: taskId,
+      }),
+      `task detail ${taskId}`,
+    ),
+  );
+
+  return {
+    detail,
+    experience: getTaskExperience(taskId) ?? createFallbackExperience(detail.task),
+    source: "rpc",
+    task: detail.task,
+  };
 }
 
-export async function controlTaskByAction(taskId: string, action: TaskControlAction): Promise<TaskControlOutcome> {
+export async function controlTaskByAction(taskId: string, action: TaskControlAction, source: TaskPageDataMode = "rpc"): Promise<TaskControlOutcome> {
   const params: AgentTaskControlParams = {
     action,
     request_meta: createRequestMeta(`task_control_${action}`),
     task_id: taskId,
   };
 
-  try {
-    return {
-      result: await controlTask(params),
-      source: "rpc",
-    };
-  } catch (error) {
-    if (!allowMockFallback()) {
-      throw error;
-    }
-
-    console.warn(`Task control RPC unavailable for ${action}, using local mock fallback.`, error);
+  if (source === "mock") {
     return runMockTaskControl(taskId, action);
   }
+
+  return {
+    result: await withTimeout(controlTask(params), `task control ${action}`),
+    source: "rpc",
+  };
 }
