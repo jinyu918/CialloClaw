@@ -51,6 +51,7 @@ export const RPC_METHODS_STABLE = {
   AGENT_DASHBOARD_MODULE_GET: "agent.dashboard.module.get",
   AGENT_MIRROR_OVERVIEW_GET: "agent.mirror.overview.get",
   AGENT_SECURITY_SUMMARY_GET: "agent.security.summary.get",
+  AGENT_SECURITY_RESTORE_POINTS_LIST: "agent.security.restore_points.list",
   AGENT_SECURITY_PENDING_LIST: "agent.security.pending.list",
   AGENT_SECURITY_RESPOND: "agent.security.respond",
   AGENT_SETTINGS_GET: "agent.settings.get",
@@ -459,6 +460,20 @@ export interface AgentSecurityPendingListParams {
 // AgentSecurityPendingListResult 定义当前模块的接口约束。
 export interface AgentSecurityPendingListResult {
   items: ApprovalRequest[];
+  page: JsonRpcPage;
+}
+
+// AgentSecurityRestorePointsListParams 定义当前模块的接口约束。
+export interface AgentSecurityRestorePointsListParams {
+  request_meta: RequestMeta;
+  task_id?: string;
+  limit: number;
+  offset: number;
+}
+
+// AgentSecurityRestorePointsListResult 定义当前模块的接口约束。
+export interface AgentSecurityRestorePointsListResult {
+  items: RecoveryPoint[];
   page: JsonRpcPage;
 }
 
