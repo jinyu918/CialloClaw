@@ -549,7 +549,10 @@ test("SecurityApp route resolution reacts to each new route state and exposes ta
     },
   );
 
-  assert.match(securityAppSource, /setRoutedTaskId\(null\);/);
+  assert.match(securityAppSource, /const \[subscribedTaskId, setSubscribedTaskId\] = useState<string \| null>\(null\);/);
+  assert.match(securityAppSource, /setSubscribedTaskId\(routeResolution\.routedTaskId\);/);
+  assert.match(securityAppSource, /return subscribeTask\(subscribedTaskId, \(\) => \{/);
+  assert.doesNotMatch(securityAppSource, /setSubscribedTaskId\(null\);/);
 });
 
 test("SecurityApp keeps snapshot-only approval detail renderable when live cards no longer contain it", () => {

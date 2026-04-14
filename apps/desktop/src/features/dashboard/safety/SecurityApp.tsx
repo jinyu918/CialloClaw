@@ -572,7 +572,7 @@ export function SecurityApp() {
   const [approvalSnapshot, setApprovalSnapshot] = useState<ApprovalRequest | null>(null);
   const [restorePointSnapshot, setRestorePointSnapshot] = useState<RecoveryPoint | null>(null);
   const [routeDrivenDetailKey, setRouteDrivenDetailKey] = useState<SecurityCardKey | null>(null);
-  const [routedTaskId, setRoutedTaskId] = useState<string | null>(null);
+  const [subscribedTaskId, setSubscribedTaskId] = useState<string | null>(null);
   const [lastResolvedApproval, setLastResolvedApproval] = useState<SecurityRespondOutcome | null>(null);
   const [rememberRuleByApprovalId, setRememberRuleByApprovalId] = useState<Record<string, boolean>>({});
   const [titleMotionTick, setTitleMotionTick] = useState(0);
@@ -727,14 +727,13 @@ export function SecurityApp() {
     });
 
     if (!routeResolution.shouldClearRouteState) {
-      setRoutedTaskId(null);
       return;
     }
 
     setApprovalSnapshot(routeResolution.approvalSnapshot);
     setRestorePointSnapshot(routeResolution.restorePointSnapshot);
     setRouteDrivenDetailKey(routeResolution.activeDetailKey);
-    setRoutedTaskId(routeResolution.routedTaskId);
+    setSubscribedTaskId(routeResolution.routedTaskId);
 
     if (routeResolution.activeDetailKey) {
       setActiveDetailKey(routeResolution.activeDetailKey);
@@ -751,14 +750,14 @@ export function SecurityApp() {
   }, [bringCardToFront, location.pathname, location.state, moduleData, navigate]);
 
   useEffect(() => {
-    if (dataMode !== "rpc" || !routedTaskId) {
+    if (dataMode !== "rpc" || !subscribedTaskId) {
       return;
     }
 
-    return subscribeTask(routedTaskId, () => {
+    return subscribeTask(subscribedTaskId, () => {
       queueRpcRefresh();
     });
-  }, [dataMode, queueRpcRefresh, routedTaskId]);
+  }, [dataMode, queueRpcRefresh, subscribedTaskId]);
 
   const handleTitleClick = useCallback(() => {
     setTitleMotionTick((currentTick) => currentTick + 1);
