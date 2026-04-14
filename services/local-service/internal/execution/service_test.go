@@ -457,6 +457,73 @@ func TestFallbackOutputRequestsClarificationWhenIntentMissing(t *testing.T) {
 	}
 }
 
+func TestAssessGovernanceRequiresAuthorizationForRestoreWrite(t *testing.T) {
+	service, workspaceRoot := newTestExecutionService(t, "unused")
+
+	assessment, handled, err := service.AssessGovernance(context.Background(), Request{
+		TaskID:       "task_auth_write",
+		RunID:        "run_auth_write",
+		Intent:       map[string]any{"name": "write_file", "arguments": map[string]any{"target_path": "notes/result.md", "require_authorization": true}},
+		DeliveryType: "workspace_document",
+		ResultTitle:  "授权写入",
+	})
+	if err != nil {
+		t.Fatalf("AssessGovernance returned error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected write_file governance path to be handled")
+	}
+	if !assessment.ApprovalRequired {
+		t.Fatalf("expected approval to be required, got %+v", assessment)
+	}
+	if assessment.OperationName != "write_file" {
+		t.Fatalf("expected write_file operation, got %+v", assessment)
+	}
+	expectedTarget := "notes/result.md"
+	if assessment.TargetObject != expectedTarget {
+		t.Fatalf("expected target object %q, got %q", expectedTarget, assessment.TargetObject)
+	}
+	files, _ := assessment.ImpactScope["files"].([]string)
+	expectedImpactFile := filepath.Join(workspaceRoot, "notes", "result.md")
+	if len(files) != 1 || files[0] != expectedImpactFile {
+		t.Fatalf("expected impact scope files to include %q, got %+v", expectedImpactFile, assessment.ImpactScope)
+	}
+}
+
+func TestAssessGovernanceExecCommandUsesWorkspaceTargetWithoutRecoveryPoint(t *testing.T) {
+	service, workspaceRoot := newTestExecutionService(t, "unused")
+
+	assessment, handled, err := service.AssessGovernance(context.Background(), Request{
+		TaskID: "task_exec_auth",
+		RunID:  "run_exec_auth",
+		Intent: map[string]any{"name": "exec_command", "arguments": map[string]any{
+			"command":               "git status",
+			"working_dir":           workspaceRoot,
+			"require_authorization": true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AssessGovernance returned error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected exec_command governance path to be handled")
+	}
+	if assessment.OperationName != "exec_command" || assessment.TargetObject != workspaceRoot {
+		t.Fatalf("unexpected exec_command assessment: %+v", assessment)
+	}
+	if !assessment.ApprovalRequired {
+		t.Fatalf("expected exec_command to require approval when flagged, got %+v", assessment)
+	}
+
+	recoveryPoint, err := service.prepareGovernanceRecoveryPoint(context.Background(), Request{TaskID: "task_exec_auth"}, workspaceRoot, "exec_command", map[string]any{"working_dir": workspaceRoot})
+	if err != nil {
+		t.Fatalf("prepareGovernanceRecoveryPoint returned error: %v", err)
+	}
+	if recoveryPoint != nil {
+		t.Fatalf("expected exec_command not to create recovery point, got %+v", recoveryPoint)
+	}
+}
+
 type stubExecutionCapability struct {
 	result tools.CommandExecutionResult
 	err    error
