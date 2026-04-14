@@ -1857,6 +1857,65 @@ func TestServiceDashboardModuleHighlightsIncludeAuditTrail(t *testing.T) {
 	}
 }
 
+func TestServiceDashboardModuleFallsBackToStoredTaskRuns(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "stored dashboard module")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+
+	err := service.storage.TaskRunStore().SaveTaskRun(context.Background(), storage.TaskRunRecord{
+		TaskID:      "task_dashboard_finished",
+		SessionID:   "sess_stored",
+		RunID:       "run_dashboard_finished",
+		Title:       "stored dashboard task",
+		SourceType:  "hover_input",
+		Status:      "completed",
+		CurrentStep: "deliver_result",
+		RiskLevel:   "green",
+		StartedAt:   time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 4, 14, 12, 5, 0, 0, time.UTC),
+		FinishedAt:  timePointer(time.Date(2026, 4, 14, 12, 6, 0, 0, time.UTC)),
+		DeliveryResult: map[string]any{
+			"type": "workspace_document",
+			"payload": map[string]any{
+				"path": "workspace/dashboard.md",
+			},
+		},
+		AuditRecords: []map[string]any{{
+			"audit_id":   "audit_dashboard_001",
+			"task_id":    "task_dashboard_finished",
+			"action":     "write_file",
+			"summary":    "stored dashboard audit",
+			"created_at": "2026-04-14T12:06:00Z",
+			"result":     "success",
+			"target":     "workspace/dashboard.md",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("save finished task run failed: %v", err)
+	}
+
+	moduleResult, err := service.DashboardModuleGet(map[string]any{
+		"module": "security",
+		"tab":    "audit",
+	})
+	if err != nil {
+		t.Fatalf("dashboard module get failed: %v", err)
+	}
+
+	summary := moduleResult["summary"].(map[string]any)
+	if summary["completed_tasks"] != 1 {
+		t.Fatalf("expected storage-backed completed task count, got %+v", summary)
+	}
+	if summary["generated_outputs"] != 1 {
+		t.Fatalf("expected storage-backed generated output count, got %+v", summary)
+	}
+	highlights := moduleResult["highlights"].([]string)
+	if len(highlights) == 0 {
+		t.Fatal("expected storage-backed dashboard highlights")
+	}
+}
+
 func TestServiceSecurityAuditListFallsBackToStoredAuditRecords(t *testing.T) {
 	service, _ := newTestServiceWithExecution(t, "executor-backed summary")
 	if service.storage == nil {

@@ -710,6 +710,16 @@ func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, err
 	tab := stringValue(params, "tab", "daily_summary")
 	finishedTasks, _ := s.runEngine.ListTasks("finished", "finished_at", "desc", 0, 0)
 	unfinishedTasks, _ := s.runEngine.ListTasks("unfinished", "updated_at", "desc", 0, 0)
+	if len(finishedTasks) == 0 {
+		if persistedTasks, ok := s.listTasksFromStorage("finished", "finished_at", "desc", 0, 0); ok {
+			finishedTasks = persistedTasks
+		}
+	}
+	if len(unfinishedTasks) == 0 {
+		if persistedTasks, ok := s.listTasksFromStorage("unfinished", "updated_at", "desc", 0, 0); ok {
+			unfinishedTasks = persistedTasks
+		}
+	}
 	_, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
 	latestAudit := latestAuditRecordFromTasks(append(append([]runengine.TaskRecord{}, unfinishedTasks...), finishedTasks...))
 	if latestAudit == nil {
