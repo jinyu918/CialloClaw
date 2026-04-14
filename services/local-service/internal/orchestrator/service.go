@@ -3,6 +3,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -32,6 +33,7 @@ import (
 // ErrTaskNotFound 表示调用方给出的 task_id 在当前运行态中不存在。
 var (
 	ErrTaskNotFound          = errors.New("task not found")
+	ErrArtifactNotFound      = errors.New("artifact not found")
 	ErrTaskStatusInvalid     = errors.New("task status invalid")
 	ErrTaskAlreadyFinished   = errors.New("task already finished")
 	ErrStorageQueryFailed    = errors.New("storage query failed")
@@ -455,10 +457,133 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	return map[string]any{
 		"task":              taskMap(task),
 		"timeline":          timelineMap(task.Timeline),
-		"artifacts":         cloneMapSlice(task.Artifacts),
+		"artifacts":         s.artifactsForTask(task.TaskID, task.Artifacts),
 		"mirror_references": cloneMapSlice(task.MirrorReferences),
 		"security_summary":  securitySummary,
 	}, nil
+}
+
+// TaskArtifactList handles agent.task.artifact.list and returns persisted artifacts.
+func (s *Service) TaskArtifactList(params map[string]any) (map[string]any, error) {
+	limit := clampListLimit(intValue(params, "limit", 20))
+	offset := clampListOffset(intValue(params, "offset", 0))
+	taskID := stringValue(params, "task_id", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	items, total, err := s.listArtifactsPage(taskID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"items": cloneMapSlice(items),
+		"page":  pageMap(limit, offset, total),
+	}, nil
+}
+
+// TaskArtifactOpen handles agent.task.artifact.open and returns stable open metadata.
+func (s *Service) TaskArtifactOpen(params map[string]any) (map[string]any, error) {
+	taskID := stringValue(params, "task_id", "")
+	artifactID := stringValue(params, "artifact_id", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	if strings.TrimSpace(artifactID) == "" {
+		return nil, errors.New("artifact_id is required")
+	}
+	artifact, err := s.findArtifactForTask(taskID, artifactID)
+	if err != nil {
+		return nil, err
+	}
+	openResult := buildDeliveryOpenResult(cloneMap(artifact), nil, taskID)
+	openResult["artifact"] = cloneMap(artifact)
+	return openResult, nil
+}
+
+// DeliveryOpen handles agent.delivery.open and resolves the final open action.
+func (s *Service) DeliveryOpen(params map[string]any) (map[string]any, error) {
+	taskID := stringValue(params, "task_id", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	artifactID := stringValue(params, "artifact_id", "")
+	if strings.TrimSpace(artifactID) != "" {
+		artifact, err := s.findArtifactForTask(taskID, artifactID)
+		if err != nil {
+			return nil, err
+		}
+		result := buildDeliveryOpenResult(cloneMap(artifact), nil, taskID)
+		result["artifact"] = cloneMap(artifact)
+		return result, nil
+	}
+	task, ok := s.runEngine.GetTask(taskID)
+	if !ok {
+		task, ok = s.taskDetailFromStorage(taskID)
+	}
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+	return buildDeliveryOpenResult(nil, cloneMap(task.DeliveryResult), taskID), nil
+}
+
+func inferArtifactDeliveryType(artifact map[string]any) string {
+	if deliveryType := stringValue(artifact, "delivery_type", ""); deliveryType != "" {
+		return deliveryType
+	}
+	if path := stringValue(artifact, "path", ""); path != "" {
+		return "open_file"
+	}
+	return "task_detail"
+}
+
+func buildDeliveryOpenResult(artifact map[string]any, deliveryResult map[string]any, taskID string) map[string]any {
+	resolvedDelivery := normalizeDeliveryOpenResult(artifact, deliveryResult, taskID)
+	return map[string]any{
+		"delivery_result":  resolvedDelivery,
+		"open_action":      stringValue(resolvedDelivery, "type", "task_detail"),
+		"resolved_payload": cloneMap(mapValue(resolvedDelivery, "payload")),
+	}
+}
+
+func normalizeDeliveryOpenResult(artifact map[string]any, deliveryResult map[string]any, taskID string) map[string]any {
+	if len(deliveryResult) == 0 {
+		payload := cloneMap(mapValue(artifact, "delivery_payload"))
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		pathValue := firstNonEmptyString(stringValue(artifact, "path", ""), stringValue(payload, "path", ""))
+		if pathValue != "" {
+			payload["path"] = pathValue
+		}
+		if payload["task_id"] == nil {
+			payload["task_id"] = taskID
+		}
+		return map[string]any{
+			"type":         firstNonEmptyString(stringValue(artifact, "delivery_type", ""), inferArtifactDeliveryType(artifact)),
+			"title":        stringValue(artifact, "title", ""),
+			"payload":      payload,
+			"preview_text": stringValue(artifact, "title", ""),
+		}
+	}
+	resolved := cloneMap(deliveryResult)
+	payload := cloneMap(mapValue(resolved, "payload"))
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if payload["task_id"] == nil {
+		payload["task_id"] = taskID
+	}
+	resolved["payload"] = payload
+	if stringValue(resolved, "type", "") == "" {
+		resolved["type"] = "task_detail"
+	}
+	if stringValue(resolved, "title", "") == "" {
+		resolved["title"] = "任务交付结果"
+	}
+	if stringValue(resolved, "preview_text", "") == "" {
+		resolved["preview_text"] = stringValue(resolved, "title", "")
+	}
+	return resolved
 }
 
 // TaskControl 处理当前模块的相关逻辑。
@@ -2264,6 +2389,11 @@ func cloneStorageTimePointer(value *time.Time) *time.Time {
 
 func latestOutputPathFromTasks(tasks []runengine.TaskRecord) string {
 	for _, task := range tasks {
+		for _, artifact := range task.Artifacts {
+			if outputPath := stringValue(artifact, "path", ""); outputPath != "" {
+				return outputPath
+			}
+		}
 		if outputPath := pathFromDeliveryResult(task.DeliveryResult); outputPath != "" {
 			return outputPath
 		}
@@ -2558,8 +2688,10 @@ func (s *Service) attachPostDeliveryHandoffs(taskID, runID string, snapshot cont
 	s.syncTaskWriteMirrorReferences(taskID, references, err)
 
 	storageWritePlan := s.delivery.BuildStorageWritePlan(taskID, deliveryResult)
+	artifacts = attachDeliveryResultToArtifacts(deliveryResult, artifacts)
 	artifactPlans := s.delivery.BuildArtifactPersistPlans(taskID, artifacts)
 	_, _ = s.runEngine.SetDeliveryPlans(taskID, storageWritePlan, artifactPlans)
+	s.persistArtifacts(taskID, artifactPlans)
 }
 
 // buildApprovalRequest 处理当前模块的相关逻辑。
@@ -2843,6 +2975,185 @@ func (s *Service) writeGovernanceAuditRecord(taskID, runID, auditType, action, s
 		return record.Map()
 	}
 	return nil
+}
+
+func attachDeliveryResultToArtifacts(deliveryResult map[string]any, artifacts []map[string]any) []map[string]any {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		cloned := cloneMap(artifact)
+		if cloned == nil {
+			continue
+		}
+		cloned["delivery_type"] = stringValue(deliveryResult, "type", "")
+		cloned["delivery_payload"] = cloneMap(mapValue(deliveryResult, "payload"))
+		if stringValue(cloned, "created_at", "") == "" {
+			cloned["created_at"] = time.Now().UTC().Format(time.RFC3339)
+		}
+		result = append(result, cloned)
+	}
+	return result
+}
+
+func (s *Service) persistArtifacts(taskID string, artifactPlans []map[string]any) {
+	if s.storage == nil || s.storage.ArtifactStore() == nil || len(artifactPlans) == 0 {
+		return
+	}
+	records := make([]storage.ArtifactRecord, 0, len(artifactPlans))
+	for _, plan := range artifactPlans {
+		records = append(records, storage.ArtifactRecord{
+			ArtifactID:          stringValue(plan, "artifact_id", ""),
+			TaskID:              firstNonEmptyString(stringValue(plan, "task_id", ""), taskID),
+			ArtifactType:        stringValue(plan, "artifact_type", ""),
+			Title:               stringValue(plan, "title", ""),
+			Path:                stringValue(plan, "path", ""),
+			MimeType:            stringValue(plan, "mime_type", ""),
+			DeliveryType:        stringValue(plan, "delivery_type", ""),
+			DeliveryPayloadJSON: stringValue(plan, "delivery_payload_json", "{}"),
+			CreatedAt:           firstNonEmptyString(stringValue(plan, "created_at", ""), time.Now().UTC().Format(time.RFC3339)),
+		})
+	}
+	_ = s.storage.ArtifactStore().SaveArtifacts(context.Background(), records)
+	if task, ok := s.runEngine.GetTask(taskID); ok {
+		merged := mergeArtifactsWithStored(task.Artifacts, s.loadArtifactsFromStorage(taskID, 0, 0))
+		_, _ = s.runEngine.SetPresentation(taskID, task.BubbleMessage, task.DeliveryResult, merged)
+	}
+}
+
+func (s *Service) artifactsForTask(taskID string, runtimeArtifacts []map[string]any) []map[string]any {
+	return mergeArtifactsWithStored(runtimeArtifacts, s.loadArtifactsFromStorage(taskID, 0, 0))
+}
+
+func (s *Service) loadArtifactsFromStorage(taskID string, limit, offset int) []map[string]any {
+	if s.storage == nil || s.storage.ArtifactStore() == nil || strings.TrimSpace(taskID) == "" {
+		return nil
+	}
+	records, _, err := s.storage.ArtifactStore().ListArtifacts(context.Background(), taskID, limit, offset)
+	if err != nil {
+		return nil
+	}
+	items := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		items = append(items, artifactMapFromStorage(record))
+	}
+	return items
+}
+
+func (s *Service) listArtifactsPage(taskID string, limit, offset int) ([]map[string]any, int, error) {
+	if s.storage != nil && s.storage.ArtifactStore() != nil {
+		records, total, err := s.storage.ArtifactStore().ListArtifacts(context.Background(), taskID, limit, offset)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
+		}
+		if total > 0 {
+			items := make([]map[string]any, 0, len(records))
+			for _, record := range records {
+				items = append(items, artifactMapFromStorage(record))
+			}
+			return items, total, nil
+		}
+	}
+	items := s.artifactsForTask(taskID, currentTaskArtifacts(s.runEngine, taskID))
+	total := len(items)
+	if offset >= total {
+		return []map[string]any{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return cloneMapSlice(items[offset:end]), total, nil
+}
+
+func currentTaskArtifacts(engine *runengine.Engine, taskID string) []map[string]any {
+	if engine == nil || strings.TrimSpace(taskID) == "" {
+		return nil
+	}
+	task, ok := engine.GetTask(taskID)
+	if !ok {
+		return nil
+	}
+	return cloneMapSlice(task.Artifacts)
+}
+
+func (s *Service) findArtifactForTask(taskID, artifactID string) (map[string]any, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return nil, ErrTaskNotFound
+	}
+	exists := false
+	if task, ok := s.runEngine.GetTask(taskID); ok {
+		exists = true
+		for _, artifact := range task.Artifacts {
+			if stringValue(artifact, "artifact_id", "") == artifactID {
+				return cloneMap(artifact), nil
+			}
+		}
+	}
+	if !exists {
+		if _, ok := s.taskDetailFromStorage(taskID); ok {
+			exists = true
+		}
+	}
+	if s.storage != nil && s.storage.ArtifactStore() != nil {
+		records, _, err := s.storage.ArtifactStore().ListArtifacts(context.Background(), taskID, 0, 0)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
+		}
+		if len(records) > 0 {
+			exists = true
+		}
+		for _, record := range records {
+			if record.ArtifactID == artifactID {
+				return artifactMapFromStorage(record), nil
+			}
+		}
+	}
+	if !exists {
+		return nil, ErrTaskNotFound
+	}
+	return nil, ErrArtifactNotFound
+}
+
+func mergeArtifactsWithStored(runtimeArtifacts, storedArtifacts []map[string]any) []map[string]any {
+	if len(runtimeArtifacts) == 0 && len(storedArtifacts) == 0 {
+		return nil
+	}
+	merged := make([]map[string]any, 0, len(runtimeArtifacts)+len(storedArtifacts))
+	seen := make(map[string]struct{})
+	for _, group := range [][]map[string]any{storedArtifacts, runtimeArtifacts} {
+		for _, artifact := range group {
+			artifactID := stringValue(artifact, "artifact_id", "")
+			if artifactID == "" {
+				continue
+			}
+			if _, ok := seen[artifactID]; ok {
+				continue
+			}
+			seen[artifactID] = struct{}{}
+			merged = append(merged, cloneMap(artifact))
+		}
+	}
+	return merged
+}
+
+func artifactMapFromStorage(record storage.ArtifactRecord) map[string]any {
+	payload := map[string]any{}
+	if strings.TrimSpace(record.DeliveryPayloadJSON) != "" {
+		_ = json.Unmarshal([]byte(record.DeliveryPayloadJSON), &payload)
+	}
+	return map[string]any{
+		"artifact_id":      record.ArtifactID,
+		"task_id":          record.TaskID,
+		"artifact_type":    record.ArtifactType,
+		"title":            record.Title,
+		"path":             record.Path,
+		"mime_type":        record.MimeType,
+		"delivery_type":    record.DeliveryType,
+		"delivery_payload": payload,
+		"created_at":       record.CreatedAt,
+	}
 }
 
 func governanceInterceptionBubble(assessment execution.GovernanceAssessment) string {
