@@ -4,7 +4,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, CircleDashed, LayoutList, RefreshCcw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { subscribeTask } from "@/rpc/subscriptions";
+import { subscribeDeliveryReady, subscribeTask } from "@/rpc/subscriptions";
 import { loadDashboardDataMode, saveDashboardDataMode } from "@/features/dashboard/shared/dashboardDataMode";
 import { DashboardMockToggle } from "@/features/dashboard/shared/DashboardMockToggle";
 import { buildDashboardSafetyNavigationState } from "@/features/dashboard/shared/dashboardSafetyNavigation";
@@ -139,16 +139,39 @@ export function TaskPage() {
   }, [dataMode]);
 
   useEffect(() => {
-    if (dataMode === "mock" || !selectedTaskId) {
+    if (dataMode === "mock") {
       return;
     }
 
+<<<<<<< dashboard/tasks
     return subscribeTask(selectedTaskId, () => {
       for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
         void queryClient.invalidateQueries({ queryKey });
       }
     });
   }, [dataMode, queryClient, securityRefreshPlan, selectedTaskId]);
+=======
+    const clearDeliverySubscription = subscribeDeliveryReady((payload) => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket", dataMode] });
+
+      if (payload.task_id === selectedTaskId) {
+        void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", dataMode, selectedTaskId] });
+      }
+    });
+
+    const clearTaskSubscription = selectedTaskId
+      ? subscribeTask(selectedTaskId, () => {
+          void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "bucket", dataMode] });
+          void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "detail", dataMode, selectedTaskId] });
+        })
+      : () => {};
+
+    return () => {
+      clearDeliverySubscription();
+      clearTaskSubscription();
+    };
+  }, [dataMode, queryClient, selectedTaskId]);
+>>>>>>> main
 
   useEffect(() => {
     return () => {

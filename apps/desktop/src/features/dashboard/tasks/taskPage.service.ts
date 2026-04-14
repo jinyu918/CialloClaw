@@ -1,4 +1,5 @@
 import type { AgentTaskDetailGetResult, AgentTaskControlParams, RequestMeta, Task, TaskControlAction, TaskListGroup } from "@cialloclaw/protocol";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
 import { controlTask, getTaskDetail, listTasks } from "@/rpc/methods";
 import { isActiveApprovalRequest, isApprovalRequest, isArtifact, isBinaryPendingAuthorizations, isMirrorReference, isRecoveryPoint, isTask, isTaskStep, normalizeArray, normalizeNullable } from "../shared/dashboardContractValidators";
 import { RISK_LEVELS, SECURITY_STATUSES, TASK_STEP_STATUSES } from "@/rpc/protocolEnumerations";
@@ -195,24 +196,33 @@ export async function loadTaskBucketPage(group: TaskListGroup, options?: { limit
     return getMockTaskBucketPage(group, options);
   }
 
-  const limit = options?.limit ?? INITIAL_TASK_PAGE_LIMIT[group];
-  const offset = options?.offset ?? 0;
-  const result = await withTimeout(
-    listTasks({
-      group,
-      limit,
-      offset,
-      request_meta: createRequestMeta(`task_list_${group}_${offset}_${limit}`),
-      sort_by: getTaskListSortBy(group),
-      sort_order: "desc",
-    }),
-    `task bucket ${group}`,
-  );
+  try {
+    const limit = options?.limit ?? INITIAL_TASK_PAGE_LIMIT[group];
+    const offset = options?.offset ?? 0;
+    const result = await withTimeout(
+      listTasks({
+        group,
+        limit,
+        offset,
+        request_meta: createRequestMeta(`task_list_${group}_${offset}_${limit}`),
+        sort_by: getTaskListSortBy(group),
+        sort_order: "desc",
+      }),
+      `task bucket ${group}`,
+    );
 
-  return {
-    items: mapTasks(result.items),
-    page: result.page,
-  };
+    return {
+      items: mapTasks(result.items),
+      page: result.page,
+    };
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback(`task bucket ${group}`, error);
+      return getMockTaskBucketPage(group, options);
+    }
+
+    throw error;
+  }
 }
 
 export async function loadTaskBuckets(options?: { unfinishedLimit?: number; finishedLimit?: number; source?: TaskPageDataMode }): Promise<TaskBucketsData> {
@@ -234,22 +244,31 @@ export async function loadTaskDetailData(taskId: string, source: TaskPageDataMod
     return getMockTaskDetail(taskId);
   }
 
-  const detail = normalizeTaskDetailResult(
-    await withTimeout(
-      getTaskDetail({
-        request_meta: createRequestMeta(`task_detail_${taskId}`),
-        task_id: taskId,
-      }),
-      `task detail ${taskId}`,
-    ),
-  );
+  try {
+    const detail = normalizeTaskDetailResult(
+      await withTimeout(
+        getTaskDetail({
+          request_meta: createRequestMeta(`task_detail_${taskId}`),
+          task_id: taskId,
+        }),
+        `task detail ${taskId}`,
+      ),
+    );
 
-  return {
-    detail,
-    experience: getTaskExperience(taskId) ?? createFallbackExperience(detail.task),
-    source: "rpc",
-    task: detail.task,
-  };
+    return {
+      detail,
+      experience: getTaskExperience(taskId) ?? createFallbackExperience(detail.task),
+      source: "rpc",
+      task: detail.task,
+    };
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback(`task detail ${taskId}`, error);
+      return getMockTaskDetail(taskId);
+    }
+
+    throw error;
+  }
 }
 
 export async function controlTaskByAction(taskId: string, action: TaskControlAction, source: TaskPageDataMode = "rpc"): Promise<TaskControlOutcome> {
@@ -263,8 +282,17 @@ export async function controlTaskByAction(taskId: string, action: TaskControlAct
     return runMockTaskControl(taskId, action);
   }
 
-  return {
-    result: await withTimeout(controlTask(params), `task control ${action}`),
-    source: "rpc",
-  };
+  try {
+    return {
+      result: await withTimeout(controlTask(params), `task control ${action}`),
+      source: "rpc",
+    };
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback(`task control ${action}`, error);
+      return runMockTaskControl(taskId, action);
+    }
+
+    throw error;
+  }
 }

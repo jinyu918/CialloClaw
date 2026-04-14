@@ -23,6 +23,7 @@ import "@/features/dashboard/home/dashboardHome.css";
 type DashboardVoiceFieldProps = {
   isOpen: boolean;
   onClose: () => void;
+  onRecommendationConfirm?: (recommendationId: string) => void;
   sequences: DashboardVoiceSequence[];
 };
 
@@ -87,7 +88,7 @@ function getSpeechRecognitionErrorMessage(error: string) {
   }
 }
 
-export function DashboardVoiceField({ isOpen, onClose, sequences }: DashboardVoiceFieldProps) {
+export function DashboardVoiceField({ isOpen, onClose, onRecommendationConfirm, sequences }: DashboardVoiceFieldProps) {
   const navigate = useNavigate();
   const [stage, setStage] = useState<DashboardVoiceStage>("ready");
   const [transcript, setTranscript] = useState("");
@@ -345,12 +346,15 @@ export function DashboardVoiceField({ isOpen, onClose, sequences }: DashboardVoi
     handleRestart();
   }, [finalizeVoiceRecognition, handleRestart, hasTranscript]);
 
-  const handleSuggestionSelect = useCallback((suggestion: string) => {
+  const handleSuggestionSelect = useCallback((sequence: DashboardVoiceSequence) => {
     disposeVoiceRecognition();
     clearCompletionTimer();
     recognitionErrorMessageRef.current = null;
-    void submitDashboardVoiceText(suggestion);
-  }, [clearCompletionTimer, disposeVoiceRecognition, submitDashboardVoiceText]);
+    if (sequence.recommendationId) {
+      onRecommendationConfirm?.(sequence.recommendationId);
+    }
+    void submitDashboardVoiceText(sequence.suggestion);
+  }, [clearCompletionTimer, disposeVoiceRecognition, onRecommendationConfirm, submitDashboardVoiceText]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -539,16 +543,22 @@ export function DashboardVoiceField({ isOpen, onClose, sequences }: DashboardVoi
               </div>
 
               <div className="dashboard-voice-field__suggestions" role="list" aria-label="语音快捷建议">
-                {sequences.map((sequence) => (
-                  <button
-                    key={sequence.suggestion}
-                    className="dashboard-voice-field__suggestion-chip"
-                    onClick={() => handleSuggestionSelect(sequence.suggestion)}
-                    type="button"
-                  >
-                    {sequence.suggestion}
-                  </button>
-                ))}
+                {sequences.length > 0 ? (
+                  sequences.map((sequence) => (
+                    <button
+                      key={sequence.suggestion}
+                      className="dashboard-voice-field__suggestion-chip"
+                      onClick={() => handleSuggestionSelect(sequence)}
+                      type="button"
+                    >
+                      {sequence.suggestion}
+                    </button>
+                  ))
+                ) : (
+                  <span className="dashboard-voice-field__suggestion-chip" data-active="false">
+                    暂无可用建议
+                  </span>
+                )}
               </div>
             </>
           ) : null}

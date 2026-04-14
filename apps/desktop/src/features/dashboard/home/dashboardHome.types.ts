@@ -100,6 +100,12 @@ export type DashboardEntranceOrbConfig = DashboardOrbitNodeConfig & {
 
 export type DashboardDecorOrbConfig = DashboardOrbitNodeConfig;
 
+export type DashboardHomeStateGroup = {
+  key: DashboardHomeModuleKey;
+  label: string;
+  states: DashboardHomeEventStateKey[];
+};
+
 export type DashboardHomeSummonEvent = {
   copyDuration?: number;
   id: string;
@@ -107,6 +113,7 @@ export type DashboardHomeSummonEvent = {
   stateKey: DashboardHomeEventStateKey;
   message: string;
   reason: string;
+  recommendationId?: string;
   nextStep?: string;
   priority: "urgent" | "normal" | "low";
   duration?: number;
@@ -121,4 +128,5 @@ export type DashboardVoiceSequence = {
   summary: string;
   executingSteps: string[];
   module: DashboardHomeModuleKey;
+  recommendationId?: string;
 };

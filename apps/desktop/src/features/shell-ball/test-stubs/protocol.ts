@@ -48,8 +48,15 @@ export type AgentInputSubmitParams = {
   };
   options?: {
     confirm_required?: boolean;
-    preferred_delivery?: "bubble" | "workspace_document" | "result_page" | "open_file" | "reveal_in_folder" | "task_detail";
+    preferred_delivery?: DeliveryResult["type"];
   };
+};
+
+export type DeliveryResult = {
+  type: "bubble" | "workspace_document" | "result_page" | "open_file" | "reveal_in_folder" | "task_detail";
+  title?: string;
+  preview_text?: string;
+  payload?: Record<string, any>;
 };
 
 export type AgentInputSubmitResult = {
@@ -58,13 +65,13 @@ export type AgentInputSubmitResult = {
     status: string;
   };
   bubble_message: BubbleMessage | null;
-  delivery_result?: {
+  delivery_result?: DeliveryResult | {
     type?: string;
     preview_text?: string | null;
     payload?: {
       task_id?: string | null;
     } | null;
-  } | null;
+  } | null; // 合并 delivery_result 的类型
 };
 
 export type AgentSecuritySummaryGetParams = { request_meta: RequestMeta };
