@@ -393,6 +393,65 @@ func TestExecuteDirectSidecarPageReadUsesToolExecutor(t *testing.T) {
 	}
 }
 
+func TestExecuteDirectSidecarPageSearchUsesToolExecutor(t *testing.T) {
+	service, _ := newTestExecutionServiceWithPlaywright(t, "unused", stubPlaywrightClient{searchResult: tools.BrowserPageSearchResult{
+		Matches:    []string{"example text match"},
+		MatchCount: 1,
+		Source:     "playwright_sidecar",
+	}})
+
+	result, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_006",
+		RunID:        "run_006",
+		Title:        "页面搜索",
+		Intent:       map[string]any{"name": "page_search", "arguments": map[string]any{"url": "https://example.com", "query": "example", "limit": 3}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text", Text: "请搜索页面"},
+		DeliveryType: "bubble",
+		ResultTitle:  "页面搜索结果",
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if result.ToolName != "page_search" {
+		t.Fatalf("expected page_search tool, got %s", result.ToolName)
+	}
+	if result.ToolOutput["summary_output"] == nil {
+		t.Fatalf("expected page_search summary output, got %+v", result.ToolOutput)
+	}
+	if !strings.Contains(result.BubbleText, "关键词") {
+		t.Fatalf("expected bubble text to summarize search result, got %s", result.BubbleText)
+	}
+	if result.DeliveryResult["type"] != "bubble" {
+		t.Fatalf("expected bubble delivery result, got %+v", result.DeliveryResult)
+	}
+}
+
+func TestExecuteDirectSidecarPageReadFailureReturnsMappedToolTrace(t *testing.T) {
+	service, _ := newTestExecutionServiceWithPlaywright(t, "unused", stubPlaywrightClient{err: tools.ErrPlaywrightSidecarFailed})
+
+	result, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_007",
+		RunID:        "run_007",
+		Title:        "页面读取失败",
+		Intent:       map[string]any{"name": "page_read", "arguments": map[string]any{"url": "https://example.com"}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text", Text: "请读取页面"},
+		DeliveryType: "bubble",
+		ResultTitle:  "页面读取结果",
+	})
+	if err == nil {
+		t.Fatal("expected page_read execution to fail")
+	}
+	if !errors.Is(err, tools.ErrToolExecutionFailed) {
+		t.Fatalf("expected wrapped tool execution failure, got %v", err)
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected failed tool call trace, got %+v", result.ToolCalls)
+	}
+	if result.ToolCalls[0].ErrorCode == nil || *result.ToolCalls[0].ErrorCode != tools.ToolErrorCodePlaywrightSidecarFail {
+		t.Fatalf("expected unified sidecar error code, got %+v", result.ToolCalls[0])
+	}
+}
+
 func TestExecuteFallsBackWhenModelFails(t *testing.T) {
 	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
 	pathPolicy, err := platform.NewLocalPathPolicy(workspaceRoot)

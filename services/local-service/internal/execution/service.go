@@ -444,6 +444,23 @@ func (s *Service) resolveToolExecution(request Request, deliveryResult map[strin
 			return "", nil, false
 		}
 		return intentName, input, true
+	case "page_read":
+		urlValue := stringValue(args, "url", "")
+		if urlValue == "" {
+			return "", nil, false
+		}
+		return intentName, map[string]any{"url": urlValue}, true
+	case "page_search":
+		urlValue := stringValue(args, "url", "")
+		queryValue := stringValue(args, "query", "")
+		if urlValue == "" || queryValue == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"url": urlValue, "query": queryValue}
+		if limit, ok := args["limit"]; ok {
+			input["limit"] = limit
+		}
+		return intentName, input, true
 	default:
 		return "", nil, false
 	}
@@ -684,6 +701,11 @@ func toolBubbleText(toolName string, result *tools.ToolExecutionResult) string {
 	}
 	if preview := stringValue(result.SummaryOutput, "stdout_preview", ""); preview != "" {
 		return preview
+	}
+	if query := stringValue(result.SummaryOutput, "query", ""); query != "" {
+		if count, ok := result.SummaryOutput["match_count"]; ok {
+			return fmt.Sprintf("页面搜索完成，关键词 %q 共匹配 %v 处。", query, count)
+		}
 	}
 	if count, ok := result.SummaryOutput["entry_count"]; ok {
 		return fmt.Sprintf("%s 执行完成，当前目录条目数：%v。", toolName, count)
