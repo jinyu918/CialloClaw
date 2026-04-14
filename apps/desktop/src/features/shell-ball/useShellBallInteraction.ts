@@ -1,4 +1,4 @@
-import type { AgentInputSubmitParams } from "@cialloclaw/protocol";
+import type { AgentInputSubmitParams, AgentInputSubmitResult, AgentTaskStartParams, DeliveryResult, RequestMeta } from "@cialloclaw/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import { submitTextInput, createTextInputSubmitParams } from "../../services/agentInputService";
@@ -44,6 +44,45 @@ export type ShellBallInputSubmitResult = NonNullable<Awaited<ReturnType<typeof s
   } | null;
 };
 
+type ShellBallPostSubmitReset = {
+  nextInputValue: string;
+  nextPendingFiles: string[];
+  nextFocused: false;
+};
+
+function createShellBallRequestMeta(): RequestMeta {
+  const now = new Date().toISOString();
+  const traceId = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `trace_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  return {
+    trace_id: traceId,
+    client_time: now,
+  };
+}
+
+function normalizeShellBallPendingFiles(filePaths: string[]) {
+  const seenPaths = new Set<string>();
+  const normalizedPaths: string[] = [];
+
+  for (const filePath of filePaths) {
+    const trimmedPath = filePath.trim();
+    if (trimmedPath === "" || seenPaths.has(trimmedPath)) {
+      continue;
+    }
+
+    seenPaths.add(trimmedPath);
+    normalizedPaths.push(trimmedPath);
+  }
+
+  return normalizedPaths;
+}
+
+function mergeShellBallPendingFiles(currentPaths: string[], incomingPaths: string[]) {
+  return normalizeShellBallPendingFiles([...currentPaths, ...incomingPaths]);
+}
+
 export function createShellBallInputSubmitParams(input: {
   text: string;
   trigger: "voice_commit" | "hover_text_input";
@@ -61,6 +100,33 @@ export function createShellBallInputSubmitParams(input: {
   });
 }
 
+export function createShellBallTaskStartParams(input: {
+  text: string;
+  files: string[];
+}): AgentTaskStartParams | null {
+  const normalizedFiles = normalizeShellBallPendingFiles(input.files);
+  if (normalizedFiles.length === 0) {
+    return null;
+  }
+
+  const normalizedText = input.text.trim();
+  const requestMeta = createShellBallRequestMeta();
+
+  return {
+    request_meta: requestMeta,
+    source: "floating_ball",
+    trigger: "file_drop",
+    input: {
+      type: "file",
+      text: normalizedText === "" ? undefined : normalizedText,
+      files: normalizedFiles,
+    },
+    delivery: {
+      preferred: "bubble",
+    },
+  };
+}
+
 async function submitShellBallInput(input: {
   text: string;
   trigger: "voice_commit" | "hover_text_input";
@@ -76,6 +142,23 @@ async function submitShellBallInput(input: {
       preferred_delivery: "bubble",
     },
   });
+}
+
+async function startShellBallFileTask(input: {
+  text: string;
+  files: string[];
+}): Promise<ShellBallInputSubmitResult | null> {
+  const params = createShellBallTaskStartParams(input);
+
+  if (params === null) {
+    return null;
+  }
+
+  const importRpcMethods = new Function("return import('../../rpc/methods')") as () => Promise<{
+    startTask: (request: AgentTaskStartParams) => Promise<ShellBallInputSubmitResult>;
+  }>;
+  const rpcMethods = await importRpcMethods();
+  return rpcMethods.startTask(params);
 }
 
 export function mapShellBallInteractionConsumedEventToFlag(event: ShellBallInteractionConsumedEvent) {
@@ -134,11 +217,28 @@ export function getShellBallPostSubmitInputReset(inputValue: string) {
   };
 }
 
+function getShellBallPostSubmitReset(input: {
+  inputValue: string;
+  pendingFiles: string[];
+}): ShellBallPostSubmitReset | null {
+  if (input.inputValue.trim() === "" && input.pendingFiles.length === 0) {
+    return null;
+  }
+
+  return {
+    nextInputValue: "",
+    nextPendingFiles: [],
+    nextFocused: false,
+  };
+}
+
 export function getShellBallPressCancelEvent(state: ShellBallVisualState): Extract<ShellBallInteractionEvent, "voice_cancel"> | null {
   return state === "voice_listening" ? "voice_cancel" : null;
 }
 
-export function resolveShellBallVoiceReleaseEvent(preview: ShellBallVoicePreview): Extract<ShellBallInteractionEvent, "voice_cancel" | "voice_finish"> {
+export function resolveShellBallVoiceReleaseEvent(
+  preview: ShellBallVoicePreview,
+): Extract<ShellBallInteractionEvent, "voice_cancel" | "voice_finish"> {
   return preview === "cancel" ? "voice_cancel" : "voice_finish";
 }
 
@@ -183,6 +283,7 @@ export function useShellBallInteraction() {
   const visualState = useShellBallStore((state) => state.visualState);
   const setVisualState = useShellBallStore((state) => state.setVisualState);
   const [inputValue, setInputValue] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<string[]>([]);
   const [finalizedSpeechPayload, setFinalizedSpeechPayload] = useState<string | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
   const [voicePreview, setVoicePreview] = useState<ShellBallVoicePreview>(null);
@@ -266,7 +367,7 @@ export function useShellBallInteraction() {
     return shouldRetainShellBallHoverInput({
       regionActive: regionActiveRef.current,
       inputFocused: inputFocusedRef.current,
-      hasDraft: inputValue.trim() !== "",
+      hasDraft: inputValue.trim() !== "" || pendingFiles.length > 0,
     });
   }
 
@@ -471,25 +572,35 @@ export function useShellBallInteraction() {
 
     dispatch("pointer_leave_region", {
       regionActive: false,
-      hoverRetained: false,
+      hoverRetained: getHoverRetained(),
     });
   }
 
   async function handleSubmitText() {
     const currentDraft = inputValue.trim();
-    const reset = getShellBallPostSubmitInputReset(inputValue);
+    const currentPendingFiles = normalizeShellBallPendingFiles(pendingFiles);
+    const reset = getShellBallPostSubmitReset({
+      inputValue,
+      pendingFiles: currentPendingFiles,
+    });
     if (reset === null) {
       return null;
     }
 
     try {
-      const result = await submitShellBallInput({
-        text: currentDraft,
-        trigger: "hover_text_input",
-        inputMode: "text",
-      });
+      const result = currentPendingFiles.length > 0
+        ? await startShellBallFileTask({
+            text: currentDraft,
+            files: currentPendingFiles,
+          })
+        : await submitShellBallInput({
+            text: currentDraft,
+            trigger: "hover_text_input",
+            inputMode: "text",
+          });
       dispatch("submit_text");
       setInputValue(reset.nextInputValue);
+      setPendingFiles(reset.nextPendingFiles);
       inputFocusedRef.current = reset.nextFocused;
       setInputFocused(reset.nextFocused);
       return result;
@@ -500,7 +611,26 @@ export function useShellBallInteraction() {
   }
 
   function handleAttachFile() {
-    dispatch("attach_file");
+    handleInputFocusRequest();
+  }
+
+  function handleDroppedFiles(filePaths: string[]) {
+    const normalizedFiles = normalizeShellBallPendingFiles(filePaths);
+    if (normalizedFiles.length === 0) {
+      return;
+    }
+
+    setPendingFiles((currentPaths) => mergeShellBallPendingFiles(currentPaths, normalizedFiles));
+    handleInputFocusRequest();
+  }
+
+  function handleRemovePendingFile(path: string) {
+    const trimmedPath = path.trim();
+    if (trimmedPath === "") {
+      return;
+    }
+
+    setPendingFiles((currentPaths) => currentPaths.filter((currentPath) => currentPath !== trimmedPath));
   }
 
   function handlePressStart(event: PointerEvent<HTMLButtonElement>) {
@@ -653,6 +783,12 @@ export function useShellBallInteraction() {
     }
 
     if (!focused) {
+      if (!regionActiveRef.current) {
+        controllerRef.current?.forceState("idle", { regionActive: false, hoverRetained: false });
+        syncVisualState();
+        return;
+      }
+
       syncHoverRetention();
     }
   }
@@ -679,8 +815,24 @@ export function useShellBallInteraction() {
   }
 
   useEffect(() => {
-    syncHoverRetention();
-  }, [inputValue]);
+    if (regionActiveRef.current) {
+      return;
+    }
+
+    if (controllerRef.current?.getState() !== "hover_input") {
+      return;
+    }
+
+    controllerRef.current?.dispatch("pointer_leave_region", {
+      regionActive: false,
+      hoverRetained: shouldRetainShellBallHoverInput({
+        regionActive: false,
+        inputFocused: inputFocusedRef.current,
+        hasDraft: inputValue.trim() !== "" || pendingFiles.length > 0,
+      }),
+    });
+    setVisualStateRef.current(controllerRef.current?.getState() ?? visualState);
+  }, [inputValue, pendingFiles, visualState]);
 
   useEffect(() => {
     if (controllerRef.current === null) {
@@ -696,8 +848,31 @@ export function useShellBallInteraction() {
 
   useEffect(() => {
     return () => {
-      clearLongPressTimer();
-      disposeVoiceRecognition();
+      if (longPressHandleRef.current !== null) {
+        globalThis.clearTimeout(longPressHandleRef.current);
+        longPressHandleRef.current = null;
+      }
+      if (longPressProgressHandleRef.current !== null) {
+        cancelAnimationFrame(longPressProgressHandleRef.current);
+        longPressProgressHandleRef.current = null;
+      }
+      longPressStartAtRef.current = null;
+      setVoiceHoldProgress(0);
+
+      recognitionSessionIdRef.current += 1;
+      recognitionStopReasonRef.current = "none";
+      voiceTranscriptRef.current = "";
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      if (recognition !== null) {
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        try {
+          recognition.abort();
+        } catch {}
+      }
+
       pressStartXRef.current = null;
       pressStartYRef.current = null;
       voicePreviewRef.current = null;
@@ -708,6 +883,7 @@ export function useShellBallInteraction() {
   return {
     visualState,
     inputValue,
+    pendingFiles,
     setInputValue,
     finalizedSpeechPayload,
     acknowledgeFinalizedSpeechPayload,
@@ -726,6 +902,8 @@ export function useShellBallInteraction() {
     handleRegionLeave,
     handleSubmitText,
     handleAttachFile,
+    handleDroppedFiles,
+    handleRemovePendingFile,
     handlePressStart,
     handlePressMove,
     handlePressEnd,
