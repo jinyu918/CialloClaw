@@ -603,8 +603,9 @@ export function SecurityApp() {
         approvalSnapshot,
         restorePointSnapshot,
         routeDrivenDetailKey,
+        subscribedTaskId,
       }),
-    [activeDetailKey, approvalSnapshot, restorePointSnapshot, routeDrivenDetailKey],
+    [activeDetailKey, approvalSnapshot, restorePointSnapshot, routeDrivenDetailKey, subscribedTaskId],
   );
 
   const queueRpcRefresh = useCallback(() => {
@@ -690,13 +691,15 @@ export function SecurityApp() {
     if (
       routeDrivenDetailKey !== activeSnapshotState.routeDrivenDetailKey ||
       approvalSnapshot !== activeSnapshotState.approvalSnapshot ||
-      restorePointSnapshot !== activeSnapshotState.restorePointSnapshot
+      restorePointSnapshot !== activeSnapshotState.restorePointSnapshot ||
+      subscribedTaskId !== activeSnapshotState.subscribedTaskId
     ) {
       setRouteDrivenDetailKey(activeSnapshotState.routeDrivenDetailKey as SecurityCardKey | null);
       setApprovalSnapshot(activeSnapshotState.approvalSnapshot);
       setRestorePointSnapshot(activeSnapshotState.restorePointSnapshot);
+      setSubscribedTaskId(activeSnapshotState.subscribedTaskId);
     }
-  }, [activeSnapshotState, approvalSnapshot, restorePointSnapshot, routeDrivenDetailKey]);
+  }, [activeSnapshotState, approvalSnapshot, restorePointSnapshot, routeDrivenDetailKey, subscribedTaskId]);
 
   useEffect(() => {
     if (

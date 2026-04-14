@@ -211,17 +211,20 @@ export function resolveDashboardSafetySnapshotLifecycle({
   routeDrivenDetailKey,
   approvalSnapshot,
   restorePointSnapshot,
+  subscribedTaskId,
 }: {
   activeDetailKey: string | null;
   routeDrivenDetailKey: string | null;
   approvalSnapshot: ApprovalRequest | null;
   restorePointSnapshot: RecoveryPoint | null;
+  subscribedTaskId: string | null;
 }) {
   if (routeDrivenDetailKey && activeDetailKey === routeDrivenDetailKey) {
     return {
       approvalSnapshot,
       restorePointSnapshot,
       routeDrivenDetailKey,
+      subscribedTaskId,
     };
   }
 
@@ -229,5 +232,6 @@ export function resolveDashboardSafetySnapshotLifecycle({
     approvalSnapshot: null,
     restorePointSnapshot: null,
     routeDrivenDetailKey: null,
+    subscribedTaskId: null,
   };
 }

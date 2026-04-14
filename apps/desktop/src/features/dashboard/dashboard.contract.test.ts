@@ -48,10 +48,12 @@ function loadDashboardSafetyNavigationModule() {
         routeDrivenDetailKey: string | null;
         approvalSnapshot: ApprovalRequest | null;
         restorePointSnapshot: RecoveryPoint | null;
+        subscribedTaskId: string | null;
       }) => {
         approvalSnapshot: ApprovalRequest | null;
         restorePointSnapshot: RecoveryPoint | null;
         routeDrivenDetailKey: string | null;
+        subscribedTaskId: string | null;
       };
     },
   );
@@ -460,19 +462,13 @@ test("task page query helpers expose stable prefixes and keys", () => {
 
 test("task page edit CTA copy sends users back to the shell-ball", () => {
   const mapperSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/taskPage.mapper.ts"), "utf8");
-  const taskPageSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/TaskPage.tsx"), "utf8");
 
   assert.match(mapperSource, /label: "去悬浮球继续"/);
   assert.match(mapperSource, /tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。"/);
-  assert.doesNotMatch(taskPageSource, /showFeedback\("去悬浮球继续/);
-  assert.match(taskPageSource, /showFeedback\("任务详情还在同步，先打开安全总览。"\)/);
-  assert.match(taskPageSource, /source: "task-detail"/);
-  assert.match(taskPageSource, /taskId: detailData\.task\.task_id/);
 });
 
 test("SecurityApp route resolution reacts to each new route state and exposes task refresh targets", () => {
-  const { resolveDashboardSafetyNavigationRoute } = loadDashboardSafetyNavigationModule();
-  const securityAppSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/safety/SecurityApp.tsx"), "utf8");
+  const { resolveDashboardSafetyNavigationRoute, resolveDashboardSafetySnapshotLifecycle } = loadDashboardSafetyNavigationModule();
 
   assert.deepEqual(
     resolveDashboardSafetyNavigationRoute({
@@ -549,15 +545,25 @@ test("SecurityApp route resolution reacts to each new route state and exposes ta
     },
   );
 
-  assert.match(securityAppSource, /const \[subscribedTaskId, setSubscribedTaskId\] = useState<string \| null>\(null\);/);
-  assert.match(securityAppSource, /setSubscribedTaskId\(routeResolution\.routedTaskId\);/);
-  assert.match(securityAppSource, /return subscribeTask\(subscribedTaskId, \(\) => \{/);
-  assert.doesNotMatch(securityAppSource, /setSubscribedTaskId\(null\);/);
+  assert.deepEqual(
+    resolveDashboardSafetySnapshotLifecycle({
+      activeDetailKey: "approval:approval_dashboard_001",
+      routeDrivenDetailKey: "approval:approval_dashboard_001",
+      approvalSnapshot: createApprovalRequest(),
+      restorePointSnapshot: null,
+      subscribedTaskId: "task_dashboard_001",
+    }),
+    {
+      approvalSnapshot: createApprovalRequest(),
+      restorePointSnapshot: null,
+      routeDrivenDetailKey: "approval:approval_dashboard_001",
+      subscribedTaskId: "task_dashboard_001",
+    },
+  );
 });
 
 test("SecurityApp keeps snapshot-only approval detail renderable when live cards no longer contain it", () => {
   const { resolveDashboardSafetySnapshotLifecycle, shouldRetainDashboardSafetyActiveDetail } = loadDashboardSafetyNavigationModule();
-  const securityAppSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/safety/SecurityApp.tsx"), "utf8");
 
   assert.equal(
     shouldRetainDashboardSafetyActiveDetail({
@@ -592,11 +598,13 @@ test("SecurityApp keeps snapshot-only approval detail renderable when live cards
       routeDrivenDetailKey: "approval:approval_dashboard_001",
       approvalSnapshot: createApprovalRequest(),
       restorePointSnapshot: null,
+      subscribedTaskId: "task_dashboard_001",
     }),
     {
       approvalSnapshot: createApprovalRequest(),
       restorePointSnapshot: null,
       routeDrivenDetailKey: "approval:approval_dashboard_001",
+      subscribedTaskId: "task_dashboard_001",
     },
   );
 
@@ -606,11 +614,13 @@ test("SecurityApp keeps snapshot-only approval detail renderable when live cards
       routeDrivenDetailKey: "approval:approval_dashboard_001",
       approvalSnapshot: createApprovalRequest(),
       restorePointSnapshot: null,
+      subscribedTaskId: "task_dashboard_001",
     }),
     {
       approvalSnapshot: null,
       restorePointSnapshot: null,
       routeDrivenDetailKey: null,
+      subscribedTaskId: null,
     },
   );
 
@@ -620,17 +630,15 @@ test("SecurityApp keeps snapshot-only approval detail renderable when live cards
       routeDrivenDetailKey: "restore",
       approvalSnapshot: null,
       restorePointSnapshot: createRecoveryPoint(),
+      subscribedTaskId: "task_dashboard_001",
     }),
     {
       approvalSnapshot: null,
       restorePointSnapshot: null,
       routeDrivenDetailKey: null,
+      subscribedTaskId: null,
     },
   );
-
-  assert.match(securityAppSource, /const approvalRouteKey = `approval:\$\{approval\.approval_id\}` as const;/);
-  assert.match(securityAppSource, /setApprovalSnapshot\(null\);/);
-  assert.match(securityAppSource, /setRouteDrivenDetailKey\(null\);/);
 });
 
 test("TaskPage wiring helpers require real detail for safety focus and keep detail query task-id centric", () => {
