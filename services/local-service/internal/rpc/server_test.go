@@ -346,6 +346,9 @@ func TestDispatchReturnsSecurityRestoreApplyResult(t *testing.T) {
 	if _, ok := data["applied"].(bool); !ok {
 		t.Fatalf("expected applied flag in restore result, got %+v", data)
 	}
+	if data["task"].(map[string]any)["status"] != "waiting_auth" {
+		t.Fatalf("expected restore apply rpc to enter waiting_auth, got %+v", data)
+	}
 	if data["recovery_point"].(map[string]any)["recovery_point_id"] != "rp_001" {
 		t.Fatalf("expected rp_001 restore result, got %+v", data)
 	}
