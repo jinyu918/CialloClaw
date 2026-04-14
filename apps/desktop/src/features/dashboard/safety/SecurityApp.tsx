@@ -727,6 +727,7 @@ export function SecurityApp() {
     });
 
     if (!routeResolution.shouldClearRouteState) {
+      setRoutedTaskId(null);
       return;
     }
 
@@ -900,8 +901,9 @@ export function SecurityApp() {
       setFeedback(
         `${result.response.bubble_message?.text ?? "已更新安全审批状态。"} · ${result.response.authorization_record.decision} · remember_rule ${result.response.authorization_record.remember_rule ? "on" : "off"} · task ${result.response.task.task_id} / ${result.response.task.status} · ${formatImpactScopeSummary(result.response.impact_scope)}`,
       );
-      void queryClient.invalidateQueries({ queryKey: taskRefreshPlan.bucketQueryPrefix });
-      void queryClient.invalidateQueries({ queryKey: taskRefreshPlan.detailQueryPrefix });
+      for (const queryKey of taskRefreshPlan.invalidatePrefixes) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
 
       if (moduleData.source === "rpc") {
         queueRpcRefresh();

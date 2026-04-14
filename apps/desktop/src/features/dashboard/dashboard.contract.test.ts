@@ -443,14 +443,33 @@ test("task page query helpers expose stable prefixes and keys", () => {
   assert.deepEqual(buildDashboardTaskBucketQueryKey("rpc", "unfinished", 12), ["dashboard", "tasks", "bucket", "rpc", "unfinished", 12]);
   assert.deepEqual(buildDashboardTaskDetailQueryKey("mock", "task_dashboard_001"), ["dashboard", "tasks", "detail", "mock", "task_dashboard_001"]);
   assert.deepEqual(getDashboardTaskSecurityRefreshPlan("rpc"), {
-    bucketQueryPrefix: ["dashboard", "tasks", "bucket", "rpc"],
-    detailQueryPrefix: ["dashboard", "tasks", "detail", "rpc"],
-    refetchOnMount: "always",
+    invalidatePrefixes: [
+      ["dashboard", "tasks", "bucket"],
+      ["dashboard", "tasks", "detail"],
+    ],
+    refetchOnMount: true,
   });
+  assert.deepEqual(getDashboardTaskSecurityRefreshPlan("mock"), {
+    invalidatePrefixes: [
+      ["dashboard", "tasks", "bucket"],
+      ["dashboard", "tasks", "detail"],
+    ],
+    refetchOnMount: false,
+  });
+});
+
+test("task page edit CTA copy sends users back to the shell-ball", () => {
+  const mapperSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/taskPage.mapper.ts"), "utf8");
+  const taskPageSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/TaskPage.tsx"), "utf8");
+
+  assert.match(mapperSource, /label: "去悬浮球继续"/);
+  assert.match(mapperSource, /tooltip: "如需修改或补充这条任务，请回到悬浮球继续。"/);
+  assert.doesNotMatch(taskPageSource, /showFeedback\("去悬浮球继续/);
 });
 
 test("SecurityApp route resolution reacts to each new route state and exposes task refresh targets", () => {
   const { resolveDashboardSafetyNavigationRoute } = loadDashboardSafetyNavigationModule();
+  const securityAppSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/safety/SecurityApp.tsx"), "utf8");
 
   assert.deepEqual(
     resolveDashboardSafetyNavigationRoute({
@@ -526,6 +545,8 @@ test("SecurityApp route resolution reacts to each new route state and exposes ta
       shouldClearRouteState: false,
     },
   );
+
+  assert.match(securityAppSource, /setRoutedTaskId\(null\);/);
 });
 
 test("SecurityApp keeps snapshot-only approval detail renderable when live cards no longer contain it", () => {

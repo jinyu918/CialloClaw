@@ -11,9 +11,8 @@ export function buildDashboardTaskDetailQueryKey(dataMode: "rpc" | "mock", taskI
 
 export function getDashboardTaskSecurityRefreshPlan(dataMode: "rpc" | "mock") {
   return {
-    bucketQueryPrefix: [...dashboardTaskBucketQueryPrefix, dataMode] as const,
-    detailQueryPrefix: [...dashboardTaskDetailQueryPrefix, dataMode] as const,
-    refetchOnMount: "always" as const,
+    invalidatePrefixes: [dashboardTaskBucketQueryPrefix, dashboardTaskDetailQueryPrefix] as const,
+    refetchOnMount: dataMode === "rpc",
   };
 }
 

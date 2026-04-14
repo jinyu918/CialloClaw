@@ -144,8 +144,9 @@ export function TaskPage() {
     }
 
     return subscribeTask(selectedTaskId, () => {
-      void queryClient.invalidateQueries({ queryKey: securityRefreshPlan.bucketQueryPrefix });
-      void queryClient.invalidateQueries({ queryKey: buildDashboardTaskDetailQueryKey(dataMode, selectedTaskId) });
+      for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
     });
   }, [dataMode, queryClient, securityRefreshPlan, selectedTaskId]);
 
@@ -169,9 +170,8 @@ export function TaskPage() {
     mutationFn: ({ action, taskId }: { action: "pause" | "resume" | "cancel" | "restart"; taskId: string }) => controlTaskByAction(taskId, action, dataMode),
     onSuccess: (outcome) => {
       showFeedback(outcome.result.bubble_message?.text ?? "任务操作已执行。");
-      void queryClient.invalidateQueries({ queryKey: securityRefreshPlan.bucketQueryPrefix });
-      if (selectedTaskId) {
-        void queryClient.invalidateQueries({ queryKey: buildDashboardTaskDetailQueryKey(dataMode, selectedTaskId) });
+      for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
+        void queryClient.invalidateQueries({ queryKey });
       }
     },
     onError: () => {
@@ -207,7 +207,6 @@ export function TaskPage() {
     }
 
     if (action === "edit") {
-      showFeedback("去悬浮球继续；如需修改这条任务，请回到悬浮球继续补充或修正。");
       return;
     }
 
