@@ -612,6 +612,22 @@ func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, e
 	unfinishedTasks, _ := s.runEngine.ListTasks("unfinished", "updated_at", "desc", 0, 0)
 	finishedTasks, _ := s.runEngine.ListTasks("finished", "finished_at", "desc", 0, 0)
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
+	if len(unfinishedTasks) == 0 {
+		if persistedTasks, _, ok := s.listTasksFromStorage("unfinished", "updated_at", "desc", 0, 0); ok {
+			unfinishedTasks = persistedTasks
+		}
+	}
+	if len(finishedTasks) == 0 {
+		if persistedTasks, _, ok := s.listTasksFromStorage("finished", "finished_at", "desc", 0, 0); ok {
+			finishedTasks = persistedTasks
+		}
+	}
+	if pendingTotal == 0 {
+		pendingTotal = countPendingApprovalTasks(unfinishedTasks)
+	}
+	if len(pendingApprovals) == 0 && pendingTotal > 0 {
+		pendingApprovals = pendingApprovalsFromTasks(unfinishedTasks)
+	}
 	focusMode := boolValue(params, "focus_mode", false)
 	requestedIncludes := stringSliceValue(params["include"])
 	includeAll := len(requestedIncludes) == 0
@@ -698,6 +714,24 @@ func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, e
 	}
 
 	return map[string]any{"overview": overview}, nil
+}
+
+func pendingApprovalsFromTasks(tasks []runengine.TaskRecord) []map[string]any {
+	items := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Status != "waiting_auth" || len(task.ApprovalRequest) == 0 {
+			continue
+		}
+		item := cloneMap(task.ApprovalRequest)
+		if stringValue(item, "task_id", "") == "" {
+			item["task_id"] = task.TaskID
+		}
+		if stringValue(item, "risk_level", "") == "" {
+			item["risk_level"] = task.RiskLevel
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 // DashboardModuleGet 处理当前模块的相关逻辑。
