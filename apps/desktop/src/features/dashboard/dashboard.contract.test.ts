@@ -463,6 +463,39 @@ test("task detail normalization fails fast on invalid artifacts, mirror referenc
       () =>
         service.normalizeTaskDetailResult(
           createDetail({
+            task: { task_id: "task_dashboard_001" } as never,
+          }),
+        ),
+      /task information|task payload/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult({
+          ...createDetail(),
+          approval_request: undefined as never,
+        }),
+      /approval_request/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            security_summary: {
+              pending_authorizations: 1,
+              risk_level: "yellow",
+              security_status: "pending_confirmation",
+            } as never,
+          }),
+        ),
+      /security summary|restore point/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
             artifacts: [{ artifact_id: "artifact_1" } as never],
           }),
         ),

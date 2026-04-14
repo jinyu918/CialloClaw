@@ -1,7 +1,7 @@
 import type { AgentTaskDetailGetResult, AgentTaskControlParams, RequestMeta, Task, TaskControlAction, TaskListGroup } from "@cialloclaw/protocol";
 import { RISK_LEVELS, SECURITY_STATUSES, TASK_STEP_STATUSES } from "@cialloclaw/protocol";
 import { controlTask, getTaskDetail, listTasks } from "@/rpc/methods";
-import { isActiveApprovalRequest, isApprovalRequest, isArtifact, isBinaryPendingAuthorizations, isMirrorReference, isRecoveryPoint, isTaskStep, normalizeArray, normalizeNullable } from "../shared/dashboardContractValidators";
+import { isActiveApprovalRequest, isApprovalRequest, isArtifact, isBinaryPendingAuthorizations, isMirrorReference, isRecoveryPoint, isTask, isTaskStep, normalizeArray, normalizeNullable } from "../shared/dashboardContractValidators";
 import { getMockTaskBuckets, getMockTaskDetail, getTaskExperience, runMockTaskControl } from "./taskPage.mock";
 import type { TaskBucketPageData, TaskBucketsData, TaskControlOutcome, TaskDetailData, TaskExperience, TaskListItem } from "./taskPage.types";
 
@@ -108,7 +108,7 @@ function hasValidSecuritySummary(detail: AgentTaskDetailGetResult): boolean {
 }
 
 export function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): AgentTaskDetailGetResult {
-  if (!detail || !detail.task || !detail.task.task_id) {
+  if (!detail || !isTask(detail.task)) {
     throw new Error("task detail payload is missing task information");
   }
 
