@@ -444,6 +444,23 @@ func (s *Service) resolveToolExecution(request Request, deliveryResult map[strin
 			return "", nil, false
 		}
 		return intentName, input, true
+	case "page_read":
+		urlValue := stringValue(args, "url", "")
+		if urlValue == "" {
+			return "", nil, false
+		}
+		return intentName, map[string]any{"url": urlValue}, true
+	case "page_search":
+		urlValue := stringValue(args, "url", "")
+		queryValue := stringValue(args, "query", "")
+		if urlValue == "" || queryValue == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"url": urlValue, "query": queryValue}
+		if limit, ok := args["limit"]; ok {
+			input["limit"] = limit
+		}
+		return intentName, input, true
 	default:
 		return "", nil, false
 	}
@@ -684,6 +701,11 @@ func toolBubbleText(toolName string, result *tools.ToolExecutionResult) string {
 	}
 	if preview := stringValue(result.SummaryOutput, "stdout_preview", ""); preview != "" {
 		return preview
+	}
+	if query := stringValue(result.SummaryOutput, "query", ""); query != "" {
+		if count, ok := result.SummaryOutput["match_count"]; ok {
+			return fmt.Sprintf("页面搜索完成，关键词 %q 共匹配 %v 处。", query, count)
+		}
 	}
 	if count, ok := result.SummaryOutput["entry_count"]; ok {
 		return fmt.Sprintf("%s 执行完成，当前目录条目数：%v。", toolName, count)
@@ -929,7 +951,7 @@ func truncateBubbleText(outputText string) string {
 	if trimmed == "" {
 		return "结果已生成。"
 	}
-	return trimmed
+	return truncateText(trimmed, 480)
 }
 
 func deliveryPayloadPath(deliveryResult map[string]any) string {
@@ -1016,11 +1038,10 @@ func normalizeWhitespace(inputText string) string {
 }
 
 func truncateText(inputText string, maxLength int) string {
-	runes := []rune(inputText)
-	if maxLength <= 0 || len(runes) <= maxLength {
+	if maxLength <= 0 || len(inputText) <= maxLength {
 		return inputText
 	}
-	return string(runes[:maxLength]) + "..."
+	return inputText[:maxLength] + "..."
 }
 
 func mapValue(values map[string]any, key string) map[string]any {
@@ -1177,6 +1198,21 @@ func (s *Service) resolveGovernanceToolExecution(request Request) (string, map[s
 				if len(input) > 0 {
 					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
 				}
+			case "page_read":
+				urlValue := stringValue(args, "url", "")
+				if urlValue != "" {
+					return intentName, map[string]any{"url": urlValue}, s.toolExecutionContext(s.workspace, request), true, nil
+				}
+			case "page_search":
+				urlValue := stringValue(args, "url", "")
+				queryValue := stringValue(args, "query", "")
+				if urlValue != "" && queryValue != "" {
+					input := map[string]any{"url": urlValue, "query": queryValue}
+					if limit, ok := args["limit"]; ok {
+						input["limit"] = limit
+					}
+					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
+				}
 			}
 		}
 	}
@@ -1252,6 +1288,8 @@ func governanceTargetObject(toolName string, toolInput map[string]any, execCtx *
 		return stringValue(toolInput, "path", "")
 	case "exec_command":
 		return firstNonEmpty(stringValue(toolInput, "working_dir", ""), execCtx.WorkspacePath)
+	case "page_read", "page_search":
+		return stringValue(toolInput, "url", "")
 	default:
 		return stringValue(toolInput, "path", "")
 	}
