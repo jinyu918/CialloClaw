@@ -1,4 +1,5 @@
 import type {
+  Artifact,
   AgentTaskControlResult,
   AgentTaskDetailGetResult,
   JsonRpcPage,
@@ -66,6 +67,11 @@ export type TaskListItem = {
 
 export type TaskBucketPageData = {
   items: TaskListItem[];
+  page: JsonRpcPage;
+};
+
+export type TaskArtifactPageData = {
+  items: Artifact[];
   page: JsonRpcPage;
 };
 

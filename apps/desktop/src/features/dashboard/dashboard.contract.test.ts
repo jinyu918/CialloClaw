@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import type {
+  AgentDeliveryOpenResult,
+  AgentTaskArtifactListResult,
+  AgentTaskArtifactOpenResult,
   AgentTaskControlParams,
   AgentTaskControlResult,
   AgentTaskDetailGetParams,
@@ -74,6 +77,23 @@ function loadTaskPageQueryModule() {
       shouldEnableDashboardTaskDetailQuery: (selectedTaskId: string | null, detailOpen: boolean) => boolean;
       dashboardTaskBucketQueryPrefix: unknown;
       dashboardTaskDetailQueryPrefix: unknown;
+    },
+  );
+}
+
+function loadTaskOutputServiceModule() {
+  return withDesktopAliasRuntime((requireFn) =>
+    requireFn(resolve(desktopRoot, ".cache/dashboard-tests/features/dashboard/tasks/taskOutput.service.js")) as {
+      loadTaskArtifactPage: (taskId: string, source: "rpc" | "mock") => Promise<AgentTaskArtifactListResult>;
+      openTaskArtifactForTask: (taskId: string, artifactId: string, source: "rpc" | "mock") => Promise<AgentTaskArtifactOpenResult>;
+      openTaskDeliveryForTask: (taskId: string, artifactId: string | undefined, source: "rpc" | "mock") => Promise<AgentDeliveryOpenResult>;
+      resolveTaskOpenExecutionPlan: (result: AgentTaskArtifactOpenResult | AgentDeliveryOpenResult) => {
+        mode: "task_detail" | "open_url" | "copy_path";
+        taskId: string | null;
+        path: string | null;
+        url: string | null;
+        feedback: string;
+      };
     },
   );
 }
@@ -157,8 +177,17 @@ function withDesktopAliasRuntime<T>(callback: (requireFn: NodeRequire) => T): T 
         getTaskDetail() {
           throw new Error("getTaskDetail should not run in dashboard contract tests");
         },
+        listTaskArtifacts() {
+          throw new Error("listTaskArtifacts should not run in dashboard contract tests");
+        },
         listTasks() {
           throw new Error("listTasks should not run in dashboard contract tests");
+        },
+        openDelivery() {
+          throw new Error("openDelivery should not run in dashboard contract tests");
+        },
+        openTaskArtifact() {
+          throw new Error("openTaskArtifact should not run in dashboard contract tests");
         },
       };
     }
@@ -806,6 +835,119 @@ test("TaskPage wiring helpers require real detail for safety focus and keep deta
   assert.equal(shouldEnableDashboardTaskDetailQuery("task_dashboard_001", true), true);
   assert.equal(shouldEnableDashboardTaskDetailQuery("task_dashboard_001", false), false);
   assert.equal(shouldEnableDashboardTaskDetailQuery(null, true), false);
+});
+
+test("task output helpers normalize open actions from existing rpc contracts", async () => {
+  const outputService = loadTaskOutputServiceModule();
+
+  assert.deepEqual(
+    outputService.resolveTaskOpenExecutionPlan({
+      open_action: "task_detail",
+      resolved_payload: { path: null, url: null, task_id: "task_dashboard_001" },
+      delivery_result: {
+        type: "task_detail",
+        title: "Task detail",
+        preview_text: "回到任务详情",
+        payload: { path: null, url: null, task_id: "task_dashboard_001" },
+      },
+    }),
+    {
+      mode: "task_detail",
+      taskId: "task_dashboard_001",
+      path: null,
+      url: null,
+      feedback: "已定位到任务详情。",
+    },
+  );
+
+  assert.deepEqual(
+    outputService.resolveTaskOpenExecutionPlan({
+      open_action: "result_page",
+      resolved_payload: { path: null, url: "https://example.test/result", task_id: "task_dashboard_001" },
+      delivery_result: {
+        type: "result_page",
+        title: "Result page",
+        preview_text: "打开结果页",
+        payload: { path: null, url: "https://example.test/result", task_id: "task_dashboard_001" },
+      },
+    }),
+    {
+      mode: "open_url",
+      taskId: "task_dashboard_001",
+      path: null,
+      url: "https://example.test/result",
+      feedback: "已打开结果页。",
+    },
+  );
+
+  assert.deepEqual(
+    outputService.resolveTaskOpenExecutionPlan({
+      artifact: {
+        artifact_id: "artifact_dashboard_001",
+        artifact_type: "workspace_document",
+        mime_type: "text/tsx",
+        path: "apps/desktop/src/features/dashboard/tasks/TaskPage.tsx",
+        task_id: "task_dashboard_001",
+        title: "TaskPage.tsx",
+      },
+      open_action: "open_file",
+      resolved_payload: { path: "apps/desktop/src/features/dashboard/tasks/TaskPage.tsx", url: null, task_id: "task_dashboard_001" },
+      delivery_result: {
+        type: "open_file",
+        title: "TaskPage.tsx",
+        preview_text: "打开文件",
+        payload: { path: "apps/desktop/src/features/dashboard/tasks/TaskPage.tsx", url: null, task_id: "task_dashboard_001" },
+      },
+    }),
+    {
+      mode: "copy_path",
+      taskId: "task_dashboard_001",
+      path: "apps/desktop/src/features/dashboard/tasks/TaskPage.tsx",
+      url: null,
+      feedback: "当前环境暂不支持直接打开，已准备复制路径。",
+    },
+  );
+});
+
+test("task output service exposes artifact list and open flows in mock mode", async () => {
+  const outputService = loadTaskOutputServiceModule();
+
+  const artifactPage = await outputService.loadTaskArtifactPage("task_done_001", "mock");
+  assert.ok(artifactPage.items.length > 0);
+  assert.equal(artifactPage.page.offset, 0);
+
+  const artifactOpen = await outputService.openTaskArtifactForTask("task_done_001", "artifact_done_003", "mock");
+  assert.equal(artifactOpen.open_action, "reveal_in_folder");
+
+  const deliveryOpen = await outputService.openTaskDeliveryForTask("task_done_001", undefined, "mock");
+  assert.equal(deliveryOpen.delivery_result.payload.task_id, "task_done_001");
+});
+
+test("task page adopts rpc output helpers instead of placeholder artifact copy", () => {
+  const taskPageSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/TaskPage.tsx"), "utf8");
+  const taskDetailSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/components/TaskDetailPanel.tsx"), "utf8");
+  const filesSheetSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/components/TaskFilesSheet.tsx"), "utf8");
+
+  assert.match(taskPageSource, /loadTaskArtifactPage/);
+  assert.match(taskPageSource, /openTaskArtifactForTask/);
+  assert.match(taskPageSource, /openTaskDeliveryForTask/);
+  assert.match(taskPageSource, /TaskFilesSheet/);
+
+  assert.doesNotMatch(taskDetailSource, /当前协议尚未提供稳定的 artifact\.open 能力/);
+  assert.match(taskDetailSource, /onOpenArtifact/);
+  assert.match(taskDetailSource, /onOpenLatestDelivery/);
+
+  assert.match(filesSheetSource, /onOpenArtifact/);
+  assert.match(filesSheetSource, /artifactItems/);
+});
+
+test("task fallback copy no longer claims backend output actions are missing", () => {
+  const taskServiceSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/taskPage.service.ts"), "utf8");
+  const taskTabsSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/components/TaskTabsPanel.tsx"), "utf8");
+
+  assert.doesNotMatch(taskServiceSource, /当前协议未返回更多结果摘要/);
+  assert.doesNotMatch(taskServiceSource, /后续可把任务修改或产出打开能力接进来/);
+  assert.doesNotMatch(taskTabsSource, /当前协议尚未提供稳定的 artifact\.open 能力/);
 });
 
 test("task detail normalization rejects string restore points in rpc mode and keeps null approval fallback", () => {

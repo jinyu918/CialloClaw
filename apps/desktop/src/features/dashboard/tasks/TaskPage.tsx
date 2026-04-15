@@ -20,7 +20,9 @@ import {
   shouldEnableDashboardTaskDetailQuery,
 } from "./taskPage.query";
 import { buildFallbackTaskDetailData, controlTaskByAction, loadTaskBucketPage, loadTaskDetailData, type TaskPageDataMode } from "./taskPage.service";
+import { loadTaskArtifactPage, openTaskArtifactForTask, openTaskDeliveryForTask, performTaskOpenExecution, resolveTaskOpenExecutionPlan } from "./taskOutput.service";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
+import { TaskFilesSheet } from "./components/TaskFilesSheet";
 import { TaskPreviewCard } from "./components/TaskPreviewCard";
 import "./taskPage.css";
 
@@ -34,6 +36,7 @@ export function TaskPage() {
   const LOAD_MORE_FINISHED_STEP = 24;
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [filesSheetOpen, setFilesSheetOpen] = useState(false);
   const [showMoreFinished, setShowMoreFinished] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [dataMode, setDataMode] = useState<TaskPageDataMode>(() => loadDashboardDataMode("tasks") as TaskPageDataMode);
@@ -122,6 +125,15 @@ export function TaskPage() {
   const detailData = taskDetailQuery.data ?? (selectedTaskItem ? buildFallbackTaskDetailData(selectedTaskItem) : null);
   const detailErrorMessage = taskDetailQuery.isError ? (taskDetailQuery.error instanceof Error ? taskDetailQuery.error.message : "任务详情请求失败") : null;
   const detailState = taskDetailQuery.isError ? "error" : taskDetailQuery.isPending ? "loading" : "ready";
+  const artifactListQuery = useQuery({
+    enabled: filesSheetOpen && detailOpen && dataMode === "rpc" && Boolean(selectedTaskId),
+    queryKey: ["dashboard", "tasks", "artifacts", dataMode, selectedTaskId],
+    queryFn: () => loadTaskArtifactPage(selectedTaskId!, dataMode),
+    refetchOnMount: securityRefreshPlan.refetchOnMount,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const bucketErrors = [
     { error: unfinishedQuery.error, label: "未完成任务" },
     { error: finishedQuery.error, label: "已结束任务" },
@@ -146,6 +158,10 @@ export function TaskPage() {
     function invalidateTaskQueries() {
       for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
         void queryClient.invalidateQueries({ queryKey });
+      }
+
+      if (selectedTaskId) {
+        void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "artifacts", dataMode, selectedTaskId] });
       }
     }
 
@@ -194,6 +210,40 @@ export function TaskPage() {
     },
   });
 
+  async function handleResolvedOpen(result: Awaited<ReturnType<typeof openTaskArtifactForTask>> | Awaited<ReturnType<typeof openTaskDeliveryForTask>>) {
+    const plan = resolveTaskOpenExecutionPlan(result);
+
+    if (plan.mode === "task_detail" && plan.taskId) {
+      setSelectedTaskId(plan.taskId);
+      setDetailOpen(true);
+      setFilesSheetOpen(false);
+      showFeedback(plan.feedback);
+      return;
+    }
+
+    showFeedback(await performTaskOpenExecution(plan));
+  }
+
+  const artifactOpenMutation = useMutation({
+    mutationFn: ({ artifactId, taskId }: { artifactId: string; taskId: string }) => openTaskArtifactForTask(taskId, artifactId, dataMode),
+    onSuccess: async (result) => {
+      await handleResolvedOpen(result);
+    },
+    onError: (error) => {
+      showFeedback(error instanceof Error ? `打开成果失败：${error.message}` : "打开成果失败，请稍后再试。");
+    },
+  });
+
+  const deliveryOpenMutation = useMutation({
+    mutationFn: ({ artifactId, taskId }: { artifactId?: string; taskId: string }) => openTaskDeliveryForTask(taskId, artifactId, dataMode),
+    onSuccess: async (result) => {
+      await handleResolvedOpen(result);
+    },
+    onError: (error) => {
+      showFeedback(error instanceof Error ? `打开结果失败：${error.message}` : "打开结果失败，请稍后再试。");
+    },
+  });
+
   async function handleOpenSafety() {
     if (!detailData) {
       return;
@@ -233,6 +283,26 @@ export function TaskPage() {
     }
 
     taskControlMutation.mutate({ action, taskId: detailData.task.task_id });
+  }
+
+  function handleOpenFiles() {
+    setFilesSheetOpen(true);
+  }
+
+  function handleOpenArtifact(artifactId: string) {
+    if (!detailData) {
+      return;
+    }
+
+    artifactOpenMutation.mutate({ artifactId, taskId: detailData.task.task_id });
+  }
+
+  function handleOpenLatestDelivery() {
+    if (!detailData) {
+      return;
+    }
+
+    deliveryOpenMutation.mutate({ taskId: detailData.task.task_id });
   }
 
   function handleLoadMore(group: "unfinished" | "finished") {
@@ -417,18 +487,37 @@ export function TaskPage() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
               <TaskDetailPanel
+                artifactActionPendingId={artifactOpenMutation.isPending ? artifactOpenMutation.variables?.artifactId ?? null : null}
                 detailData={detailData}
                 detailErrorMessage={detailErrorMessage}
                 detailState={detailState}
+                deliveryActionPending={deliveryOpenMutation.isPending}
                 feedback={feedback}
                 onAction={handlePrimaryAction}
                 onClose={() => setDetailOpen(false)}
+                onOpenArtifact={handleOpenArtifact}
+                onOpenFiles={handleOpenFiles}
+                onOpenLatestDelivery={handleOpenLatestDelivery}
                 onRetryDetail={taskDetailQuery.isError ? () => void taskDetailQuery.refetch() : null}
               />
             </motion.div>
           </>
         ) : null}
       </AnimatePresence>
+
+      <TaskFilesSheet
+        artifactErrorMessage={artifactListQuery.isError ? (artifactListQuery.error instanceof Error ? artifactListQuery.error.message : "成果列表请求失败") : null}
+        artifactItems={artifactListQuery.data?.items ?? detailData?.detail.artifacts ?? []}
+        artifactLoading={artifactListQuery.isPending}
+        detailData={detailData}
+        onOpenArtifact={handleOpenArtifact}
+        onOpenChange={setFilesSheetOpen}
+        onOpenLatestDelivery={handleOpenLatestDelivery}
+        onRetryArtifacts={artifactListQuery.isError ? () => void artifactListQuery.refetch() : null}
+        open={filesSheetOpen}
+        pendingArtifactId={artifactOpenMutation.isPending ? artifactOpenMutation.variables?.artifactId ?? null : null}
+        pendingDeliveryOpen={deliveryOpenMutation.isPending}
+      />
 
       <AnimatePresence>
         {feedback || bucketErrors.length > 0 ? (

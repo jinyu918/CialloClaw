@@ -1,17 +1,38 @@
-import { FolderOpenDot, Sparkles } from "lucide-react";
+import { ArrowUpRight, FolderOpenDot, RefreshCcw, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Artifact } from "@cialloclaw/protocol";
 import type { TaskDetailData } from "../taskPage.types";
 
 type TaskFilesSheetProps = {
+  artifactErrorMessage: string | null;
+  artifactItems: Artifact[];
+  artifactLoading: boolean;
   detailData: TaskDetailData | null;
+  onOpenArtifact: (artifactId: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenLatestDelivery: () => void;
+  onRetryArtifacts: (() => void) | null;
+  pendingArtifactId: string | null;
+  pendingDeliveryOpen: boolean;
 };
 
-export function TaskFilesSheet({ detailData, open, onOpenChange }: TaskFilesSheetProps) {
+export function TaskFilesSheet({
+  artifactErrorMessage,
+  artifactItems,
+  artifactLoading,
+  detailData,
+  onOpenArtifact,
+  open,
+  onOpenChange,
+  onOpenLatestDelivery,
+  onRetryArtifacts,
+  pendingArtifactId,
+  pendingDeliveryOpen,
+}: TaskFilesSheetProps) {
   const files = detailData?.experience.relatedFiles ?? [];
-  const artifacts = detailData?.detail.artifacts ?? [];
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
@@ -45,17 +66,52 @@ export function TaskFilesSheet({ detailData, open, onOpenChange }: TaskFilesShee
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                <Sparkles className="h-4 w-4 text-orange-500" />
-                最近产出
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                  <Sparkles className="h-4 w-4 text-orange-500" />
+                  最近产出
+                </div>
+                <Button className="h-9 rounded-full px-4 text-sm" disabled={pendingDeliveryOpen} onClick={onOpenLatestDelivery} variant="ghost">
+                  <ArrowUpRight className="h-4 w-4" />
+                  {pendingDeliveryOpen ? "打开中..." : "打开最新结果"}
+                </Button>
               </div>
-              {artifacts.map((artifact) => (
-                <article key={artifact.artifact_id} className="rounded-[24px] border border-white/70 bg-white/72 p-4 shadow-[0_24px_46px_-36px_rgba(67,85,106,0.42)]">
-                  <p className="font-medium text-slate-800">{artifact.title}</p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">{artifact.artifact_type}</p>
-                  <p className="mt-3 rounded-[18px] bg-slate-50/90 px-3 py-2 font-mono text-xs text-slate-500">{artifact.path}</p>
+              {artifactErrorMessage ? (
+                <article className="rounded-[24px] border border-rose-100 bg-rose-50/80 p-4 text-sm text-rose-700">
+                  <p>{artifactErrorMessage}</p>
+                  {onRetryArtifacts ? (
+                    <Button className="mt-3 h-9 rounded-full px-4 text-sm" onClick={onRetryArtifacts} variant="ghost">
+                      <RefreshCcw className="h-4 w-4" />
+                      重试
+                    </Button>
+                  ) : null}
                 </article>
-              ))}
+              ) : artifactLoading ? (
+                <article className="rounded-[24px] border border-white/70 bg-white/72 p-4 text-sm text-slate-600">正在同步成果列表...</article>
+              ) : artifactItems.length > 0 ? (
+                artifactItems.map((artifact) => (
+                  <article key={artifact.artifact_id} className="rounded-[24px] border border-white/70 bg-white/72 p-4 shadow-[0_24px_46px_-36px_rgba(67,85,106,0.42)]">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-slate-800">{artifact.title}</p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">{artifact.artifact_type}</p>
+                      </div>
+                      <Button
+                        className="h-9 rounded-full px-4 text-sm"
+                        disabled={pendingArtifactId === artifact.artifact_id}
+                        onClick={() => onOpenArtifact(artifact.artifact_id)}
+                        variant="ghost"
+                      >
+                        <ArrowUpRight className="h-4 w-4" />
+                        {pendingArtifactId === artifact.artifact_id ? "打开中..." : "打开"}
+                      </Button>
+                    </div>
+                    <p className="mt-3 rounded-[18px] bg-slate-50/90 px-3 py-2 font-mono text-xs text-slate-500">{artifact.path}</p>
+                  </article>
+                ))
+              ) : (
+                <article className="rounded-[24px] border border-white/70 bg-white/72 p-4 text-sm text-slate-600">当前还没有可展示的成果。</article>
+              )}
             </section>
           </div>
         </ScrollArea>

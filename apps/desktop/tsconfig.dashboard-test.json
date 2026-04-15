@@ -18,6 +18,7 @@
     "src/features/dashboard/shared/dashboardSafetyNavigation.ts",
     "src/features/dashboard/tasks/taskPage.mapper.ts",
     "src/features/dashboard/tasks/taskPage.query.ts",
+    "src/features/dashboard/tasks/taskOutput.service.ts",
     "src/features/dashboard/tasks/taskPage.service.ts",
     "src/features/dashboard/tasks/taskPage.mock.ts",
     "src/features/dashboard/tasks/taskPage.types.ts",
