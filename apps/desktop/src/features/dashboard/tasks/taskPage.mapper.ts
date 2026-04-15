@@ -153,7 +153,7 @@ export function getTaskPrimaryActions(task: Task): TaskPrimaryAction[] {
       { action: "pause", label: "暂停", tooltip: "先把当前执行暂停在这里。" },
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       { action: "open-safety", label: "安全详情", tooltip: "查看当前任务的风险与授权摘要。" },
-      { action: "edit", label: "修改任务", tooltip: "任务修改能力将在后续开放。" },
+      { action: "edit", label: "去悬浮球继续", tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。" },
     ];
   }
 
@@ -162,7 +162,7 @@ export function getTaskPrimaryActions(task: Task): TaskPrimaryAction[] {
       { action: "resume", label: "继续", tooltip: "恢复当前任务并继续推进。" },
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       { action: "open-safety", label: "安全详情", tooltip: "查看当前任务的风险与授权摘要。" },
-      { action: "edit", label: "修改任务", tooltip: "任务修改能力将在后续开放。" },
+      { action: "edit", label: "去悬浮球继续", tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。" },
     ];
   }
 
@@ -170,7 +170,7 @@ export function getTaskPrimaryActions(task: Task): TaskPrimaryAction[] {
     return [
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       { action: "open-safety", label: "安全详情", tooltip: "查看当前任务的风险与授权摘要。" },
-      { action: "edit", label: "修改任务", tooltip: "任务修改能力将在后续开放。" },
+      { action: "edit", label: "去悬浮球继续", tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。" },
     ];
   }
 
@@ -178,7 +178,7 @@ export function getTaskPrimaryActions(task: Task): TaskPrimaryAction[] {
     return [
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       { action: "open-safety", label: "安全详情", tooltip: "查看当前任务的风险与授权摘要。" },
-      { action: "edit", label: "修改任务", tooltip: "任务修改能力将在后续开放。" },
+      { action: "edit", label: "去悬浮球继续", tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。" },
     ];
   }
 
@@ -186,7 +186,7 @@ export function getTaskPrimaryActions(task: Task): TaskPrimaryAction[] {
     return [
       { action: "restart", label: "重新启动", tooltip: "从当前任务生成一条新的执行路径。" },
       { action: "open-safety", label: "安全详情", tooltip: "查看失败前后的风险和恢复点摘要。" },
-      { action: "edit", label: "修改任务", tooltip: "任务修改能力将在后续开放。" },
+      { action: "edit", label: "去悬浮球继续", tooltip: "如需修改这条任务，请回到悬浮球继续补充或修正。" },
     ];
   }
 

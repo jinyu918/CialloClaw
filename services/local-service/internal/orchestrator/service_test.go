@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/checkpoint"
@@ -209,6 +212,25 @@ func newTestService() *Service {
 		tools.NewRegistry(),
 		plugin.NewService(),
 	)
+}
+
+func mutateRuntimeTask(t *testing.T, engine *runengine.Engine, taskID string, mutate func(record *runengine.TaskRecord)) {
+	t.Helper()
+
+	engineValue := reflect.ValueOf(engine).Elem()
+	muField := engineValue.FieldByName("mu")
+	mu := (*sync.RWMutex)(unsafe.Pointer(muField.UnsafeAddr()))
+	mu.Lock()
+	defer mu.Unlock()
+
+	tasksField := engineValue.FieldByName("tasks")
+	tasks := reflect.NewAt(tasksField.Type(), unsafe.Pointer(tasksField.UnsafeAddr())).Elem()
+	recordValue := tasks.MapIndex(reflect.ValueOf(taskID))
+	if !recordValue.IsValid() || recordValue.IsNil() {
+		t.Fatalf("expected runtime task %s to exist", taskID)
+	}
+	record := recordValue.Interface().(*runengine.TaskRecord)
+	mutate(record)
 }
 
 func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
@@ -2072,6 +2094,180 @@ func TestServiceDashboardOverviewUsesRuntimeAggregation(t *testing.T) {
 	}
 }
 
+func TestServiceTaskDetailGetExposesActiveApprovalAnchor(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_detail",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "task detail should expose waiting approval anchor",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	detailResult, err := service.TaskDetailGet(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("task detail get failed: %v", err)
+	}
+
+	approvalRequest, ok := detailResult["approval_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected approval_request anchor, got %+v", detailResult["approval_request"])
+	}
+	if approvalRequest["task_id"] != taskID {
+		t.Fatalf("expected approval_request to stay anchored to task %s, got %+v", taskID, approvalRequest)
+	}
+
+	securitySummary, ok := detailResult["security_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected security_summary payload, got %+v", detailResult["security_summary"])
+	}
+	if securitySummary["pending_authorizations"] != 1 {
+		t.Fatalf("expected pending_authorizations to collapse to 1, got %+v", securitySummary["pending_authorizations"])
+	}
+	if securitySummary["latest_restore_point"] != nil {
+		t.Fatalf("expected latest_restore_point to stay nil without restore anchor, got %+v", securitySummary["latest_restore_point"])
+	}
+}
+
+func TestServiceTaskDetailGetDropsStaleApprovalAnchorOutsideWaitingAuth(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_detail_stale",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "stale approval anchors must not leak into task detail",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	if _, ok := service.runEngine.GetTask(taskID); !ok {
+		t.Fatal("expected task to remain available in runtime")
+	}
+	mutateRuntimeTask(t, service.runEngine, taskID, func(runtimeRecord *runengine.TaskRecord) {
+		runtimeRecord.ApprovalRequest = map[string]any{
+			"approval_id": "appr_stale",
+			"task_id":     taskID,
+			"risk_level":  "red",
+		}
+		runtimeRecord.SecuritySummary["pending_authorizations"] = 1
+	})
+
+	detailResult, err := service.TaskDetailGet(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("task detail get failed: %v", err)
+	}
+	if detailResult["approval_request"] != nil {
+		t.Fatalf("expected stale approval_request to be dropped, got %+v", detailResult["approval_request"])
+	}
+
+	securitySummary := detailResult["security_summary"].(map[string]any)
+	if securitySummary["pending_authorizations"] != 0 {
+		t.Fatalf("expected stale pending_authorizations to collapse to 0, got %+v", securitySummary["pending_authorizations"])
+	}
+}
+
+func TestServiceTaskDetailGetDropsApprovalAnchorWithMismatchedTaskID(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_detail_bad_task",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "mismatched approval anchors must not leak into task detail",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	mutateRuntimeTask(t, service.runEngine, taskID, func(runtimeRecord *runengine.TaskRecord) {
+		runtimeRecord.ApprovalRequest["task_id"] = "task_other"
+	})
+
+	detailResult, err := service.TaskDetailGet(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("task detail get failed: %v", err)
+	}
+	if detailResult["approval_request"] != nil {
+		t.Fatalf("expected mismatched approval_request to be dropped, got %+v", detailResult["approval_request"])
+	}
+
+	securitySummary := detailResult["security_summary"].(map[string]any)
+	if securitySummary["pending_authorizations"] != 0 {
+		t.Fatalf("expected mismatched pending_authorizations to collapse to 0, got %+v", securitySummary["pending_authorizations"])
+	}
+}
+
+func TestServiceTaskDetailGetDropsApprovalAnchorWhenStatusIsNotPending(t *testing.T) {
+	service := newTestService()
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_detail_bad_status",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "non-pending approval anchors must not leak into task detail",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	mutateRuntimeTask(t, service.runEngine, taskID, func(runtimeRecord *runengine.TaskRecord) {
+		runtimeRecord.ApprovalRequest["status"] = "approved"
+	})
+
+	detailResult, err := service.TaskDetailGet(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("task detail get failed: %v", err)
+	}
+	if detailResult["approval_request"] != nil {
+		t.Fatalf("expected non-pending approval_request to be dropped, got %+v", detailResult["approval_request"])
+	}
+}
+
 func TestServiceDashboardOverviewRespectsIncludeFilter(t *testing.T) {
 	service := newTestService()
 
@@ -2988,6 +3184,55 @@ func TestServiceTaskDetailGetFallsBackToStoredRecoveryPointForTask(t *testing.T)
 	latestRestorePoint := securitySummary["latest_restore_point"].(map[string]any)
 	if latestRestorePoint["recovery_point_id"] != "rp_task_detail" {
 		t.Fatalf("expected storage-backed restore point in task detail, got %+v", latestRestorePoint)
+	}
+}
+
+func TestServiceTaskDetailGetDropsMismatchedSummaryRecoveryPointBeforeStorageFallback(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed summary mismatch")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_exec_mismatch",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "task detail restore point mismatch fallback",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	mutateRuntimeTask(t, service.runEngine, taskID, func(runtimeRecord *runengine.TaskRecord) {
+		runtimeRecord.SecuritySummary["latest_restore_point"] = map[string]any{
+			"recovery_point_id": "rp_wrong_task",
+			"task_id":           "task_other",
+			"summary":           "wrong task restore point",
+			"created_at":        "2026-04-08T10:01:00Z",
+			"objects":           []string{"workspace/wrong.md"},
+		}
+	})
+	if err := service.storage.RecoveryPointWriter().WriteRecoveryPoint(context.Background(), checkpoint.RecoveryPoint{
+		RecoveryPointID: "rp_task_detail_fallback",
+		TaskID:          taskID,
+		Summary:         "stored recovery point for fallback",
+		CreatedAt:       "2026-04-08T10:02:00Z",
+		Objects:         []string{"workspace/result.md"},
+	}); err != nil {
+		t.Fatalf("write recovery point failed: %v", err)
+	}
+
+	result, err := service.TaskDetailGet(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("task detail get failed: %v", err)
+	}
+	securitySummary := result["security_summary"].(map[string]any)
+	latestRestorePoint := securitySummary["latest_restore_point"].(map[string]any)
+	if latestRestorePoint["recovery_point_id"] != "rp_task_detail_fallback" {
+		t.Fatalf("expected storage fallback after mismatched summary restore point, got %+v", latestRestorePoint)
 	}
 }
 

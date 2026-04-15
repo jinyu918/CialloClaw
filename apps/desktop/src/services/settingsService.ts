@@ -1,6 +1,6 @@
 // 该文件封装前端设置读写服务。 
 import type { SettingsSnapshot } from "@cialloclaw/protocol";
-import { loadStoredValue, saveStoredValue } from "@/platform/storage";
+import { loadStoredValue, saveStoredValue } from "../platform/storage";
 
 // SETTINGS_KEY 定义共享常量。
 const SETTINGS_KEY = "cialloclaw.settings";

@@ -449,10 +449,20 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	if securitySummary == nil {
 		securitySummary = map[string]any{}
 	}
-	if latestRestorePointFromSummary(securitySummary) == nil {
-		if restorePoint := s.latestRestorePointFromStorage(task.TaskID); restorePoint != nil {
-			securitySummary["latest_restore_point"] = restorePoint
-		}
+	approvalRequest := activeTaskDetailApprovalRequest(task)
+	approvalRequestValue := any(nil)
+	if approvalRequest != nil {
+		approvalRequestValue = approvalRequest
+	}
+	securitySummary["pending_authorizations"] = 0
+	if approvalRequest != nil {
+		securitySummary["pending_authorizations"] = 1
+	}
+	latestRestorePoint := s.normalizeTaskDetailRestorePoint(task.TaskID, securitySummary)
+	if latestRestorePoint == nil {
+		securitySummary["latest_restore_point"] = nil
+	} else {
+		securitySummary["latest_restore_point"] = latestRestorePoint
 	}
 
 	return map[string]any{
@@ -460,6 +470,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"timeline":          timelineMap(task.Timeline),
 		"artifacts":         s.artifactsForTask(task.TaskID, task.Artifacts),
 		"mirror_references": cloneMapSlice(task.MirrorReferences),
+		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
 	}, nil
 }
@@ -2273,6 +2284,114 @@ func latestRestorePointFromSummary(summary map[string]any) map[string]any {
 		return nil
 	}
 	return cloneMap(latestRestorePoint)
+}
+
+func activeTaskDetailApprovalRequest(task runengine.TaskRecord) map[string]any {
+	if task.Status != "waiting_auth" || len(task.ApprovalRequest) == 0 {
+		return nil
+	}
+	return normalizeTaskDetailApprovalRequest(task.TaskID, task.RiskLevel, task.ApprovalRequest)
+}
+
+func (s *Service) normalizeTaskDetailRestorePoint(taskID string, securitySummary map[string]any) map[string]any {
+	if latestRestorePoint := normalizeTaskDetailRecoveryPoint(taskID, latestRestorePointFromSummary(securitySummary)); latestRestorePoint != nil {
+		return latestRestorePoint
+	}
+	if restorePoint := s.latestRestorePointFromStorage(taskID); restorePoint != nil {
+		return restorePoint
+	}
+	return nil
+}
+
+func normalizeTaskDetailApprovalRequest(taskID, fallbackRiskLevel string, approvalRequest map[string]any) map[string]any {
+	if len(approvalRequest) == 0 {
+		return nil
+	}
+
+	approvalID := strings.TrimSpace(stringValue(approvalRequest, "approval_id", ""))
+	approvalTaskID := strings.TrimSpace(stringValue(approvalRequest, "task_id", ""))
+	operationName := strings.TrimSpace(stringValue(approvalRequest, "operation_name", ""))
+	targetObject := strings.TrimSpace(stringValue(approvalRequest, "target_object", ""))
+	reason := strings.TrimSpace(stringValue(approvalRequest, "reason", ""))
+	status := strings.TrimSpace(stringValue(approvalRequest, "status", ""))
+	createdAt := strings.TrimSpace(stringValue(approvalRequest, "created_at", ""))
+	riskLevel := strings.TrimSpace(stringValue(approvalRequest, "risk_level", ""))
+	if riskLevel == "" {
+		riskLevel = strings.TrimSpace(fallbackRiskLevel)
+	}
+
+	if approvalID == "" || approvalTaskID != taskID || operationName == "" || targetObject == "" || reason == "" || createdAt == "" {
+		return nil
+	}
+	if status != "pending" || !isSupportedRiskLevel(riskLevel) {
+		return nil
+	}
+
+	return map[string]any{
+		"approval_id":    approvalID,
+		"task_id":        approvalTaskID,
+		"operation_name": operationName,
+		"risk_level":     riskLevel,
+		"target_object":  targetObject,
+		"reason":         reason,
+		"status":         status,
+		"created_at":     createdAt,
+	}
+}
+
+func normalizeTaskDetailRecoveryPoint(taskID string, recoveryPoint map[string]any) map[string]any {
+	if len(recoveryPoint) == 0 {
+		return nil
+	}
+
+	recoveryPointID := strings.TrimSpace(stringValue(recoveryPoint, "recovery_point_id", ""))
+	recoveryTaskID := strings.TrimSpace(stringValue(recoveryPoint, "task_id", ""))
+	summary := strings.TrimSpace(stringValue(recoveryPoint, "summary", ""))
+	createdAt := strings.TrimSpace(stringValue(recoveryPoint, "created_at", ""))
+	objects, ok := normalizeStringSlice(recoveryPoint["objects"])
+	if !ok {
+		return nil
+	}
+
+	if recoveryPointID == "" || recoveryTaskID != taskID || summary == "" || createdAt == "" {
+		return nil
+	}
+
+	return map[string]any{
+		"recovery_point_id": recoveryPointID,
+		"task_id":           recoveryTaskID,
+		"summary":           summary,
+		"created_at":        createdAt,
+		"objects":           objects,
+	}
+}
+
+func isSupportedRiskLevel(riskLevel string) bool {
+	switch riskLevel {
+	case "green", "yellow", "red":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeStringSlice(value any) ([]string, bool) {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...), true
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			items = append(items, text)
+		}
+		return items, true
+	default:
+		return nil, false
+	}
 }
 
 func (s *Service) latestRestorePointFromStorage(taskID string) map[string]any {
