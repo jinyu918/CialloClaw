@@ -80,6 +80,7 @@ import {
   resolveShellBallVoiceRecognitionFinalState,
   getShellBallVoicePreviewFromEvent,
   mapShellBallInteractionConsumedEventToFlag,
+  shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd,
   shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd,
   shouldKeepShellBallVoicePreviewOnRegionLeave,
   syncShellBallInteractionController,
@@ -1876,12 +1877,11 @@ test("shell-ball dropped text appends into the input draft instead of submitting
   );
 });
 
-test("shell-ball text drop target only arms during eligible global drags", () => {
+test("shell-ball text drop target only arms during eligible text drags", () => {
   assert.equal(
     shouldArmShellBallTextDropTarget({
       fileDropActive: false,
-      globalDragActive: true,
-      shellBallWindowDragActive: false,
+      textDragActive: true,
       visualState: "hover_input",
     }),
     true,
@@ -1889,8 +1889,7 @@ test("shell-ball text drop target only arms during eligible global drags", () =>
   assert.equal(
     shouldArmShellBallTextDropTarget({
       fileDropActive: true,
-      globalDragActive: true,
-      shellBallWindowDragActive: false,
+      textDragActive: true,
       visualState: "hover_input",
     }),
     false,
@@ -1898,8 +1897,7 @@ test("shell-ball text drop target only arms during eligible global drags", () =>
   assert.equal(
     shouldArmShellBallTextDropTarget({
       fileDropActive: false,
-      globalDragActive: true,
-      shellBallWindowDragActive: false,
+      textDragActive: true,
       visualState: "voice_locked",
     }),
     false,
@@ -2273,6 +2271,9 @@ test("shell-ball voice recognition resumes after unexpected end while listening 
   assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("voice_listening"), true);
   assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("voice_locked"), true);
   assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("hover_input"), false);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd(null), true);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd("network"), true);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd("not-allowed"), false);
 
   assert.equal(
     getShellBallVoiceRecognitionUnexpectedEndFallbackState({
@@ -3606,40 +3607,16 @@ test("shell-ball surface passes mascot double-click and drag wiring through the 
   assert.match(surfaceSource, /data-shell-ball-zone="interaction"/);
 });
 
-test("shell-ball file overlay ignores global drag during mascot drag and voice gestures", () => {
+test("shell-ball file overlay only follows real file drags", () => {
   assert.equal(
     shouldShowShellBallFileDropOverlay({
       fileDropActive: false,
-      globalDragActive: true,
-      shellBallWindowDragActive: true,
-      visualState: "hover_input",
-    }),
-    false,
-  );
-  assert.equal(
-    shouldShowShellBallFileDropOverlay({
-      fileDropActive: false,
-      globalDragActive: true,
-      shellBallWindowDragActive: false,
-      visualState: "voice_listening",
-    }),
-    false,
-  );
-  assert.equal(
-    shouldShowShellBallFileDropOverlay({
-      fileDropActive: false,
-      globalDragActive: true,
-      shellBallWindowDragActive: false,
-      visualState: "voice_locked",
     }),
     false,
   );
   assert.equal(
     shouldShowShellBallFileDropOverlay({
       fileDropActive: true,
-      globalDragActive: false,
-      shellBallWindowDragActive: false,
-      visualState: "voice_locked",
     }),
     true,
   );
@@ -3649,9 +3626,11 @@ test("shell-ball voice recognition source keeps locked sessions from auto-cancel
   const interactionSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/useShellBallInteraction.ts"), "utf8");
 
   assert.match(interactionSource, /if \(recognitionStopReasonRef\.current !== "none"\) \{/);
+  assert.match(interactionSource, /recognitionErrorRef\.current = event\.error;/);
+  assert.match(interactionSource, /shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd\(recognitionError\)/);
   assert.match(interactionSource, /if \(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd\(currentState\)\) \{/);
   assert.match(interactionSource, /const committedDraft = preserveUnexpectedVoiceTranscriptDraft\(\);/);
-  assert.match(interactionSource, /if \(startVoiceRecognition\(\)\) \{\s*return;\s*\}/);
+  assert.match(interactionSource, /if \(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd\(recognitionError\) && startVoiceRecognition\(\)\) \{\s*return;\s*\}/);
 });
 
 test("shell-ball text drop populates and focuses the input instead of starting a task", () => {
@@ -3664,13 +3643,15 @@ test("shell-ball text drop populates and focuses the input instead of starting a
   assert.doesNotMatch(interactionSource, /startTaskFromSelectedText/);
   assert.match(appSource, /const handleSurfaceTextDrop = useCallback\(\(text: string\) => \{/);
   assert.match(appSource, /handleDroppedText\(text\);\s*window\.requestAnimationFrame\(\(\) => \{\s*void emitShellBallInputRequestFocus\(Date\.now\(\)\);\s*\}\);/);
-  assert.match(appSource, /window\.addEventListener\("dragenter", handleWindowTextDragOver\);/);
-  assert.match(appSource, /window\.addEventListener\("dragover", handleWindowTextDragOver\);/);
-  assert.match(appSource, /window\.addEventListener\("drop", handleWindowTextDrop\);/);
+  assert.match(appSource, /window\.addEventListener\("dragenter", handleWindowTextDrag\);/);
+  assert.match(appSource, /window\.addEventListener\("dragover", handleWindowTextDrag\);/);
+  assert.match(appSource, /window\.addEventListener\("dragleave", clearTextDragState\);/);
+  assert.match(appSource, /window\.addEventListener\("drop", clearTextDragState\);/);
   assert.match(appSource, /onTextDrop=\{handleSurfaceTextDrop\}/);
   assert.match(appSource, /textDropActive=\{shouldArmShellBallTextDropTarget\(/);
   assert.match(surfaceSource, /onDragEnterCapture=\{handleDragOver\}/);
   assert.match(surfaceSource, /onDropCapture=\{handleDrop\}/);
+  assert.doesNotMatch(surfaceSource, /onDrop=\{handleDrop\}/);
   assert.match(surfaceSource, /className="shell-ball-surface__text-drop-target"/);
 });
 

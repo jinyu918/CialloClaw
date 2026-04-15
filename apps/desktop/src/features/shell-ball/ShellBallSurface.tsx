@@ -89,8 +89,9 @@ export function ShellBallSurface({
 }: ShellBallSurfaceProps) {
   const showInputProxy = visualState === "hover_input" && !inputFocused;
 
+  // Only the armed text target is allowed to consume drag events.
   function handleDragOver(event: DragEvent<HTMLElement>) {
-    if (!shouldAcceptShellBallTextDrop(event.dataTransfer)) {
+    if (!textDropActive || !shouldAcceptShellBallTextDrop(event.dataTransfer)) {
       return;
     }
 
@@ -102,7 +103,7 @@ export function ShellBallSurface({
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
-    if (!shouldAcceptShellBallTextDrop(event.dataTransfer)) {
+    if (!textDropActive || !shouldAcceptShellBallTextDrop(event.dataTransfer)) {
       return;
     }
 
@@ -147,9 +148,6 @@ export function ShellBallSurface({
                   aria-hidden={!textDropActive}
                   className="shell-ball-surface__text-drop-target"
                   data-visible={textDropActive ? "true" : "false"}
-                  onDragEnter={handleDragOver}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
                   tabIndex={-1}
                   value=""
                   onChange={() => {}}

@@ -15,7 +15,6 @@ export const shellBallWindowSyncEvents = Object.freeze({
   inputFocus: "desktop-shell-ball:input-focus",
   inputRequestFocus: "desktop-shell-ball:input-request-focus",
   inputDraft: "desktop-shell-ball:input-draft",
-  globalDragState: "desktop-shell-ball:global-drag-state",
   primaryAction: "desktop-shell-ball:primary-action",
   pendingFileAction: "desktop-shell-ball:pending-file-action",
   intentDecision: "desktop-shell-ball:intent-decision",
@@ -106,10 +105,6 @@ export type ShellBallInputDraftPayload = {
 
 export type ShellBallInputRequestFocusPayload = {
   token: number;
-};
-
-export type ShellBallGlobalDragStatePayload = {
-  active: boolean;
 };
 
 export type ShellBallPrimaryActionPayload = {

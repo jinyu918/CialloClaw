@@ -37,6 +37,13 @@ type ShellBallInteractionConsumedEvent =
 
 type ShellBallVoiceRecognitionStopReason = "none" | "finish" | "cancel";
 
+const SHELL_BALL_NON_RECOVERABLE_VOICE_ERRORS = new Set([
+  "audio-capture",
+  "language-not-supported",
+  "not-allowed",
+  "service-not-allowed",
+]);
+
 export type ShellBallInputSubmitResult = NonNullable<Awaited<ReturnType<typeof submitTextInput>>> & {
   delivery_result?: {
     type?: string;
@@ -239,6 +246,10 @@ export function shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd(state: S
   return state === "voice_listening" || state === "voice_locked";
 }
 
+export function shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd(error: string | null) {
+  return error === null || !SHELL_BALL_NON_RECOVERABLE_VOICE_ERRORS.has(error);
+}
+
 export function getShellBallVoiceRecognitionUnexpectedEndFallbackState(input: {
   currentState: ShellBallVisualState;
   startState: ShellBallVisualState;
@@ -342,6 +353,7 @@ export function useShellBallInteraction() {
   const recognitionRef = useRef<ShellBallSpeechRecognition | null>(null);
   const recognitionSessionIdRef = useRef(0);
   const recognitionStopReasonRef = useRef<ShellBallVoiceRecognitionStopReason>("none");
+  const recognitionErrorRef = useRef<string | null>(null);
   const voiceBaseDraftRef = useRef("");
   const voiceTranscriptRef = useRef("");
   const voiceStartStateRef = useRef<ShellBallVisualState>(visualState);
@@ -485,6 +497,7 @@ export function useShellBallInteraction() {
   const disposeVoiceRecognition = useCallback(() => {
     recognitionSessionIdRef.current += 1;
     recognitionStopReasonRef.current = "none";
+    recognitionErrorRef.current = null;
     voiceTranscriptRef.current = "";
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
@@ -536,6 +549,7 @@ export function useShellBallInteraction() {
     const recognition = new Recognition();
     recognitionRef.current = recognition;
     recognitionStopReasonRef.current = "none";
+    recognitionErrorRef.current = null;
     voiceTranscriptRef.current = "";
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -559,6 +573,7 @@ export function useShellBallInteraction() {
         return;
       }
 
+      recognitionErrorRef.current = event.error;
       console.warn("shell-ball speech recognition error", event.error);
     };
 
@@ -568,6 +583,8 @@ export function useShellBallInteraction() {
       }
 
       const stopReason = recognitionStopReasonRef.current;
+      const recognitionError = recognitionErrorRef.current;
+      recognitionErrorRef.current = null;
 
       if (stopReason === "finish" || stopReason === "cancel") {
         void finalizeVoiceRecognition(stopReason);
@@ -579,7 +596,7 @@ export function useShellBallInteraction() {
       if (shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd(currentState)) {
         const committedDraft = preserveUnexpectedVoiceTranscriptDraft();
 
-        if (startVoiceRecognition()) {
+        if (shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd(recognitionError) && startVoiceRecognition()) {
           return;
         }
 
