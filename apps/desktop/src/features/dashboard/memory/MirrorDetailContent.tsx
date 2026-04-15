@@ -6,7 +6,10 @@ import { StatusBadge } from "@cialloclaw/ui";
 import { SegmentedControl, Switch } from "@radix-ui/themes";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { buildDashboardSafetyRestorePointNavigationState } from "@/features/dashboard/shared/dashboardSafetyNavigation";
+import {
+  buildDashboardSafetyCardNavigationState,
+  buildDashboardSafetyRestorePointNavigationState,
+} from "@/features/dashboard/shared/dashboardSafetyNavigation";
 import { resolveDashboardModuleRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import type { DashboardSettingsPatch } from "@/features/dashboard/shared/dashboardSettingsMutation";
 import {
@@ -328,9 +331,13 @@ function MirrorHistoryDetail({
 function MirrorDailyDetail({
   dailyDigest,
   latestRestorePoint,
+  onOpenHistoryDetail,
+  onOpenSafetyCardDetail,
   onOpenRestorePoint,
   onOpenTaskDetail,
 }: Pick<MirrorDetailContentProps, "dailyDigest" | "latestRestorePoint"> & {
+  onOpenHistoryDetail: () => void;
+  onOpenSafetyCardDetail: (detailKey: "status" | "budget") => void;
   onOpenRestorePoint: (restorePoint: RecoveryPoint) => void;
   onOpenTaskDetail: (taskId: string) => void;
 }) {
@@ -423,10 +430,31 @@ function MirrorDailyDetail({
                 <StatusBadge tone={note.tone}>{note.label}</StatusBadge>
               </div>
               <p className="mirror-page__summary-copy">{note.detail}</p>
+              {note.id === "approvals" ? (
+                <div className="mirror-page__conversation-actions">
+                  <button type="button" className="mirror-page__task-link" onClick={() => onOpenSafetyCardDetail("status")}>
+                    前往安全详情
+                  </button>
+                </div>
+              ) : null}
               {note.id === "restore-point" && latestRestorePoint ? (
                 <div className="mirror-page__conversation-actions">
                   <button type="button" className="mirror-page__task-link" onClick={() => onOpenRestorePoint(latestRestorePoint)}>
                     前往恢复点
+                  </button>
+                </div>
+              ) : null}
+              {note.id === "cost" ? (
+                <div className="mirror-page__conversation-actions">
+                  <button type="button" className="mirror-page__task-link" onClick={() => onOpenSafetyCardDetail("budget")}>
+                    前往预算详情
+                  </button>
+                </div>
+              ) : null}
+              {note.id === "continuity" ? (
+                <div className="mirror-page__conversation-actions">
+                  <button type="button" className="mirror-page__task-link" onClick={() => onOpenHistoryDetail()}>
+                    前往本地对话
                   </button>
                 </div>
               ) : null}
@@ -811,13 +839,40 @@ export function MirrorDetailContent(props: MirrorDetailContentProps) {
     },
     [navigate],
   );
+  const openSafetyCardDetail = useMemo(
+    () => (detailKey: "status" | "budget") => {
+      navigate(resolveDashboardModuleRoutePath("safety"), {
+        state: buildDashboardSafetyCardNavigationState(detailKey),
+      });
+    },
+    [navigate],
+  );
+  const openHistoryDetail = useMemo(
+    () => () => {
+      navigate(resolveDashboardModuleRoutePath("memory"), {
+        state: {
+          activeDetailKey: "history",
+        },
+      });
+    },
+    [navigate],
+  );
 
   if (props.activeDetailKey === "history") {
     return <MirrorHistoryDetail conversationSummary={props.conversationSummary} conversations={props.conversations} onOpenTaskDetail={openTaskDetail} overview={props.overview} />;
   }
 
   if (props.activeDetailKey === "dailyStage") {
-    return <MirrorDailyDetail dailyDigest={props.dailyDigest} latestRestorePoint={props.latestRestorePoint} onOpenRestorePoint={openSafetyRestorePoint} onOpenTaskDetail={openTaskDetail} />;
+    return (
+      <MirrorDailyDetail
+        dailyDigest={props.dailyDigest}
+        latestRestorePoint={props.latestRestorePoint}
+        onOpenHistoryDetail={openHistoryDetail}
+        onOpenRestorePoint={openSafetyRestorePoint}
+        onOpenSafetyCardDetail={openSafetyCardDetail}
+        onOpenTaskDetail={openTaskDetail}
+      />
+    );
   }
 
   if (props.activeDetailKey === "profile") {

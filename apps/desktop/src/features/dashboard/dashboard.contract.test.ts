@@ -26,6 +26,7 @@ const desktopRoot = process.cwd();
 function loadDashboardSafetyNavigationModule() {
   return withDesktopAliasRuntime((requireFn) =>
     requireFn(resolve(desktopRoot, ".cache/dashboard-tests/features/dashboard/shared/dashboardSafetyNavigation.js")) as {
+      buildDashboardSafetyCardNavigationState: (focusCard: "status" | "budget" | "governance") => unknown;
       buildDashboardSafetyNavigationState: (detail: AgentTaskDetailGetResult) => unknown;
       buildDashboardSafetyRestorePointNavigationState: (restorePoint: RecoveryPoint) => unknown;
       readDashboardSafetyNavigationState: (value: unknown) => unknown;
@@ -330,11 +331,26 @@ test("buildDashboardSafetyRestorePointNavigationState keeps mirror restore deep 
   assert.deepEqual(readDashboardSafetyNavigationState(state), state);
 });
 
+test("buildDashboardSafetyCardNavigationState keeps mirror static-card deep links within the safety route contract", () => {
+  const { buildDashboardSafetyCardNavigationState, readDashboardSafetyNavigationState } = loadDashboardSafetyNavigationModule();
+  const state = buildDashboardSafetyCardNavigationState("budget");
+
+  assert.deepEqual(state, {
+    focusCard: "budget",
+    source: "mirror-detail",
+  });
+  assert.deepEqual(readDashboardSafetyNavigationState(state), state);
+});
+
 test("readDashboardSafetyNavigationState accepts valid routed state and rejects malformed values", () => {
-  const { buildDashboardSafetyNavigationState, readDashboardSafetyNavigationState } = loadDashboardSafetyNavigationModule();
+  const { buildDashboardSafetyCardNavigationState, buildDashboardSafetyNavigationState, readDashboardSafetyNavigationState } = loadDashboardSafetyNavigationModule();
   const state = buildDashboardSafetyNavigationState(createDetail({ approval_request: null }));
 
   assert.deepEqual(readDashboardSafetyNavigationState(state), state);
+  assert.deepEqual(readDashboardSafetyNavigationState(buildDashboardSafetyCardNavigationState("status")), {
+    focusCard: "status",
+    source: "mirror-detail",
+  });
   assert.deepEqual(
     readDashboardSafetyNavigationState({
       source: "task-detail",
@@ -406,6 +422,22 @@ test("readDashboardSafetyNavigationState accepts valid routed state and rejects 
   );
   assert.equal(
     readDashboardSafetyNavigationState({
+      focusCard: "restore",
+      source: "mirror-detail",
+    }),
+    null,
+  );
+  assert.equal(
+    readDashboardSafetyNavigationState({
+      focusCard: "budget",
+      restorePoint: createRecoveryPoint(),
+      source: "mirror-detail",
+      taskId: "task_dashboard_001",
+    }),
+    null,
+  );
+  assert.equal(
+    readDashboardSafetyNavigationState({
       source: "other",
       taskId: "task_dashboard_001",
     }),
@@ -427,6 +459,22 @@ test("resolveDashboardSafetyFocusTarget prefers matching live approval data over
   assert.deepEqual(target, {
     activeDetailKey: "approval:approval_dashboard_001",
     approvalSnapshot: liveApproval,
+    feedback: null,
+    restorePointSnapshot: null,
+  });
+});
+
+test("resolveDashboardSafetyFocusTarget keeps mirror static-card routes anchored to the requested safety card", () => {
+  const { buildDashboardSafetyCardNavigationState, resolveDashboardSafetyFocusTarget } = loadDashboardSafetyNavigationModule();
+  const target = resolveDashboardSafetyFocusTarget({
+    livePending: [createApprovalRequest()],
+    liveRestorePoint: createRecoveryPoint(),
+    state: buildDashboardSafetyCardNavigationState("status"),
+  });
+
+  assert.deepEqual(target, {
+    activeDetailKey: "status",
+    approvalSnapshot: null,
     feedback: null,
     restorePointSnapshot: null,
   });
@@ -593,8 +641,13 @@ test("task context links back into mirror detail state instead of plain text dea
   assert.match(mirrorDetailSource, /highlightedMemoryId/);
   assert.match(mirrorDetailSource, /当前任务引用/);
   assert.match(mirrorDetailSource, /resolveDashboardModuleRoutePath\("safety"\)/);
+  assert.match(mirrorDetailSource, /buildDashboardSafetyCardNavigationState/);
   assert.match(mirrorDetailSource, /buildDashboardSafetyRestorePointNavigationState/);
+  assert.match(mirrorDetailSource, /前往安全详情/);
   assert.match(mirrorDetailSource, /前往恢复点/);
+  assert.match(mirrorDetailSource, /前往预算详情/);
+  assert.match(mirrorDetailSource, /activeDetailKey: "history"/);
+  assert.match(mirrorDetailSource, /前往本地对话/);
 });
 
 test("task page keeps waiting-auth anchors and waiting-input escape hatches", () => {
