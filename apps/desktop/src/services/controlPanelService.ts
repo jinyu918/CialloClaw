@@ -15,6 +15,7 @@ import {
   updateSettings,
   updateTaskInspectorConfig,
 } from "@/rpc/methods";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
 import { loadSettings, saveSettings, type DesktopSettings } from "@/services/settingsService";
 
 export type ControlPanelSource = "rpc" | "mock";
@@ -142,33 +143,53 @@ export async function saveControlPanelData(data: ControlPanelData): Promise<Cont
     };
   }
 
-  const [settingsResult, inspectorResult] = await Promise.all([
-    updateSettings({
-      request_meta: createRequestMeta(),
-      general: data.settings.general,
-      floating_ball: data.settings.floating_ball,
-      memory: data.settings.memory,
-      data_log: data.settings.data_log,
-    }),
-    updateTaskInspectorConfig({
-      request_meta: createRequestMeta(),
-      task_sources: data.inspector.task_sources,
-      inspection_interval: data.inspector.inspection_interval,
-      inspect_on_file_change: data.inspector.inspect_on_file_change,
-      inspect_on_startup: data.inspector.inspect_on_startup,
-      remind_before_deadline: data.inspector.remind_before_deadline,
-      remind_when_stale: data.inspector.remind_when_stale,
-    }),
-  ]);
+  try {
+    const [settingsResult, inspectorResult] = await Promise.all([
+      updateSettings({
+        request_meta: createRequestMeta(),
+        general: data.settings.general,
+        floating_ball: data.settings.floating_ball,
+        memory: data.settings.memory,
+        data_log: data.settings.data_log,
+      }),
+      updateTaskInspectorConfig({
+        request_meta: createRequestMeta(),
+        task_sources: data.inspector.task_sources,
+        inspection_interval: data.inspector.inspection_interval,
+        inspect_on_file_change: data.inspector.inspect_on_file_change,
+        inspect_on_startup: data.inspector.inspect_on_startup,
+        remind_before_deadline: data.inspector.remind_before_deadline,
+        remind_when_stale: data.inspector.remind_when_stale,
+      }),
+    ]);
 
-  return {
-    applyMode: settingsResult.apply_mode,
-    needRestart: settingsResult.need_restart,
-    updatedKeys: settingsResult.updated_keys,
-    effectiveSettings: projectInspectorToTaskAutomation(settingsResult.effective_settings as SettingsSnapshot["settings"], inspectorResult.effective_config),
-    effectiveInspector: inspectorResult.effective_config,
-    source: "rpc",
-  };
+    return {
+      applyMode: settingsResult.apply_mode,
+      needRestart: settingsResult.need_restart,
+      updatedKeys: settingsResult.updated_keys,
+      effectiveSettings: projectInspectorToTaskAutomation(settingsResult.effective_settings as SettingsSnapshot["settings"], inspectorResult.effective_config),
+      effectiveInspector: inspectorResult.effective_config,
+      source: "rpc",
+    };
+  } catch (error) {
+    if (!isRpcChannelUnavailable(error)) {
+      throw error;
+    }
+
+    logRpcMockFallback("control panel save", error);
+    const nextSettings: DesktopSettings = {
+      settings: projectInspectorToTaskAutomation(data.settings, data.inspector),
+    };
+    saveSettings(nextSettings);
+    return {
+      applyMode: "immediate",
+      needRestart: false,
+      updatedKeys: ["general", "floating_ball", "memory", "task_automation", "data_log"],
+      effectiveSettings: nextSettings.settings,
+      effectiveInspector: data.inspector,
+      source: "mock",
+    };
+  }
 }
 
 export async function runControlPanelInspection(data: ControlPanelData): Promise<AgentTaskInspectorRunResult> {
@@ -189,9 +210,31 @@ export async function runControlPanelInspection(data: ControlPanelData): Promise
     };
   }
 
-  return runTaskInspector({
-    request_meta: createRequestMeta(),
-    reason: "control_panel_manual_run",
-    target_sources: data.inspector.task_sources,
-  });
+  try {
+    return await runTaskInspector({
+      request_meta: createRequestMeta(),
+      reason: "control_panel_manual_run",
+      target_sources: data.inspector.task_sources,
+    });
+  } catch (error) {
+    if (!isRpcChannelUnavailable(error)) {
+      throw error;
+    }
+
+    logRpcMockFallback("control panel inspection", error);
+    return {
+      inspection_id: `inspection_mock_${Date.now()}`,
+      summary: {
+        parsed_files: 16,
+        identified_items: 9,
+        due_today: 2,
+        overdue: 1,
+        stale: 3,
+      },
+      suggestions: [
+        "将 overdue 任务提升到今日工作流卡片。",
+        "把高频 task source 固定到前两位，减少巡检噪音。",
+      ],
+    };
+  }
 }

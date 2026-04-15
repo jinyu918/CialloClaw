@@ -8,6 +8,7 @@ import type {
   TokenCostSummary,
 } from "@cialloclaw/protocol";
 import mirrorOverviewMock from "./mirrorOverview.json";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
 import { getMirrorOverviewDetailed as requestMirrorOverview } from "@/rpc/methods";
 import { loadMirrorConversationRecords, type MirrorConversationRecord } from "@/services/mirrorMemoryService";
 import { loadSecurityModuleData } from "@/features/dashboard/safety/securityService";
@@ -221,24 +222,44 @@ export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc
     );
   }
 
-  const params: AgentMirrorOverviewGetParams = {
-    request_meta: createRequestMeta(),
-    include: ["history_summary", "daily_summary", "profile", "memory_references"],
-  };
+  try {
+    const params: AgentMirrorOverviewGetParams = {
+      request_meta: createRequestMeta(),
+      include: ["history_summary", "daily_summary", "profile", "memory_references"],
+    };
 
-  const [response, supportContext] = await Promise.all([
-    requestMirrorOverview(params),
-    loadMirrorSupportContext("rpc"),
-  ]);
-  const overview = response.data;
+    const [response, supportContext] = await Promise.all([
+      requestMirrorOverview(params),
+      loadMirrorSupportContext("rpc"),
+    ]);
+    const overview = response.data;
 
-  return buildMirrorOverviewData(
-    overview,
-    "rpc",
-    {
-      serverTime: response.meta?.server_time ?? null,
-      warnings: response.warnings,
-    },
-    supportContext,
-  );
+    return buildMirrorOverviewData(
+      overview,
+      "rpc",
+      {
+        serverTime: response.meta?.server_time ?? null,
+        warnings: response.warnings,
+      },
+      supportContext,
+    );
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback("mirror overview", error);
+      const overview = buildFallbackOverview();
+      const supportContext = await loadMirrorSupportContext("mock");
+
+      return buildMirrorOverviewData(
+        overview,
+        "mock",
+        {
+          serverTime: null,
+          warnings: [],
+        },
+        supportContext,
+      );
+    }
+
+    throw error;
+  }
 }
