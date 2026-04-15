@@ -1132,6 +1132,25 @@
   padding: 0.26rem;
 }
 
+.mirror-page__detail-tab-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  justify-content: space-between;
+}
+
+.mirror-page__detail-pill {
+  background: rgba(255, 250, 242, 0.84);
+  border: 1px solid rgba(143, 111, 77, 0.14);
+  border-radius: 999px;
+  color: var(--mirror-muted);
+  font-size: 1.05rem;
+  font-weight: 520;
+  line-height: 1;
+  padding: 0.72rem 1.2rem;
+}
+
 .mirror-page__detail-tab-trigger {
   border-radius: 999px;
   color: var(--mirror-muted);

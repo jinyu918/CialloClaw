@@ -108,14 +108,17 @@ function MirrorHistoryDetail({
 
   return (
     <Tabs className="mirror-page__detail-tabs" defaultValue={conversations.length > 0 ? "conversation" : "summary"}>
-      <TabsList className="mirror-page__detail-tab-list" variant="line" data-testid="mirror-history-tabs">
-        <TabsTrigger className="mirror-page__detail-tab-trigger" value="summary">
-          历史概要
-        </TabsTrigger>
-        <TabsTrigger className="mirror-page__detail-tab-trigger" value="conversation">
-          最近 100 条本地对话
-        </TabsTrigger>
-      </TabsList>
+      <div className="mirror-page__detail-tab-header">
+        <TabsList className="mirror-page__detail-tab-list" variant="line" data-testid="mirror-history-tabs">
+          <TabsTrigger className="mirror-page__detail-tab-trigger" value="summary">
+            历史概要
+          </TabsTrigger>
+          <TabsTrigger className="mirror-page__detail-tab-trigger" value="conversation">
+            最近 100 条本地对话
+          </TabsTrigger>
+        </TabsList>
+        <div className="mirror-page__detail-pill">{conversationSummary.total_records} 条对话</div>
+      </div>
 
       <TabsContent className="mirror-page__detail-tab-panel" value="summary">
         <div className="mirror-page__history-summary-grid">
@@ -162,11 +165,6 @@ function MirrorHistoryDetail({
 
       <TabsContent className="mirror-page__detail-tab-panel" value="conversation">
         <div className="mirror-page__conversation-filter-shell">
-          <div className="mirror-page__profile-local-note">
-            <BrainCircuit className="mirror-page__profile-icon" />
-            <p className="mirror-page__summary-copy">这一栏只统计最近 100 条本地输入与前端可见回应，用来先按日期回看，再按时间顺序查看关联任务与记录，不等于后端历史概要真源。</p>
-          </div>
-
           <div className="mirror-page__conversation-filter-bar">
             <button
               type="button"
