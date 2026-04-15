@@ -257,8 +257,8 @@ export interface AgentTaskListResult {
 export interface SecuritySummary {
   security_status: SecurityStatus;
   risk_level: RiskLevel;
-  pending_authorizations: number;
-  latest_restore_point: string | RecoveryPoint | null;
+  pending_authorizations: 0 | 1;
+  latest_restore_point: RecoveryPoint | null;
 }
 
 // AgentTaskDetailGetParams 定义当前模块的接口约束。
@@ -273,6 +273,7 @@ export interface AgentTaskDetailGetResult {
   timeline: TaskStep[];
   artifacts: Artifact[];
   mirror_references: MirrorReference[];
+  approval_request: ApprovalRequest | null;
   security_summary: SecuritySummary;
 }
 
@@ -575,7 +576,9 @@ export interface AgentSettingsUpdateParams {
   floating_ball?: Partial<SettingsSnapshot["settings"]["floating_ball"]>;
   memory?: Partial<SettingsSnapshot["settings"]["memory"]>;
   task_automation?: Partial<SettingsSnapshot["settings"]["task_automation"]>;
-  data_log?: Partial<SettingsSnapshot["settings"]["data_log"]>;
+  data_log?: Partial<SettingsSnapshot["settings"]["data_log"]> & {
+    api_key?: string;
+  };
 }
 
 // AgentSettingsUpdateResult 定义当前模块的接口约束。
