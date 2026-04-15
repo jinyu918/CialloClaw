@@ -543,7 +543,7 @@
   opacity: 0;
   pointer-events: none;
   position: absolute;
-  top: 50%;
+  top: calc(50% - 2px);
   transform: translate(-50%, -50%) scale(0.96);
   transition:
     opacity 180ms ease,
@@ -570,6 +570,24 @@
 .shell-ball-surface__file-drop-plus--vertical {
   border-left-width: 2px;
   height: 3rem;
+}
+
+.shell-ball-surface__text-drop-target {
+  background: transparent;
+  border: 0;
+  caret-color: transparent;
+  color: transparent;
+  inset: 0;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  position: absolute;
+  resize: none;
+  z-index: 8;
+}
+
+.shell-ball-surface__text-drop-target[data-visible="true"] {
+  pointer-events: auto;
 }
 
 .shell-ball-attachment-tray {
@@ -1348,14 +1366,14 @@
 }
 
 .shell-ball-mascot__ring--outer {
-  height: 11.7rem;
-  width: 11.7rem;
+  height: 8.8rem;
+  width: 8.8rem;
 }
 
 .shell-ball-mascot__ring--inner {
   animation-delay: 0.8s;
-  height: 9.46rem;
-  width: 9.46rem;
+  height: 7rem;
+  width: 7rem;
 }
 
 .shell-ball-mascot__ring-core {
@@ -1469,30 +1487,26 @@
 
 .shell-ball-mascot__voice-marker {
   align-items: center;
-  background: rgba(235, 248, 250, 0.96);
-  border: 1px solid rgba(79, 157, 167, 0.28);
   border-radius: 999px;
   box-shadow: 0 14px 22px -18px rgba(64, 126, 128, 0.38);
   color: #3d8b93;
   display: inline-flex;
   height: 2.16rem;
   justify-content: center;
-  left: -0.72rem;
+  left: -2.5rem;
   position: absolute;
-  top: 1.26rem;
+  top: -0.5rem;
   width: 2.16rem;
   z-index: 4;
 }
 
 .shell-ball-mascot__voice-marker.is-locked {
-  background: rgba(222, 247, 245, 0.98);
-  border-color: rgba(57, 145, 138, 0.34);
-  color: #2f7f79;
+  color: #972f2f;
 }
 
 .shell-ball-mascot__voice-marker-icon {
-  height: 0.92rem;
-  width: 0.92rem;
+  height: 5rem;
+  width: 5rem;
 }
 
 .shell-ball-mascot__auth-icon {
