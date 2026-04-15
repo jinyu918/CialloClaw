@@ -26,6 +26,8 @@ type Service struct {
 	fileSystem platform.FileSystemAdapter
 	execution  tools.ExecutionCapability
 	playwright tools.PlaywrightSidecarClient
+	ocr        tools.OCRWorkerClient
+	media      tools.MediaWorkerClient
 	model      *model.Service
 	audit      *audit.Service
 	checkpoint *checkpoint.Service
@@ -94,6 +96,8 @@ func NewService(
 	fileSystem platform.FileSystemAdapter,
 	executionBackend tools.ExecutionCapability,
 	playwrightClient tools.PlaywrightSidecarClient,
+	ocrClient tools.OCRWorkerClient,
+	mediaClient tools.MediaWorkerClient,
 	modelService *model.Service,
 	auditService *audit.Service,
 	checkpointService *checkpoint.Service,
@@ -110,6 +114,8 @@ func NewService(
 		fileSystem: fileSystem,
 		execution:  executionBackend,
 		playwright: playwrightClient,
+		ocr:        ocrClient,
+		media:      mediaClient,
 		model:      modelService,
 		audit:      auditService,
 		checkpoint: checkpointService,
@@ -457,6 +463,57 @@ func (s *Service) resolveToolExecution(request Request, deliveryResult map[strin
 			return "", nil, false
 		}
 		input := map[string]any{"url": urlValue, "query": queryValue}
+		if limit, ok := args["limit"]; ok {
+			input["limit"] = limit
+		}
+		return intentName, input, true
+	case "page_interact":
+		urlValue := stringValue(args, "url", "")
+		if urlValue == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"url": urlValue}
+		if actions, ok := args["actions"]; ok {
+			input["actions"] = actions
+		}
+		return intentName, input, true
+	case "structured_dom":
+		urlValue := stringValue(args, "url", "")
+		if urlValue == "" {
+			return "", nil, false
+		}
+		return intentName, map[string]any{"url": urlValue}, true
+	case "extract_text", "ocr_image", "ocr_pdf":
+		pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+		if pathValue == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"path": pathValue}
+		if language, ok := args["language"]; ok {
+			input["language"] = language
+		}
+		return intentName, input, true
+	case "transcode_media", "normalize_recording":
+		pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+		outputPath := stringValue(args, "output_path", "")
+		if pathValue == "" || outputPath == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"path": pathValue, "output_path": outputPath}
+		if format, ok := args["format"]; ok {
+			input["format"] = format
+		}
+		return intentName, input, true
+	case "extract_frames":
+		pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+		outputDir := stringValue(args, "output_dir", "")
+		if pathValue == "" || outputDir == "" {
+			return "", nil, false
+		}
+		input := map[string]any{"path": pathValue, "output_dir": outputDir}
+		if everySeconds, ok := args["every_seconds"]; ok {
+			input["every_seconds"] = everySeconds
+		}
 		if limit, ok := args["limit"]; ok {
 			input["limit"] = limit
 		}
@@ -1219,6 +1276,52 @@ func (s *Service) resolveGovernanceToolExecution(request Request) (string, map[s
 					}
 					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
 				}
+			case "page_interact":
+				urlValue := stringValue(args, "url", "")
+				if urlValue != "" {
+					input := map[string]any{"url": urlValue}
+					if actions, ok := args["actions"]; ok {
+						input["actions"] = actions
+					}
+					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
+				}
+			case "structured_dom":
+				urlValue := stringValue(args, "url", "")
+				if urlValue != "" {
+					return intentName, map[string]any{"url": urlValue}, s.toolExecutionContext(s.workspace, request), true, nil
+				}
+			case "extract_text", "ocr_image", "ocr_pdf":
+				pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+				if pathValue != "" {
+					input := map[string]any{"path": pathValue}
+					if language, ok := args["language"]; ok {
+						input["language"] = language
+					}
+					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
+				}
+			case "transcode_media", "normalize_recording":
+				pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+				outputPath := stringValue(args, "output_path", "")
+				if pathValue != "" && outputPath != "" {
+					input := map[string]any{"path": pathValue, "output_path": outputPath}
+					if format, ok := args["format"]; ok {
+						input["format"] = format
+					}
+					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
+				}
+			case "extract_frames":
+				pathValue := stringValue(args, "path", stringValue(args, "file_path", ""))
+				outputDir := stringValue(args, "output_dir", "")
+				if pathValue != "" && outputDir != "" {
+					input := map[string]any{"path": pathValue, "output_dir": outputDir}
+					if everySeconds, ok := args["every_seconds"]; ok {
+						input["every_seconds"] = everySeconds
+					}
+					if limit, ok := args["limit"]; ok {
+						input["limit"] = limit
+					}
+					return intentName, input, s.toolExecutionContext(s.workspace, request), true, nil
+				}
 			}
 		}
 	}
@@ -1248,6 +1351,8 @@ func (s *Service) toolExecutionContext(workspacePath string, request Request) *t
 		Platform:             s.fileSystem,
 		Execution:            s.execution,
 		Playwright:           s.playwright,
+		OCR:                  s.ocr,
+		Media:                s.media,
 		Model:                s.model,
 	}
 }
@@ -1294,7 +1399,7 @@ func governanceTargetObject(toolName string, toolInput map[string]any, execCtx *
 		return stringValue(toolInput, "path", "")
 	case "exec_command":
 		return firstNonEmpty(stringValue(toolInput, "working_dir", ""), execCtx.WorkspacePath)
-	case "page_read", "page_search":
+	case "page_read", "page_search", "page_interact", "structured_dom":
 		return stringValue(toolInput, "url", "")
 	default:
 		return stringValue(toolInput, "path", "")
@@ -1320,6 +1425,9 @@ func approvedTargetObject(intent map[string]any, workspacePath string) string {
 	}
 	if stringValue(intent, "name", "") == "exec_command" {
 		return workspacePath
+	}
+	if url := strings.TrimSpace(stringValue(arguments, "url", "")); url != "" {
+		return url
 	}
 	return ""
 }

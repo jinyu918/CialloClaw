@@ -56,9 +56,11 @@ type successfulExecutionBackend struct {
 }
 
 type stubPlaywrightClient struct {
-	readResult   tools.BrowserPageReadResult
-	searchResult tools.BrowserPageSearchResult
-	err          error
+	readResult       tools.BrowserPageReadResult
+	searchResult     tools.BrowserPageSearchResult
+	interactResult   tools.BrowserPageInteractResult
+	structuredResult tools.BrowserStructuredDOMResult
+	err              error
 }
 
 func (b successfulExecutionBackend) RunCommand(_ context.Context, _ string, _ []string, _ string) (tools.CommandExecutionResult, error) {
@@ -93,6 +95,28 @@ func (s stubPlaywrightClient) SearchPage(_ context.Context, url, query string, l
 	if limit > 0 && len(result.Matches) > limit {
 		result.Matches = result.Matches[:limit]
 		result.MatchCount = len(result.Matches)
+	}
+	return result, nil
+}
+
+func (s stubPlaywrightClient) InteractPage(_ context.Context, url string, _ []map[string]any) (tools.BrowserPageInteractResult, error) {
+	if s.err != nil {
+		return tools.BrowserPageInteractResult{}, s.err
+	}
+	result := s.interactResult
+	if result.URL == "" {
+		result.URL = url
+	}
+	return result, nil
+}
+
+func (s stubPlaywrightClient) StructuredDOM(_ context.Context, url string) (tools.BrowserStructuredDOMResult, error) {
+	if s.err != nil {
+		return tools.BrowserStructuredDOMResult{}, s.err
+	}
+	result := s.structuredResult
+	if result.URL == "" {
+		result.URL = url
 	}
 	return result, nil
 }
@@ -174,7 +198,7 @@ func newTestServiceWithExecutionAndPlaywright(t *testing.T, modelOutput string, 
 	toolExecutor := tools.NewToolExecutor(toolRegistry)
 	pluginService := plugin.NewService()
 	fileSystem := platform.NewLocalFileSystemAdapter(pathPolicy)
-	executor := execution.NewService(fileSystem, executionBackend, playwrightClient, modelService, auditService, checkpoint.NewService(checkpointWriter), deliveryService, toolRegistry, toolExecutor, pluginService)
+	executor := execution.NewService(fileSystem, executionBackend, playwrightClient, sidecarclient.NewNoopOCRWorkerClient(), sidecarclient.NewNoopMediaWorkerClient(), modelService, auditService, checkpoint.NewService(checkpointWriter), deliveryService, toolRegistry, toolExecutor, pluginService)
 
 	service := NewService(
 		contextsvc.NewService(),

@@ -149,7 +149,7 @@ func isApprovalCommand(commandPreview string) bool {
 
 func isWebpageOperation(operationName string) bool {
 	switch strings.TrimSpace(operationName) {
-	case "page_read", "page_search":
+	case "page_read", "page_search", "page_interact", "structured_dom":
 		return true
 	default:
 		return false

@@ -241,7 +241,7 @@ func webpagesFromTarget(target string) []string {
 
 func isWebpageTool(toolName string) bool {
 	switch toolName {
-	case "page_read", "page_search":
+	case "page_read", "page_search", "page_interact", "structured_dom":
 		return true
 	default:
 		return false
