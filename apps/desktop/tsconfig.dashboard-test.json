@@ -8,7 +8,8 @@
     "rootDir": "./src",
     "paths": {
       "@/*": ["./src/*"],
-      "@/rpc/methods": ["./src/features/shell-ball/test-stubs/rpcMethods.ts"]
+      "@/rpc/methods": ["./src/features/shell-ball/test-stubs/rpcMethods.ts"],
+      "@/rpc/fallback": ["./src/features/shell-ball/test-stubs/rpcFallback.ts"]
     }
   },
   "include": [
@@ -19,6 +20,7 @@
     "src/features/dashboard/tasks/taskPage.service.ts",
     "src/features/dashboard/tasks/taskPage.mock.ts",
     "src/features/dashboard/tasks/taskPage.types.ts",
+    "src/features/shell-ball/test-stubs/rpcFallback.ts",
     "src/features/shell-ball/test-stubs/rpcMethods.ts"
   ]
 }

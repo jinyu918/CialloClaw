@@ -16,7 +16,7 @@ type TaskDetailPanelProps = {
   detailErrorMessage: string | null;
   detailState: "loading" | "error" | "ready";
   feedback: string | null;
-  onAction: (action: "pause" | "resume" | "cancel" | "restart" | "edit" | "open-safety") => void;
+  onAction: (action: "pause" | "resume" | "cancel" | "restart" | "open-safety" | "open-shell-ball") => void;
   onClose: () => void;
   onRetryDetail: (() => void) | null;
 };
