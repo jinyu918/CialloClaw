@@ -1,6 +1,7 @@
-import type { BubbleMessage } from "@cialloclaw/protocol";
+import type { BubbleMessage, DeliveryResult } from "@cialloclaw/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { subscribeDeliveryReady } from "@/rpc/subscriptions";
 import {
   SHELL_BALL_PINNED_BUBBLE_WINDOW_FRAME,
   closeShellBallPinnedBubbleWindow,
@@ -16,6 +17,8 @@ import { cloneShellBallBubbleItems, type ShellBallBubbleItem } from "./shellBall
 import type { ShellBallVoicePreview } from "./shellBall.interaction";
 import type { ShellBallInputBarMode, ShellBallVisualState } from "./shellBall.types";
 import type { ShellBallInputSubmitResult } from "./useShellBallInteraction";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
+import { startTaskFromFiles } from "@/services/taskService";
 import {
   createDefaultShellBallWindowSnapshot,
   createShellBallWindowSnapshot,
@@ -24,12 +27,14 @@ import {
   type ShellBallBubbleActionPayload,
   type ShellBallBubbleHoverPayload,
   type ShellBallBubbleVisibilityPhase,
+  type ShellBallIntentDecisionPayload,
   shellBallWindowSyncEvents,
   type ShellBallHelperReadyPayload,
   type ShellBallHelperWindowRole,
   type ShellBallInputDraftPayload,
   type ShellBallInputFocusPayload,
   type ShellBallInputHoverPayload,
+  type ShellBallPendingFileActionPayload,
   type ShellBallInputRequestFocusPayload,
   type ShellBallPinnedWindowDetachedPayload,
   type ShellBallPinnedWindowReadyPayload,
@@ -37,14 +42,20 @@ import {
   type ShellBallPrimaryActionPayload,
 } from "./shellBall.windowSync";
 import { getShellBallBubbleAnchor } from "./useShellBallWindowMetrics";
+import { getShellBallVisualStateForTaskStatus } from "./shellBall.interaction";
+import { createMockShellBallConfirmResult } from "./shellBall.mock";
+import { useShellBallStore } from "../../stores/shellBallStore";
 
 type ShellBallCoordinatorInput = {
   visualState: ShellBallVisualState;
   helperWindowsVisible?: boolean;
   inputValue: string;
+  pendingFiles?: string[];
   finalizedSpeechPayload: string | null;
   voicePreview: ShellBallVoicePreview;
   setInputValue: (value: string) => void;
+  onAppendPendingFiles?: (paths: string[]) => void;
+  onRemovePendingFile?: (path: string) => void;
   onFinalizedSpeechHandled: () => void;
   onRegionEnter: () => void;
   onRegionLeave: () => void;
@@ -62,6 +73,18 @@ type ShellBallHelperSnapshotInput = {
 const SHELL_BALL_LOCAL_BUBBLE_ITEMS: ShellBallBubbleItem[] = [];
 const SHELL_BALL_BUBBLE_HIDE_DELAY_MS = 5_000;
 const SHELL_BALL_BUBBLE_FADE_DURATION_MS = 420;
+
+function createShellBallRequestMeta() {
+  const now = new Date().toISOString();
+  const traceId = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `trace_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  return {
+    trace_id: traceId,
+    client_time: now,
+  };
+}
 
 export function compareShellBallBubbleItemsByTimestamp(left: ShellBallBubbleItem, right: ShellBallBubbleItem) {
   const createdAtOrder = left.bubble.created_at.localeCompare(right.bubble.created_at);
@@ -131,6 +154,68 @@ function createShellBallTextBubbleItem(input: {
       motionHint: "settle",
     },
   } satisfies ShellBallBubbleItem;
+}
+
+function getShellBallPendingFileName(filePath: string) {
+  const normalizedPath = filePath.replace(/\\/g, "/").trim();
+  if (normalizedPath === "") {
+    return "未命名文件";
+  }
+
+  const segments = normalizedPath.split("/").filter((segment) => segment !== "");
+  return segments.at(-1) ?? normalizedPath;
+}
+
+function summarizeShellBallPendingFiles(filePaths: string[]) {
+  const fileNames = filePaths.map(getShellBallPendingFileName).filter((fileName) => fileName !== "");
+  if (fileNames.length === 0) {
+    return "";
+  }
+
+  const visibleNames = fileNames.slice(0, 3).join("、");
+  if (fileNames.length <= 3) {
+    return visibleNames;
+  }
+
+  return `${visibleNames} 等 ${fileNames.length} 个文件`;
+}
+
+function createShellBallSubmittedContentPreview(input: {
+  text: string;
+  files: string[];
+}) {
+  const lines: string[] = [];
+  const fileSummary = summarizeShellBallPendingFiles(input.files);
+  const trimmedText = input.text.trim();
+
+  if (fileSummary !== "") {
+    lines.push(`附件：${fileSummary}`);
+  }
+  if (trimmedText !== "") {
+    lines.push(fileSummary === "" ? trimmedText : `说明：${trimmedText}`);
+  }
+
+  return lines.join("\n");
+}
+
+function createShellBallDeliveryResultBubbleItem(input: {
+  taskId: string;
+  deliveryResult: DeliveryResult;
+  createdAt: string;
+}) {
+  return createShellBallTextBubbleItem({
+    role: "agent",
+    text: input.deliveryResult.preview_text.trim() || input.deliveryResult.title,
+    bubbleType: "result",
+    createdAt: input.createdAt,
+    taskId: input.taskId,
+  });
+}
+
+function syncShellBallVisualStateFromTaskStatus(status: Parameters<typeof getShellBallVisualStateForTaskStatus>[0]) {
+  const currentState = useShellBallStore.getState().visualState;
+  const nextState = getShellBallVisualStateForTaskStatus(status, currentState);
+  useShellBallStore.getState().setVisualState(nextState);
 }
 
 function createShellBallAgentBubbleItem(result: ShellBallInputSubmitResult, fallbackCreatedAt: string) {
@@ -209,11 +294,12 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         visualState: input.visualState,
         helpersVisible,
         inputValue: input.inputValue,
+        pendingFiles: input.pendingFiles ?? [],
         voicePreview: input.voicePreview,
         bubbleItems,
         bubbleVisibilityPhase,
       }),
-    [bubbleItems, bubbleVisibilityPhase, helpersVisible, input.inputValue, input.visualState, input.voicePreview],
+    [bubbleItems, bubbleVisibilityPhase, helpersVisible, input.inputValue, input.pendingFiles, input.visualState, input.voicePreview],
   );
   const snapshotRef = useRef(snapshot);
   const bubbleItemsRef = useRef(bubbleItems);
@@ -221,6 +307,8 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const visibleBubbleCountRef = useRef(getShellBallVisibleBubbleItems(bubbleItems).length);
   const previousVisibleBubbleCountRef = useRef(visibleBubbleCountRef.current);
   const detachedPinnedBubbleIdsRef = useRef(new Set<string>());
+  const deliveryReadyBubbleKeysRef = useRef(new Set<string>());
+  const shellBallTaskIdsRef = useRef(new Set<string>());
   const helperWindowsVisibleRef = useRef(input.helperWindowsVisible ?? true);
   const regionActiveRef = useRef(false);
   const bubbleHoveredRef = useRef(false);
@@ -230,6 +318,8 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   helperWindowsVisibleRef.current = helpersVisible;
   const handlersRef = useRef({
     setInputValue: input.setInputValue,
+    onAppendPendingFiles: input.onAppendPendingFiles ?? (() => {}),
+    onRemovePendingFile: input.onRemovePendingFile ?? (() => {}),
     onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
@@ -244,6 +334,8 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   bubbleVisibilityPhaseRef.current = bubbleVisibilityPhase;
   handlersRef.current = {
     setInputValue: input.setInputValue,
+    onAppendPendingFiles: input.onAppendPendingFiles ?? (() => {}),
+    onRemovePendingFile: input.onRemovePendingFile ?? (() => {}),
     onFinalizedSpeechHandled: input.onFinalizedSpeechHandled,
     onRegionEnter: input.onRegionEnter,
     onRegionLeave: input.onRegionLeave,
@@ -316,6 +408,66 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       }, SHELL_BALL_BUBBLE_FADE_DURATION_MS);
     }, SHELL_BALL_BUBBLE_HIDE_DELAY_MS);
   }, [applyBubbleVisibilityPhase, clearBubbleVisibilityTimers]);
+
+  const handleDroppedFiles = useCallback(async (paths: string[]) => {
+    const normalizedPaths = paths.map((path) => path.trim()).filter(Boolean);
+
+    if (normalizedPaths.length === 0) {
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const leadFile = normalizedPaths[0].split(/[\\/]/).pop() ?? normalizedPaths[0];
+    const userText = normalizedPaths.length === 1 ? `拖入文件：${leadFile}` : `拖入 ${normalizedPaths.length} 个文件`;
+
+    setBubbleItems((currentItems) =>
+      sortShellBallBubbleItemsByTimestamp([
+        ...currentItems,
+        createShellBallTextBubbleItem({
+          role: "user",
+          text: userText,
+          bubbleType: "status",
+          createdAt,
+        }),
+      ]),
+    );
+    revealBubbleRegion();
+
+    try {
+      const result = await startTaskFromFiles(normalizedPaths, {
+        delivery: {
+          preferred: "bubble",
+          fallback: "task_detail",
+        },
+        source: "floating_ball",
+      });
+      shellBallTaskIdsRef.current.add(result.task.task_id);
+
+      syncShellBallVisualStateFromTaskStatus(result.task.status);
+
+      setBubbleItems((currentItems) =>
+        sortShellBallBubbleItemsByTimestamp([
+          ...currentItems,
+          createShellBallAgentBubbleItem(result, new Date().toISOString()),
+        ]),
+      );
+      revealBubbleRegion();
+    } catch (error) {
+      console.warn("shell-ball file drop start failed", error);
+      setBubbleItems((currentItems) =>
+        sortShellBallBubbleItemsByTimestamp([
+          ...currentItems,
+          createShellBallTextBubbleItem({
+            role: "agent",
+            text: error instanceof Error ? error.message : "文件承接失败，请稍后再试。",
+            bubbleType: "status",
+            createdAt: new Date().toISOString(),
+          }),
+        ]),
+      );
+      revealBubbleRegion();
+    }
+  }, [revealBubbleRegion]);
 
   useEffect(() => {
     const visibleBubbleCount = getShellBallVisibleBubbleItems(bubbleItems).length;
@@ -413,6 +565,46 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     );
     handlersRef.current.onFinalizedSpeechHandled();
   }, [input.finalizedSpeechPayload]);
+
+  useEffect(() => {
+    return subscribeDeliveryReady((payload) => {
+      if (!shellBallTaskIdsRef.current.has(payload.task_id)) {
+        return;
+      }
+
+      const bubbleText = payload.delivery_result.preview_text.trim() || payload.delivery_result.title;
+      const bubbleKey = `${payload.task_id}:${payload.delivery_result.type}:${bubbleText}`;
+
+      if (deliveryReadyBubbleKeysRef.current.has(bubbleKey)) {
+        return;
+      }
+
+      deliveryReadyBubbleKeysRef.current.add(bubbleKey);
+
+      setBubbleItems((currentItems) => {
+        if (
+          currentItems.some(
+            (item) =>
+              item.bubble.task_id === payload.task_id &&
+              item.bubble.type === "result" &&
+              item.bubble.text === bubbleText,
+          )
+        ) {
+          return currentItems;
+        }
+
+        return sortShellBallBubbleItemsByTimestamp([
+          ...currentItems,
+          createShellBallDeliveryResultBubbleItem({
+            createdAt: new Date().toISOString(),
+            deliveryResult: payload.delivery_result,
+            taskId: payload.task_id,
+          }),
+        ]);
+      });
+      revealBubbleRegion();
+    });
+  }, [revealBubbleRegion]);
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
@@ -536,10 +728,28 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       switch (action) {
         case "attach_file":
           handlersRef.current.onAttachFile();
+          setBubbleItems((currentItems) =>
+            sortShellBallBubbleItemsByTimestamp([
+              ...currentItems,
+              createShellBallTextBubbleItem({
+                role: "agent",
+                text: "把文件拖到悬浮球上，就会按 issue #187 的 file_drop 入口创建任务。",
+                bubbleType: "status",
+                createdAt: new Date().toISOString(),
+              }),
+            ]),
+          );
+          revealBubbleRegion();
           break;
         case "submit": {
           const submittedText = snapshotRef.current.inputValue.trim();
-          if (submittedText === "") {
+          const submittedFiles = snapshotRef.current.pendingFiles;
+          const submittedPreview = createShellBallSubmittedContentPreview({
+            text: submittedText,
+            files: submittedFiles,
+          });
+
+          if (submittedPreview === "") {
             await handlersRef.current.onSubmitText();
             break;
           }
@@ -550,7 +760,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
               ...currentItems,
               createShellBallTextBubbleItem({
                 role: "user",
-                text: submittedText,
+                text: submittedPreview,
                 bubbleType: "result",
                 createdAt,
               }),
@@ -560,6 +770,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
 
           const result = await handlersRef.current.onSubmitText();
           if (isShellBallInputSubmitResult(result)) {
+            shellBallTaskIdsRef.current.add(result.task.task_id);
             setBubbleItems((currentItems) =>
               sortShellBallBubbleItemsByTimestamp([
                 ...currentItems,
@@ -574,6 +785,68 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         case "primary_click":
           handlersRef.current.onPrimaryClick();
           break;
+      }
+    }
+
+    async function handleIntentDecision(payload: ShellBallIntentDecisionPayload) {
+      const importRpcMethods = new Function("return import('../../rpc/methods')") as () => Promise<{
+        confirmTask: (request: {
+          confirmed: boolean;
+          request_meta: ReturnType<typeof createShellBallRequestMeta>;
+          task_id: string;
+        }) => Promise<ShellBallInputSubmitResult>;
+      }>;
+
+      try {
+        const rpcMethods = await importRpcMethods();
+        const createdAt = new Date().toISOString();
+        const decisionText = payload.decision === "confirm" ? "确认继续" : "取消";
+
+        setBubbleItems((currentItems) =>
+          sortShellBallBubbleItemsByTimestamp([
+            ...currentItems,
+            createShellBallTextBubbleItem({
+              createdAt,
+              role: "user",
+              text: decisionText,
+              bubbleType: "status",
+              taskId: payload.taskId,
+            }),
+          ]),
+        );
+
+        let result: ShellBallInputSubmitResult;
+
+        try {
+          result = await rpcMethods.confirmTask({
+            confirmed: payload.decision === "confirm",
+            request_meta: createShellBallRequestMeta(),
+            task_id: payload.taskId,
+          });
+        } catch (error) {
+          if (!isRpcChannelUnavailable(error)) {
+            throw error;
+          }
+
+          logRpcMockFallback("shell-ball confirm", error);
+          result = createMockShellBallConfirmResult({
+            confirmed: payload.decision === "confirm",
+            taskId: payload.taskId,
+          });
+        }
+
+        syncShellBallVisualStateFromTaskStatus(result.task.status);
+        shellBallTaskIdsRef.current.add(result.task.task_id);
+
+        setBubbleItems((currentItems) =>
+          sortShellBallBubbleItemsByTimestamp([
+            ...currentItems,
+            createShellBallAgentBubbleItem(result, new Date().toISOString()),
+          ]),
+        );
+        revealBubbleRegion();
+      } catch (error) {
+        console.warn("shell-ball intent decision failed", error);
       }
     }
 
@@ -627,12 +900,25 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       currentWindow.listen<ShellBallInputDraftPayload>(shellBallWindowSyncEvents.inputDraft, ({ payload }) => {
         handlersRef.current.setInputValue(payload.value);
       }),
+      currentWindow.listen<ShellBallPendingFileActionPayload>(shellBallWindowSyncEvents.pendingFileAction, ({ payload }) => {
+        if (payload.action === "append") {
+          handlersRef.current.onAppendPendingFiles(payload.paths);
+          return;
+        }
+
+        if (payload.action === "remove") {
+          handlersRef.current.onRemovePendingFile(payload.path);
+        }
+      }),
       currentWindow.listen<ShellBallPrimaryActionPayload>(
         shellBallWindowSyncEvents.primaryAction,
         ({ payload }) => {
           void handlePrimaryAction(payload.action);
         },
       ),
+      currentWindow.listen<ShellBallIntentDecisionPayload>(shellBallWindowSyncEvents.intentDecision, ({ payload }) => {
+        void handleIntentDecision(payload);
+      }),
       currentWindow.listen<ShellBallBubbleActionPayload>(shellBallWindowSyncEvents.bubbleAction, ({ payload }) => {
         handleBubbleAction(payload);
       }),
@@ -661,7 +947,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     };
   }, [revealBubbleRegion, scheduleBubbleRegionHide]);
 
-  return { snapshot };
+  return { snapshot, handleDroppedFiles };
 }
 
 export function useShellBallHelperWindowSnapshot({ role }: ShellBallHelperSnapshotInput) {
@@ -746,6 +1032,22 @@ export async function emitShellBallPrimaryAction(action: ShellBallPrimaryAction,
   await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.primaryAction, {
     action,
     source,
+  });
+}
+
+export async function emitShellBallPendingFileAction(payload: ShellBallPendingFileActionPayload) {
+  await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.pendingFileAction, payload);
+}
+
+export async function emitShellBallIntentDecision(
+  decision: ShellBallIntentDecisionPayload["decision"],
+  taskId: string,
+  source: ShellBallIntentDecisionPayload["source"],
+) {
+  await getCurrentWindow().emitTo(shellBallWindowLabels.ball, shellBallWindowSyncEvents.intentDecision, {
+    decision,
+    source,
+    taskId,
   });
 }
 

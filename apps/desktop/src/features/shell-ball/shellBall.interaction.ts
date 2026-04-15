@@ -4,6 +4,7 @@ import type {
   ShellBallTransitionResult,
   ShellBallVisualState,
 } from "./shellBall.types";
+import type { TaskStatus } from "@cialloclaw/protocol";
 
 export const SHELL_BALL_HOVER_INTENT_MS = 360;
 export const SHELL_BALL_LEAVE_GRACE_MS = 180;
@@ -121,6 +122,30 @@ export function getShellBallVoicePreview(input: { deltaX: number; deltaY: number
   }
 
   return null;
+}
+
+export function resolveShellBallVoiceReleaseEvent(preview: Exclude<ShellBallVoicePreview, "lock">): Extract<ShellBallInteractionEvent, "voice_cancel" | "voice_finish"> {
+  return preview === "cancel" ? "voice_cancel" : "voice_finish";
+}
+
+export function getShellBallVisualStateForTaskStatus(status: TaskStatus, fallback: ShellBallVisualState): ShellBallVisualState {
+  switch (status) {
+    case "confirming_intent":
+      return "confirming_intent";
+    case "processing":
+      return "processing";
+    case "waiting_auth":
+      return "waiting_auth";
+    case "waiting_input":
+      return fallback === "voice_locked" ? "hover_input" : "hover_input";
+    case "paused":
+    case "blocked":
+    case "failed":
+    case "cancelled":
+    case "ended_unfinished":
+    case "completed":
+      return fallback === "hover_input" || fallback === "voice_locked" ? "hover_input" : "idle";
+  }
 }
 
 export function resolveShellBallHoverTiming(input: {

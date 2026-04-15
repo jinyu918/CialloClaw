@@ -1,0 +1,759 @@
+import type {
+  AgentDashboardModuleGetResult,
+  AgentDashboardOverviewGetResult,
+  AgentRecommendationGetResult,
+  RecommendationFeedback,
+  RecommendationItem,
+  RequestMeta,
+  RiskLevel,
+  TaskStatus,
+} from "@cialloclaw/protocol";
+import {
+  getDashboardModule,
+  getDashboardOverview,
+  getRecommendations,
+  submitRecommendationFeedback,
+} from "@/rpc/methods";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
+import {
+  dashboardHomeStateGroups,
+  dashboardHomeStates,
+  dashboardSummonTemplates,
+  dashboardVoiceSequences,
+} from "./dashboardHome.mocks";
+import type {
+  DashboardHomeContextItem,
+  DashboardHomeEventStateKey,
+  DashboardHomeInsightItem,
+  DashboardHomeModuleKey,
+  DashboardHomeNoteItem,
+  DashboardHomeSignalItem,
+  DashboardHomeStateData,
+  DashboardHomeStateGroup,
+  DashboardHomeSummonEvent,
+  DashboardVoiceSequence,
+} from "./dashboardHome.types";
+
+const dashboardModuleLabels: Record<DashboardHomeModuleKey, string> = {
+  memory: "镜子",
+  notes: "便签",
+  safety: "安全",
+  tasks: "任务",
+};
+
+const dashboardModuleTabs: Record<DashboardHomeModuleKey, string> = {
+  memory: "overview",
+  notes: "queue",
+  safety: "guard",
+  tasks: "focus",
+};
+
+const dashboardModuleNextSteps: Record<DashboardHomeModuleKey, string> = {
+  memory: "打开镜子页查看本周总结",
+  notes: "打开便签页继续整理事项",
+  safety: "打开安全页确认风险摘要",
+  tasks: "打开任务页继续推进",
+};
+
+const dashboardVoiceExecutionSteps: Record<DashboardHomeModuleKey, string[]> = {
+  memory: ["正在读取镜子概览…", "整理近期协作总结…", "准备切换到镜子页…", "马上打开"],
+  notes: ["正在读取便签列表…", "整理待办与提醒…", "准备切换到便签页…", "马上打开"],
+  safety: ["正在读取安全摘要…", "整理待授权与恢复点…", "准备切换到安全页…", "马上打开"],
+  tasks: ["正在读取任务列表…", "定位当前焦点任务…", "准备切换到任务页…", "马上打开"],
+};
+
+export type DashboardHomeData = {
+  focusLine: {
+    headline: string;
+    reason: string;
+  };
+  stateGroups: DashboardHomeStateGroup[];
+  stateMap: Record<DashboardHomeEventStateKey, DashboardHomeStateData>;
+  summonTemplates: Array<Omit<DashboardHomeSummonEvent, "id">>;
+  voiceSequences: DashboardVoiceSequence[];
+};
+
+function createRequestMeta(scope: string): RequestMeta {
+  return {
+    client_time: new Date().toISOString(),
+    trace_id: `trace_${scope}_${Date.now()}`,
+  };
+}
+
+function cloneStateData(state: DashboardHomeStateData): DashboardHomeStateData {
+  return {
+    ...state,
+    anomaly: state.anomaly ? { ...state.anomaly } : undefined,
+    context: state.context.map((item) => ({ ...item })),
+    insights: state.insights?.map((item) => ({ ...item })),
+    notes: state.notes?.map((item) => ({ ...item })),
+    progressSteps: state.progressSteps?.map((item) => ({ ...item })),
+    signals: state.signals?.map((item) => ({ ...item })),
+  };
+}
+
+function cloneVoiceSequence(sequence: DashboardVoiceSequence): DashboardVoiceSequence {
+  return {
+    ...sequence,
+    echoPool: [...sequence.echoPool],
+    executingSteps: [...sequence.executingSteps],
+    fragments: [...sequence.fragments],
+  };
+}
+
+function cloneSummonTemplate(template: Omit<DashboardHomeSummonEvent, "id">): Omit<DashboardHomeSummonEvent, "id"> {
+  return { ...template };
+}
+
+function createBaseStateMap() {
+  return Object.fromEntries(
+    Object.entries(dashboardHomeStates).map(([key, value]) => [key, cloneStateData(value)]),
+  ) as Record<DashboardHomeEventStateKey, DashboardHomeStateData>;
+}
+
+export function getDashboardHomeFallbackData(): DashboardHomeData {
+  return {
+    focusLine: {
+      headline: "让中心球和 4 个入口球一起构成今天的任务轨道。",
+      reason: "长按中心球可以直接进入语音模式，四个入口球会始终保持最显眼的位置。",
+    },
+    stateGroups: dashboardHomeStateGroups.map((group) => ({ ...group, states: [...group.states] })),
+    stateMap: createBaseStateMap(),
+    summonTemplates: dashboardSummonTemplates.map(cloneSummonTemplate),
+    voiceSequences: dashboardVoiceSequences.map(cloneVoiceSequence),
+  };
+}
+
+function formatDashboardTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "刚刚";
+  }
+
+  return date.toLocaleString("zh-CN", {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "numeric",
+  });
+}
+
+function formatRiskLabel(riskLevel: RiskLevel) {
+  switch (riskLevel) {
+    case "green":
+      return "低";
+    case "yellow":
+      return "中";
+    case "red":
+      return "高";
+  }
+}
+
+function formatTaskStatusLabel(status: TaskStatus) {
+  switch (status) {
+    case "confirming_intent":
+      return "等待确认";
+    case "processing":
+      return "处理中";
+    case "waiting_auth":
+      return "等待授权";
+    case "waiting_input":
+      return "等待补充";
+    case "paused":
+      return "已暂停";
+    case "blocked":
+      return "被阻塞";
+    case "failed":
+      return "执行失败";
+    case "completed":
+      return "已完成";
+    case "cancelled":
+      return "已取消";
+    case "ended_unfinished":
+      return "未完成结束";
+  }
+}
+
+function formatTaskTag(status: TaskStatus) {
+  switch (status) {
+    case "confirming_intent":
+      return "待确认";
+    case "processing":
+      return "处理中";
+    case "waiting_auth":
+      return "待授权";
+    case "waiting_input":
+      return "待补充";
+    case "completed":
+      return "已完成";
+    default:
+      return formatTaskStatusLabel(status);
+  }
+}
+
+function getSignalLevel(riskLevel: RiskLevel): DashboardHomeSignalItem["level"] {
+  if (riskLevel === "red") {
+    return "critical";
+  }
+
+  if (riskLevel === "yellow") {
+    return "warn";
+  }
+
+  return "normal";
+}
+
+function getModuleHighlights(result: AgentDashboardModuleGetResult | null | undefined) {
+  return Array.isArray(result?.highlights) ? result.highlights.filter(Boolean) : [];
+}
+
+function getModuleSummaryNumber(result: AgentDashboardModuleGetResult | null | undefined, key: string) {
+  const value = result?.summary?.[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function inferModuleFromRecommendation(item: RecommendationItem): DashboardHomeModuleKey {
+  const corpus = `${item.intent.name} ${item.text}`.toLowerCase();
+
+  if (
+    corpus.includes("memory") ||
+    corpus.includes("mirror") ||
+    corpus.includes("summary") ||
+    corpus.includes("habit") ||
+    item.text.includes("镜") ||
+    item.text.includes("总结")
+  ) {
+    return "memory";
+  }
+
+  if (
+    corpus.includes("safety") ||
+    corpus.includes("security") ||
+    corpus.includes("approval") ||
+    corpus.includes("authorize") ||
+    corpus.includes("audit") ||
+    item.text.includes("授权") ||
+    item.text.includes("安全")
+  ) {
+    return "safety";
+  }
+
+  if (
+    corpus.includes("todo") ||
+    corpus.includes("note") ||
+    corpus.includes("reminder") ||
+    corpus.includes("schedule") ||
+    item.text.includes("便签") ||
+    item.text.includes("提醒")
+  ) {
+    return "notes";
+  }
+
+  return "tasks";
+}
+
+function getTaskStateKey(overview: AgentDashboardOverviewGetResult, taskModule: AgentDashboardModuleGetResult) {
+  const status = overview.overview.focus_summary?.status;
+  if (status === "confirming_intent") {
+    return "task_completing";
+  }
+
+  if (status === "waiting_auth") {
+    return "task_error_permission";
+  }
+
+  if (status === "waiting_input") {
+    return "task_error_missing_info";
+  }
+
+  if (status === "blocked" || status === "paused" || status === "failed" || status === "ended_unfinished") {
+    return "task_error_blocked";
+  }
+
+  if (status === "completed") {
+    return "task_done";
+  }
+
+  if (getModuleHighlights(taskModule).length > 1) {
+    return "task_highlight";
+  }
+
+  return "task_working";
+}
+
+function getNotesStateKey(notesModule: AgentDashboardModuleGetResult, recommendations: RecommendationItem[]) {
+  const recommendationCount = recommendations.filter((item) => inferModuleFromRecommendation(item) === "notes").length;
+  const highlights = getModuleHighlights(notesModule);
+
+  if (highlights.some((item) => item.includes("重复") || item.includes("周期") || item.includes("习惯"))) {
+    return "notes_reminder";
+  }
+
+  if (recommendationCount > 0) {
+    return "notes_processing";
+  }
+
+  return "notes_scheduled";
+}
+
+function getMemoryStateKey(memoryModule: AgentDashboardModuleGetResult) {
+  return getModuleHighlights(memoryModule).length > 1 ? "memory_summary" : "memory_habit";
+}
+
+function getSafetyStateKey(overview: AgentDashboardOverviewGetResult) {
+  const trustSummary = overview.overview.trust_summary;
+  return trustSummary.pending_authorizations > 0 || trustSummary.risk_level !== "green" ? "safety_alert" : "safety_guard";
+}
+
+function buildTaskContext(
+  overview: AgentDashboardOverviewGetResult,
+  taskModule: AgentDashboardModuleGetResult,
+): DashboardHomeContextItem[] {
+  const focusSummary = overview.overview.focus_summary;
+  const highlights = getModuleHighlights(taskModule);
+
+  if (!focusSummary) {
+    return highlights.slice(0, 3).map((item, index) => ({
+      iconKey: index === 0 ? "sparkles" : index === 1 ? "flag" : "info",
+      text: item,
+      type: index === 0 ? "active" : "hint",
+    }));
+  }
+
+  return [
+    {
+      iconKey: focusSummary.status === "processing" ? "loader" : "check",
+      text: `当前步骤：${focusSummary.current_step}`,
+      time: formatDashboardTime(focusSummary.updated_at),
+      type: focusSummary.status === "processing" ? "active" : "normal",
+    },
+    {
+      iconKey: "flag",
+      text: `下一步：${focusSummary.next_action}`,
+      type: "hint",
+    },
+    ...(highlights[0]
+      ? [
+          {
+            iconKey: "sparkles",
+            text: highlights[0],
+            type: "normal" as const,
+          },
+        ]
+      : []),
+  ];
+}
+
+function buildTaskState(
+  stateKey: DashboardHomeEventStateKey,
+  overview: AgentDashboardOverviewGetResult,
+  taskModule: AgentDashboardModuleGetResult,
+) {
+  const state = cloneStateData(dashboardHomeStates[stateKey]);
+  const focusSummary = overview.overview.focus_summary;
+
+  if (!focusSummary) {
+    const highlights = getModuleHighlights(taskModule);
+    if (highlights[0]) {
+      state.headline = highlights[0];
+    }
+    if (highlights[1]) {
+      state.subline = highlights[1];
+    }
+    state.context = buildTaskContext(overview, taskModule);
+    return state;
+  }
+
+  state.headline = focusSummary.title;
+  state.subline = `${formatTaskStatusLabel(focusSummary.status)} · ${focusSummary.current_step} · 下一步：${focusSummary.next_action}`;
+  state.label = formatTaskStatusLabel(focusSummary.status);
+  state.tag = formatTaskTag(focusSummary.status);
+  state.progressLabel = focusSummary.next_action;
+  state.context = buildTaskContext(overview, taskModule);
+
+  if (focusSummary.status === "confirming_intent") {
+    state.anomaly = {
+      actionLabel: "确认继续",
+      desc: `当前建议动作是：${focusSummary.next_action}。确认后会继续推进这条任务链。`,
+      dismissLabel: "稍后处理",
+      severity: "info",
+      title: "当前任务正在等待你确认",
+    };
+  } else if (focusSummary.status === "waiting_auth") {
+    state.anomaly = {
+      actionLabel: "前往授权",
+      desc: "当前任务已经进入待授权状态，处理完授权后会继续执行。",
+      dismissLabel: "稍后处理",
+      severity: "error",
+      title: "有一项任务正在等待授权",
+    };
+  } else if (focusSummary.status === "waiting_input") {
+    state.anomaly = {
+      actionLabel: "补充信息",
+      desc: "这条任务还缺少继续推进所需的输入，补充后可以继续执行。",
+      dismissLabel: "稍后处理",
+      severity: "warn",
+      title: "当前任务需要补充信息",
+    };
+  } else if (focusSummary.status === "completed") {
+    state.anomaly = undefined;
+  }
+
+  return state;
+}
+
+function buildNotesItems(recommendations: RecommendationItem[]): DashboardHomeNoteItem[] {
+  return recommendations
+    .filter((item) => inferModuleFromRecommendation(item) === "notes")
+    .slice(0, 3)
+    .map((item, index) => ({
+      id: item.recommendation_id,
+      status: index === 0 ? "processing" : "pending",
+      tag: index === 0 ? "Agent 建议" : "待整理",
+      text: item.text,
+      time: index === 0 ? "现在" : "稍后",
+    }));
+}
+
+function buildNotesState(
+  stateKey: DashboardHomeEventStateKey,
+  notesModule: AgentDashboardModuleGetResult,
+  recommendations: RecommendationItem[],
+) {
+  const state = cloneStateData(dashboardHomeStates[stateKey]);
+  const highlights = getModuleHighlights(notesModule);
+  const noteItems = buildNotesItems(recommendations);
+  const completedTasks = getModuleSummaryNumber(notesModule, "completed_tasks");
+  const exceptions = getModuleSummaryNumber(notesModule, "exceptions");
+
+  state.headline = noteItems[0]?.text ?? highlights[0] ?? `便签池里有 ${completedTasks} 条已整理记录`;
+  state.subline =
+    highlights[0] && highlights[1]
+      ? `${highlights[0]} ${highlights[1]}`
+      : highlights[0] ?? `当前例外项 ${exceptions} 条，建议优先整理最接近执行窗口的事项。`;
+  state.context = [
+    {
+      iconKey: "note",
+      text: `推荐事项 ${noteItems.length || 0} 条`,
+      type: noteItems.length > 0 ? "active" : "normal",
+    },
+    {
+      iconKey: "repeat",
+      text: `已完成任务 ${completedTasks} 条`,
+      type: "normal",
+    },
+    {
+      iconKey: "calendar",
+      text: highlights[0] ?? "保持便签整理节奏，准备转正式任务。",
+      type: "hint",
+    },
+  ];
+  state.notes = noteItems.length > 0 ? noteItems : state.notes;
+
+  return state;
+}
+
+function buildMemoryInsights(memoryModule: AgentDashboardModuleGetResult): DashboardHomeInsightItem[] {
+  const icons = ["brain", "time", "repeat", "chat"] as const;
+  const highlights = getModuleHighlights(memoryModule);
+
+  if (highlights.length === 0) {
+    return cloneStateData(dashboardHomeStates.memory_summary).insights ?? [];
+  }
+
+  return highlights.slice(0, 4).map((text, index) => ({
+    emphasis: index === 0,
+    iconKey: icons[index] ?? "brain",
+    text,
+  }));
+}
+
+function buildMemoryState(stateKey: DashboardHomeEventStateKey, memoryModule: AgentDashboardModuleGetResult) {
+  const state = cloneStateData(dashboardHomeStates[stateKey]);
+  const highlights = getModuleHighlights(memoryModule);
+
+  state.headline = highlights[0] ?? state.headline;
+  state.subline = highlights[1] ?? highlights[0] ?? state.subline;
+  state.insights = buildMemoryInsights(memoryModule);
+  state.context = highlights.slice(0, 3).map((item, index) => ({
+    iconKey: index === 0 ? "brain" : index === 1 ? "repeat" : "time",
+    text: item,
+    type: index === 0 ? "active" : "hint",
+  }));
+
+  return state;
+}
+
+function buildSafetyState(stateKey: DashboardHomeEventStateKey, overview: AgentDashboardOverviewGetResult, safetyModule: AgentDashboardModuleGetResult) {
+  const state = cloneStateData(dashboardHomeStates[stateKey]);
+  const trustSummary = overview.overview.trust_summary;
+  const highlights = getModuleHighlights(safetyModule);
+  const riskLabel = formatRiskLabel(trustSummary.risk_level);
+
+  state.headline =
+    trustSummary.pending_authorizations > 0
+      ? `当前有 ${trustSummary.pending_authorizations} 项操作等待授权`
+      : `当前整体风险等级为 ${riskLabel}`;
+  state.subline =
+    highlights[0] ??
+    (trustSummary.pending_authorizations > 0
+      ? "建议先处理待授权操作，再继续推进其它任务。"
+      : `工作区位于 ${trustSummary.workspace_path || "当前默认目录"}。`);
+  state.context = [
+    {
+      iconKey: "shield",
+      text: `风险等级：${riskLabel}`,
+      type: trustSummary.risk_level === "green" ? "normal" : "warn",
+    },
+    {
+      iconKey: "lock",
+      text: `待授权：${trustSummary.pending_authorizations} 项`,
+      type: trustSummary.pending_authorizations > 0 ? "warn" : "normal",
+    },
+    {
+      iconKey: "history",
+      text: trustSummary.has_restore_point ? "最近恢复点可用" : "当前还没有恢复点",
+      type: trustSummary.has_restore_point ? "hint" : "warn",
+    },
+  ];
+  state.signals = [
+    {
+      iconKey: "shield",
+      label: "风险等级",
+      level: getSignalLevel(trustSummary.risk_level),
+      translation: trustSummary.risk_level === "green" ? "当前边界稳定" : "建议先确认再继续",
+      value: riskLabel,
+    },
+    {
+      iconKey: "lock",
+      label: "待授权",
+      level: trustSummary.pending_authorizations > 0 ? "critical" : "normal",
+      translation: trustSummary.pending_authorizations > 0 ? "存在等待你确认的操作" : "当前没有挂起请求",
+      value: String(trustSummary.pending_authorizations),
+    },
+    {
+      iconKey: "history",
+      label: "恢复点",
+      level: trustSummary.has_restore_point ? "normal" : "warn",
+      translation: trustSummary.has_restore_point ? "当前可以回退" : "建议执行高风险动作前补一个恢复点",
+      value: trustSummary.has_restore_point ? "可用" : "暂无",
+    },
+  ];
+
+  if (trustSummary.pending_authorizations > 0 || trustSummary.risk_level !== "green") {
+    state.anomaly = {
+      actionLabel: "查看安全详情",
+      desc: highlights[0] ?? "当前存在需要优先确认的安全事项。",
+      dismissLabel: "稍后再看",
+      severity: trustSummary.pending_authorizations > 0 ? "error" : "warn",
+      title: trustSummary.pending_authorizations > 0 ? "安全链路有待处理项" : "当前需要留意执行边界",
+    };
+  } else {
+    state.anomaly = undefined;
+  }
+
+  return state;
+}
+
+function getModuleStateKeyMap(
+  overview: AgentDashboardOverviewGetResult,
+  moduleResults: Record<DashboardHomeModuleKey, AgentDashboardModuleGetResult>,
+  recommendations: RecommendationItem[],
+) {
+  return {
+    memory: getMemoryStateKey(moduleResults.memory),
+    notes: getNotesStateKey(moduleResults.notes, recommendations),
+    safety: getSafetyStateKey(overview),
+    tasks: getTaskStateKey(overview, moduleResults.tasks),
+  } satisfies Record<DashboardHomeModuleKey, DashboardHomeEventStateKey>;
+}
+
+function buildStateGroups(stateKeys: Record<DashboardHomeModuleKey, DashboardHomeEventStateKey>): DashboardHomeStateGroup[] {
+  return (Object.keys(stateKeys) as DashboardHomeModuleKey[]).map((module) => ({
+    key: module,
+    label: dashboardModuleLabels[module],
+    states: [stateKeys[module]],
+  }));
+}
+
+function getSummonPriority(module: DashboardHomeModuleKey, stateKey: DashboardHomeEventStateKey): DashboardHomeSummonEvent["priority"] {
+  if (module === "safety" || stateKey === "task_completing" || stateKey === "task_error_permission") {
+    return "urgent";
+  }
+
+  if (module === "memory") {
+    return "low";
+  }
+
+  return "normal";
+}
+
+function buildRecommendationSummons(
+  recommendations: RecommendationItem[],
+  stateKeys: Record<DashboardHomeModuleKey, DashboardHomeEventStateKey>,
+  moduleResults: Record<DashboardHomeModuleKey, AgentDashboardModuleGetResult>,
+): Array<Omit<DashboardHomeSummonEvent, "id">> {
+  const templates = recommendations.slice(0, 4).map((item) => {
+    const module = inferModuleFromRecommendation(item);
+    const highlights = getModuleHighlights(moduleResults[module]);
+
+    return {
+      duration: 6_200,
+      message: item.text,
+      nextStep: dashboardModuleNextSteps[module],
+      priority: getSummonPriority(module, stateKeys[module]),
+      reason: highlights[0] ?? `来自 ${dashboardModuleLabels[module]} 模块的实时建议`,
+      recommendationId: item.recommendation_id,
+      stateKey: stateKeys[module],
+    } satisfies Omit<DashboardHomeSummonEvent, "id">;
+  });
+
+  return templates.length > 0 ? templates : dashboardSummonTemplates.map(cloneSummonTemplate);
+}
+
+function buildVoiceSequences(
+  recommendations: RecommendationItem[],
+  stateKeys: Record<DashboardHomeModuleKey, DashboardHomeEventStateKey>,
+  stateMap: Record<DashboardHomeEventStateKey, DashboardHomeStateData>,
+) {
+  const sequences = recommendations.slice(0, 4).map((item) => {
+    const module = inferModuleFromRecommendation(item);
+    const state = stateMap[stateKeys[module]];
+
+    return {
+      echoPool: [dashboardModuleLabels[module], item.intent.name, "当前建议"].filter(Boolean),
+      executingSteps: [...dashboardVoiceExecutionSteps[module]],
+      fragments: [item.text, state.subline].filter(Boolean),
+      module,
+      recommendationId: item.recommendation_id,
+      suggestion: item.text,
+      summary: `我会先把你带到${dashboardModuleLabels[module]}页，并继续围绕这条建议推进。`,
+    } satisfies DashboardVoiceSequence;
+  });
+
+  return sequences.length > 0 ? sequences : dashboardVoiceSequences.map(cloneVoiceSequence);
+}
+
+function buildFocusLine(
+  overview: AgentDashboardOverviewGetResult,
+  summonTemplates: Array<Omit<DashboardHomeSummonEvent, "id">>,
+) {
+  if (overview.overview.focus_summary) {
+    return {
+      headline: overview.overview.focus_summary.title,
+      reason: `${overview.overview.focus_summary.current_step} · ${overview.overview.focus_summary.next_action}`,
+    };
+  }
+
+  if (summonTemplates[0]) {
+    return {
+      headline: summonTemplates[0].message,
+      reason: summonTemplates[0].reason,
+    };
+  }
+
+  return {
+    headline: "首页总览已经连接到真实任务轨道。",
+    reason: "当有新的焦点任务、授权或推荐出现时，这里会优先展示最值得关注的信号。",
+  };
+}
+
+function buildDashboardHomeData(input: {
+  moduleResults: Record<DashboardHomeModuleKey, AgentDashboardModuleGetResult>;
+  overview: AgentDashboardOverviewGetResult;
+  recommendations: AgentRecommendationGetResult;
+}): DashboardHomeData {
+  const stateMap = createBaseStateMap();
+  const stateKeys = getModuleStateKeyMap(input.overview, input.moduleResults, input.recommendations.items);
+
+  stateMap[stateKeys.tasks] = buildTaskState(stateKeys.tasks, input.overview, input.moduleResults.tasks);
+  stateMap[stateKeys.notes] = buildNotesState(stateKeys.notes, input.moduleResults.notes, input.recommendations.items);
+  stateMap[stateKeys.memory] = buildMemoryState(stateKeys.memory, input.moduleResults.memory);
+  stateMap[stateKeys.safety] = buildSafetyState(stateKeys.safety, input.overview, input.moduleResults.safety);
+
+  const summonTemplates = buildRecommendationSummons(input.recommendations.items, stateKeys, input.moduleResults);
+
+  return {
+    focusLine: buildFocusLine(input.overview, summonTemplates),
+    stateGroups: buildStateGroups(stateKeys),
+    stateMap,
+    summonTemplates,
+    voiceSequences: buildVoiceSequences(input.recommendations.items, stateKeys, stateMap),
+  };
+}
+
+export async function loadDashboardHomeData(): Promise<DashboardHomeData> {
+  try {
+    const [overview, tasksModule, notesModule, memoryModule, safetyModule, recommendations] = await Promise.all([
+      getDashboardOverview({
+        focus_mode: false,
+        include: ["focus_summary", "trust_summary", "quick_actions", "high_value_signal"],
+        request_meta: createRequestMeta("dashboard_overview"),
+      }),
+      getDashboardModule({
+        module: "tasks",
+        request_meta: createRequestMeta("dashboard_module_tasks"),
+        tab: dashboardModuleTabs.tasks,
+      }),
+      getDashboardModule({
+        module: "notes",
+        request_meta: createRequestMeta("dashboard_module_notes"),
+        tab: dashboardModuleTabs.notes,
+      }),
+      getDashboardModule({
+        module: "memory",
+        request_meta: createRequestMeta("dashboard_module_memory"),
+        tab: dashboardModuleTabs.memory,
+      }),
+      getDashboardModule({
+        module: "safety",
+        request_meta: createRequestMeta("dashboard_module_safety"),
+        tab: dashboardModuleTabs.safety,
+      }),
+      getRecommendations({
+        context: {
+          app_name: "CialloClaw Desktop",
+          page_title: "Dashboard Orbit",
+        },
+        request_meta: createRequestMeta("dashboard_recommendations"),
+        scene: "idle",
+        source: "dashboard",
+      }),
+    ]);
+
+    return buildDashboardHomeData({
+      moduleResults: {
+        memory: memoryModule,
+        notes: notesModule,
+        safety: safetyModule,
+        tasks: tasksModule,
+      },
+      overview,
+      recommendations,
+    });
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback("dashboard home", error);
+      return getDashboardHomeFallbackData();
+    }
+
+    throw error;
+  }
+}
+
+export async function submitDashboardHomeRecommendationFeedback(recommendationId: string, feedback: RecommendationFeedback) {
+  try {
+    return await submitRecommendationFeedback({
+      feedback,
+      recommendation_id: recommendationId,
+      request_meta: createRequestMeta(`dashboard_recommendation_feedback_${recommendationId}`),
+    });
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback("dashboard recommendation feedback", error);
+      return { applied: false };
+    }
+
+    throw error;
+  }
+}

@@ -4,7 +4,12 @@ import {
   getShellBallPinnedBubbleIdFromLabel,
   startShellBallWindowDragging,
 } from "../../platform/shellBallWindowController";
-import { emitShellBallBubbleAction, emitShellBallPinnedWindowDetached, useShellBallHelperWindowSnapshot } from "./useShellBallCoordinator";
+import {
+  emitShellBallBubbleAction,
+  emitShellBallIntentDecision,
+  emitShellBallPinnedWindowDetached,
+  useShellBallHelperWindowSnapshot,
+} from "./useShellBallCoordinator";
 
 export function ShellBallPinnedBubbleWindow() {
   const windowLabel = getShellBallCurrentWindow().label;
@@ -67,6 +72,28 @@ export function ShellBallPinnedBubbleWindow() {
           Drag
         </button>
         <p className="shell-ball-bubble-message__text">{pinnedItem.bubble.text}</p>
+        {pinnedItem.bubble.type === "intent_confirm" ? (
+          <div className="shell-ball-bubble-message__intent-actions">
+            <button
+              type="button"
+              className="shell-ball-bubble-message__intent-button shell-ball-bubble-message__intent-button--muted"
+              onClick={() => {
+                void emitShellBallIntentDecision("cancel", pinnedItem.bubble.task_id, "pinned_window");
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="shell-ball-bubble-message__intent-button shell-ball-bubble-message__intent-button--primary"
+              onClick={() => {
+                void emitShellBallIntentDecision("confirm", pinnedItem.bubble.task_id, "pinned_window");
+              }}
+            >
+              确认继续
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

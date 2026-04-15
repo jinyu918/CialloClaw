@@ -106,7 +106,6 @@ func TestUnavailablePlaywrightSidecarRuntimeDoesNotBlockLifecycle(t *testing.T) 
 		t.Fatalf("expected unavailable runtime stop to noop, got %v", err)
 	}
 }
-
 func TestPlaywrightSidecarRuntimeClientExecutesRealReadAndSearch(t *testing.T) {
 	osCapability := platform.NewLocalOSCapabilityAdapter()
 	runtime, err := NewPlaywrightSidecarRuntime(plugin.NewService(), osCapability)

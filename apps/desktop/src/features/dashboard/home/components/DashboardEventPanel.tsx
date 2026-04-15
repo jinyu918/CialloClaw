@@ -4,13 +4,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { resolveDashboardModuleRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
-import { dashboardHomeStateGroups, dashboardHomeStates } from "../dashboardHome.mocks";
-import type { DashboardHomeContextItem, DashboardHomeEventStateKey, DashboardHomeModuleKey, DashboardHomeSignalItem, DashboardHomeStateData } from "../dashboardHome.types";
+import type { DashboardHomeContextItem, DashboardHomeEventStateKey, DashboardHomeModuleKey, DashboardHomeSignalItem, DashboardHomeStateData, DashboardHomeStateGroup } from "../dashboardHome.types";
 
 type DashboardEventPanelProps = {
   activeState: DashboardHomeStateData | null;
   onClose: () => void;
   onStateChange: (stateKey: DashboardHomeEventStateKey) => void;
+  stateGroups: DashboardHomeStateGroup[];
+  stateMap: Record<DashboardHomeEventStateKey, DashboardHomeStateData>;
 };
 
 const contextIcons = {
@@ -95,7 +96,7 @@ function modulePrimaryLabel(module: DashboardHomeModuleKey) {
   return labels[module];
 }
 
-export function DashboardEventPanel({ activeState, onClose, onStateChange }: DashboardEventPanelProps) {
+export function DashboardEventPanel({ activeState, onClose, onStateChange, stateGroups, stateMap }: DashboardEventPanelProps) {
   const navigate = useNavigate();
 
   function handleOpenModule(module: DashboardHomeModuleKey) {
@@ -110,8 +111,8 @@ export function DashboardEventPanel({ activeState, onClose, onStateChange }: Das
       return [];
     }
 
-    return dashboardHomeStateGroups.find((group) => group.key === activeState.module)?.states ?? [];
-  }, [activeState]);
+    return stateGroups.find((group) => group.key === activeState.module)?.states ?? [];
+  }, [activeState, stateGroups]);
 
   return (
     <AnimatePresence>
@@ -149,7 +150,7 @@ export function DashboardEventPanel({ activeState, onClose, onStateChange }: Das
                 {activeState.tag}
               </span>
               {activeState.progressLabel ? <span className="dashboard-orbit-panel__pill">{activeState.progressLabel}</span> : null}
-              <span className="dashboard-orbit-panel__pill">{dashboardHomeStateGroups.find((group) => group.key === activeState.module)?.label}</span>
+              <span className="dashboard-orbit-panel__pill">{stateGroups.find((group) => group.key === activeState.module)?.label}</span>
             </div>
 
             {moduleStates.length > 1 ? (
@@ -162,7 +163,7 @@ export function DashboardEventPanel({ activeState, onClose, onStateChange }: Das
                     onClick={() => onStateChange(stateKey)}
                     type="button"
                   >
-                    {dashboardHomeStates[stateKey].label}
+                    {stateMap[stateKey].label}
                   </button>
                 ))}
               </div>

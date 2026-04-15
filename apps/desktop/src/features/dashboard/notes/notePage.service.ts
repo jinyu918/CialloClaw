@@ -5,6 +5,7 @@ import type {
   TodoBucket,
   TodoItem,
 } from "@cialloclaw/protocol";
+import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
 import { convertNotepadToTask, listNotepad } from "@/rpc/methods";
 import { getMockNoteBuckets, getMockNoteExperience, runMockConvertNoteToTask } from "./notePage.mock";
 import type { NoteConvertOutcome, NoteDetailExperience, NoteListItem } from "./notePage.types";
@@ -237,18 +238,27 @@ export async function loadNoteBucket(group: TodoBucket, source: NotePageDataMode
     return getMockNoteBucketPage(group);
   }
 
-  const params: AgentNotepadListParams = {
-    group,
-    limit: group === "closed" ? 24 : 12,
-    offset: 0,
-    request_meta: createRequestMeta(`notepad_${group}`),
-  };
+  try {
+    const params: AgentNotepadListParams = {
+      group,
+      limit: group === "closed" ? 24 : 12,
+      offset: 0,
+      request_meta: createRequestMeta(`notepad_${group}`),
+    };
 
-  const result = await withTimeout(listNotepad(params), `notepad bucket ${group}`);
-  return {
-    items: mapItems(result.items),
-    page: result.page,
-  };
+    const result = await withTimeout(listNotepad(params), `notepad bucket ${group}`);
+    return {
+      items: mapItems(result.items),
+      page: result.page,
+    };
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback(`notepad bucket ${group}`, error);
+      return getMockNoteBucketPage(group);
+    }
+
+    throw error;
+  }
 }
 
 export async function convertNoteToTask(itemId: string, source: NotePageDataMode = "rpc"): Promise<NoteConvertOutcome> {
@@ -262,9 +272,18 @@ export async function convertNoteToTask(itemId: string, source: NotePageDataMode
     request_meta: createRequestMeta(`notepad_convert_${itemId}`),
   };
 
-  const result = await withTimeout(convertNotepadToTask(params), `convert note ${itemId} to task`);
-  return {
-    result,
-    source: "rpc",
-  };
+  try {
+    const result = await withTimeout(convertNotepadToTask(params), `convert note ${itemId} to task`);
+    return {
+      result,
+      source: "rpc",
+    };
+  } catch (error) {
+    if (isRpcChannelUnavailable(error)) {
+      logRpcMockFallback(`convert note ${itemId} to task`, error);
+      return runMockConvertNoteToTask(itemId);
+    }
+
+    throw error;
+  }
 }

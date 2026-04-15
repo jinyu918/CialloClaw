@@ -1,10 +1,18 @@
 import type {
+  AgentDashboardModuleGetParams,
+  AgentDashboardModuleGetResult,
+  AgentDashboardOverviewGetParams,
+  AgentDashboardOverviewGetResult,
   AgentInputSubmitParams,
   AgentInputSubmitResult,
   AgentNotepadConvertToTaskParams,
   AgentNotepadConvertToTaskResult,
   AgentNotepadListParams,
   AgentNotepadListResult,
+  AgentRecommendationFeedbackSubmitParams,
+  AgentRecommendationFeedbackSubmitResult,
+  AgentRecommendationGetParams,
+  AgentRecommendationGetResult,
   AgentSettingsGetParams,
   AgentSettingsGetResult,
   AgentSettingsUpdateParams,
@@ -51,6 +59,14 @@ export function confirmTask(params: AgentTaskConfirmParams) {
   return rpcClient.request<AgentTaskConfirmResult>(RPC_METHODS.AGENT_TASK_CONFIRM, params);
 }
 
+export function getRecommendations(params: AgentRecommendationGetParams) {
+  return rpcClient.request<AgentRecommendationGetResult>(RPC_METHODS.AGENT_RECOMMENDATION_GET, params);
+}
+
+export function submitRecommendationFeedback(params: AgentRecommendationFeedbackSubmitParams) {
+  return rpcClient.request<AgentRecommendationFeedbackSubmitResult>(RPC_METHODS.AGENT_RECOMMENDATION_FEEDBACK_SUBMIT, params);
+}
+
 // listTasks 处理当前模块的相关逻辑。
 export function listTasks(params: AgentTaskListParams) {
   return rpcClient.request<AgentTaskListResult>(RPC_METHODS.AGENT_TASK_LIST, params);
@@ -71,6 +87,14 @@ export function listNotepad(params: AgentNotepadListParams) {
 
 export function convertNotepadToTask(params: AgentNotepadConvertToTaskParams) {
   return rpcClient.request<AgentNotepadConvertToTaskResult>(RPC_METHODS.AGENT_NOTEPAD_CONVERT_TO_TASK, params);
+}
+
+export function getDashboardOverview(params: AgentDashboardOverviewGetParams) {
+  return rpcClient.request<AgentDashboardOverviewGetResult>(RPC_METHODS.AGENT_DASHBOARD_OVERVIEW_GET, params);
+}
+
+export function getDashboardModule(params: AgentDashboardModuleGetParams) {
+  return rpcClient.request<AgentDashboardModuleGetResult>(RPC_METHODS.AGENT_DASHBOARD_MODULE_GET, params);
 }
 
 export function getMirrorOverview(params: AgentMirrorOverviewGetParams) {

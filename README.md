@@ -45,11 +45,13 @@ scripts/
 - `apps/desktop`：多入口桌面前端，已包含 `shell-ball`、`dashboard`、`control-panel` 及配套 `features`、`services`、`rpc`、`platform` 目录
 - `services/local-service`：已包含 `rpc`、`orchestrator`、`runengine`、`context`、`intent`、`execution`、`delivery`、`audit`、`risk`、`memory`、`storage`、`platform`、`model`、`tools`、`taskinspector` 等本地 Harness 模块
 - `packages/protocol`：统一维护协议模型、JSON-RPC 方法、错误码、schema 与示例
-- `packages/ui` 与 `packages/config`：共享 UI 基础能力与工程配置真源
+- `packages/ui` 与 `packages/config`：共享 UI 基础能力与工程配置；协议真源仍统一收口到 `packages/protocol`
 - `workers/*`：Playwright、OCR、media 三类 sidecar worker
 - `docs/*` 与 `scripts/*`：当前文档真源与开发 / 构建 / CI 脚本目录
 
 ## 文档入口
+
+### 核心技术文档
 
 - `docs/architecture-overview.md`
 - `docs/development-guidelines.md`
@@ -58,15 +60,32 @@ scripts/
 - `docs/module-design.md`
 - `docs/work-priority-plan.md`
 - `docs/atomic-features.md`
+
+### 产品设计文档
+
+- `docs/dashboard-design.md` - 仪表盘展示设计文档
+- `docs/control-panel-settings.md` - 控制面板设置设计文档
+- `docs/product-interaction-design.md` - 产品交互设计汇总文档
+
+产品设计文档统一存放在 `docs/` 下并使用英文文件名；若发生重命名、替换或真源迁移，必须删除旧版本，只保留一份正式文档真源。
+
+### Agent 工作规范
+
 - `AGENTS.md`
 
-## 当前协议方向
+## 统一协议口径
 
-- 对外主对象统一为 `task`
-- 后端执行兼容层保留 `run`
-- 当前稳定方法组使用 `dot.case`，例如 `agent.task.start`、`agent.task.confirm`、`agent.task.list`
+- 对外主对象统一为 `task`，后端执行兼容层保留 `run / step / event / tool_call`
+- JSON-RPC 方法统一使用 `agent.domain.action`，例如 `agent.task.start`、`agent.task.confirm`、`agent.task.list`
 - Notification 统一使用 `dot.case`，例如 `task.updated`
-- Windows 主前后端传输链路优先使用 Named Pipe，本地 HTTP 仅保留调试兼容态
+- 正式结果统一通过 `delivery_result / artifact / citation` 交付
+- Windows 正式传输链路优先使用 Named Pipe，本地 HTTP / SSE 仅保留调试兼容态
+
+## 协作约束
+
+- 新需求或新功能应先检查现有 `docs/` 文档；若不冲突，必须在同一次工作中自动补充或更新相关文档。
+- 项目代码注释统一使用英文；若在当前改动范围内发现中文注释，必须在同一次改动中删除并改写为英文注释，新代码也必须补充足够详细的英文注释。
+- Git 提交应保持细粒度，遵循约定式提交格式；一个可独立理解和回退的变更应对应一个 commit，不要把整条功能链路压成单个提交。
 
 ## 快速开始
 

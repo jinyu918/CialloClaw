@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { DashboardHomeSummonEvent } from "../dashboardHome.types";
-import { dashboardHomeStates } from "../dashboardHome.mocks";
+import type { DashboardHomeStateData, DashboardHomeSummonEvent } from "../dashboardHome.types";
 import { AlertCircle, BellDot, BrainCircuit, FileText, NotebookPen, ShieldAlert, Sparkles, X } from "lucide-react";
 
 type DashboardEventOrbProps = {
   event: DashboardHomeSummonEvent;
+  stateMap: Record<string, DashboardHomeStateData>;
   onDismiss: (id: string) => void;
   onExpand: (stateKey: DashboardHomeSummonEvent["stateKey"]) => void;
 };
@@ -27,8 +27,8 @@ const priorityDots = {
   urgent: AlertCircle,
 } as const;
 
-export function DashboardEventOrb({ event, onDismiss, onExpand }: DashboardEventOrbProps) {
-  const stateData = dashboardHomeStates[event.stateKey];
+export function DashboardEventOrb({ event, stateMap, onDismiss, onExpand }: DashboardEventOrbProps) {
+  const stateData = stateMap[event.stateKey];
   const [phase, setPhase] = useState<Phase>("dormant");
   const [textVisible, setTextVisible] = useState(false);
   const [hovered, setHovered] = useState(false);

@@ -2163,6 +2163,96 @@ func TestServiceDashboardOverviewFocusModeNarrowsSecondaryData(t *testing.T) {
 	}
 }
 
+func TestServiceDashboardOverviewFallsBackToStoredTaskRuns(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "stored dashboard overview")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+
+	err := service.storage.TaskRunStore().SaveTaskRun(context.Background(), storage.TaskRunRecord{
+		TaskID:      "task_dashboard_waiting",
+		SessionID:   "sess_overview",
+		RunID:       "run_dashboard_waiting",
+		Title:       "stored waiting authorization task",
+		SourceType:  "hover_input",
+		Status:      "waiting_auth",
+		CurrentStep: "waiting_authorization",
+		RiskLevel:   "yellow",
+		StartedAt:   time.Date(2026, 4, 14, 18, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 4, 14, 18, 5, 0, 0, time.UTC),
+		ApprovalRequest: map[string]any{
+			"approval_id": "appr_dashboard_001",
+			"task_id":     "task_dashboard_waiting",
+			"risk_level":  "yellow",
+		},
+		SecuritySummary: map[string]any{
+			"security_status": "pending_confirmation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("save waiting task run failed: %v", err)
+	}
+
+	err = service.storage.TaskRunStore().SaveTaskRun(context.Background(), storage.TaskRunRecord{
+		TaskID:      "task_dashboard_finished",
+		SessionID:   "sess_overview",
+		RunID:       "run_dashboard_finished",
+		Title:       "stored finished task",
+		SourceType:  "hover_input",
+		Status:      "completed",
+		CurrentStep: "deliver_result",
+		RiskLevel:   "green",
+		StartedAt:   time.Date(2026, 4, 14, 18, 10, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 4, 14, 18, 15, 0, 0, time.UTC),
+		FinishedAt:  timePointer(time.Date(2026, 4, 14, 18, 16, 0, 0, time.UTC)),
+		SecuritySummary: map[string]any{
+			"latest_restore_point": map[string]any{
+				"recovery_point_id": "rp_dashboard_001",
+				"task_id":           "task_dashboard_finished",
+				"summary":           "stored restore point",
+			},
+		},
+		DeliveryResult: map[string]any{
+			"type": "workspace_document",
+			"payload": map[string]any{
+				"path": "workspace/dashboard-overview.md",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save finished task run failed: %v", err)
+	}
+
+	result, err := service.DashboardOverviewGet(map[string]any{})
+	if err != nil {
+		t.Fatalf("dashboard overview failed: %v", err)
+	}
+
+	overview := result["overview"].(map[string]any)
+	focusSummary := overview["focus_summary"].(map[string]any)
+	if focusSummary["task_id"] != "task_dashboard_waiting" {
+		t.Fatalf("expected storage-backed focus summary to target waiting task, got %+v", focusSummary)
+	}
+	if focusSummary["status"] != "waiting_auth" {
+		t.Fatalf("expected storage-backed focus summary status waiting_auth, got %+v", focusSummary)
+	}
+	trustSummary := overview["trust_summary"].(map[string]any)
+	if trustSummary["pending_authorizations"] != 1 {
+		t.Fatalf("expected storage-backed pending authorization count, got %+v", trustSummary)
+	}
+	if trustSummary["has_restore_point"] != true {
+		t.Fatalf("expected storage-backed restore point signal, got %+v", trustSummary)
+	}
+	quickActions := overview["quick_actions"].([]string)
+	if len(quickActions) == 0 || quickActions[0] != "处理待授权操作" {
+		t.Fatalf("expected storage-backed quick actions to prioritize authorization handling, got %+v", quickActions)
+	}
+	highValueSignals := overview["high_value_signal"].([]string)
+	if len(highValueSignals) == 0 {
+		t.Fatal("expected storage-backed dashboard signals")
+	}
+}
+
 func TestServiceMirrorOverviewUsesRuntimeMirrorReferences(t *testing.T) {
 	service := newTestService()
 
@@ -3617,6 +3707,132 @@ func TestServiceTaskControlRejectsInvalidStatusTransition(t *testing.T) {
 	})
 	if !errors.Is(err, ErrTaskStatusInvalid) {
 		t.Fatalf("expected pause from confirming_intent to return ErrTaskStatusInvalid, got %v", err)
+	}
+}
+
+func TestSettingsGetIncludesSecretConfigurationAvailability(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings secret availability")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	result, err := service.SettingsGet(map[string]any{"scope": "all"})
+	if err != nil {
+		t.Fatalf("settings get failed: %v", err)
+	}
+	dataLog := result["settings"].(map[string]any)["data_log"].(map[string]any)
+	if dataLog["provider_api_key_configured"] != false {
+		t.Fatalf("expected unset provider key flag, got %+v", dataLog)
+	}
+	if err := service.storage.SecretStore().PutSecret(context.Background(), storage.SecretRecord{
+		Namespace: "model",
+		Key:       service.model.Provider() + "_api_key",
+		Value:     "secret-key",
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("seed secret store failed: %v", err)
+	}
+	result, err = service.SettingsGet(map[string]any{"scope": "all"})
+	if err != nil {
+		t.Fatalf("settings get with secret failed: %v", err)
+	}
+	dataLog = result["settings"].(map[string]any)["data_log"].(map[string]any)
+	if dataLog["provider_api_key_configured"] != true {
+		t.Fatalf("expected configured provider key flag, got %+v", dataLog)
+	}
+}
+
+func TestSettingsGetReturnsStrongholdErrorWhenSecretStoreUnreadable(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings secret error")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	if err := service.storage.Close(); err != nil {
+		t.Fatalf("close storage failed: %v", err)
+	}
+	_, err := service.SettingsGet(map[string]any{"scope": "all"})
+	if !errors.Is(err, ErrStrongholdAccessFailed) {
+		t.Fatalf("expected ErrStrongholdAccessFailed, got %v", err)
+	}
+}
+
+func TestSettingsUpdatePersistsSecretOutsideRegularSettings(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings secret persist")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	result, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider":              "openai",
+			"budget_auto_downgrade": false,
+			"api_key":               "persisted-secret-key",
+		},
+	})
+	if err != nil {
+		t.Fatalf("settings update failed: %v", err)
+	}
+	stored, err := service.storage.SecretStore().GetSecret(context.Background(), "model", service.model.Provider()+"_api_key")
+	if err != nil {
+		t.Fatalf("expected stored secret, got %v", err)
+	}
+	if stored.Value != "persisted-secret-key" {
+		t.Fatalf("unexpected stored secret: %+v", stored)
+	}
+	effectiveSettings := result["effective_settings"].(map[string]any)
+	dataLog := effectiveSettings["data_log"].(map[string]any)
+	if _, exists := dataLog["api_key"]; exists {
+		t.Fatalf("expected api_key to stay out of regular settings path, got %+v", dataLog)
+	}
+	if dataLog["provider_api_key_configured"] != true {
+		t.Fatalf("expected configured flag in settings response, got %+v", dataLog)
+	}
+}
+
+func TestSettingsUpdatePersistsSecretForRequestedProvider(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings provider secret persist")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	_, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider":              "anthropic",
+			"budget_auto_downgrade": true,
+			"api_key":               "anthropic-secret-key",
+		},
+	})
+	if err != nil {
+		t.Fatalf("settings update failed: %v", err)
+	}
+	stored, err := service.storage.SecretStore().GetSecret(context.Background(), "model", "anthropic_api_key")
+	if err != nil {
+		t.Fatalf("expected anthropic secret to be stored, got %v", err)
+	}
+	if stored.Value != "anthropic-secret-key" {
+		t.Fatalf("unexpected stored anthropic secret: %+v", stored)
+	}
+	_, err = service.storage.SecretStore().GetSecret(context.Background(), "model", service.model.Provider()+"_api_key")
+	if !errors.Is(err, storage.ErrSecretNotFound) {
+		t.Fatalf("expected default provider secret to remain unset, got %v", err)
+	}
+	result, err := service.SettingsGet(map[string]any{"scope": "data_log"})
+	if err != nil {
+		t.Fatalf("settings get failed: %v", err)
+	}
+	dataLog := result["settings"].(map[string]any)["data_log"].(map[string]any)
+	if dataLog["provider"] != "anthropic" || dataLog["provider_api_key_configured"] != true {
+		t.Fatalf("expected settings get to reflect anthropic provider secret, got %+v", dataLog)
+	}
+}
+
+func TestSettingsUpdateReturnsStrongholdErrorWithoutStorage(t *testing.T) {
+	service := newTestService()
+	_, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider": "openai",
+			"api_key":  "sk-test",
+		},
+	})
+	if !errors.Is(err, ErrStrongholdAccessFailed) {
+		t.Fatalf("expected ErrStrongholdAccessFailed, got %v", err)
 	}
 }
 

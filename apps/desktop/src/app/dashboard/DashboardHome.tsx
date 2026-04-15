@@ -4,7 +4,7 @@ import { Keyboard, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import ClickSpark from "@/components/ClickSpark";
 import { dashboardDecorOrbs, dashboardEntranceOrbs, dashboardModuleColors } from "@/features/dashboard/home/dashboardHome.config";
-import { dashboardHomeStates, dashboardSummonTemplates } from "@/features/dashboard/home/dashboardHome.mocks";
+import { getDashboardHomeFallbackData, type DashboardHomeData } from "@/features/dashboard/home/dashboardHome.service";
 import type { DashboardHomeEventStateKey, DashboardHomeModuleKey, DashboardHomeSummonEvent } from "@/features/dashboard/home/dashboardHome.types";
 import { DashboardCenterOrb } from "@/features/dashboard/home/components/DashboardCenterOrb";
 import { DashboardDecorOrb } from "@/features/dashboard/home/components/DashboardDecorOrb";
@@ -42,11 +42,18 @@ function getCenterState(activeStateKey: DashboardHomeEventStateKey | null) {
 }
 
 type DashboardHomeProps = {
+  data?: DashboardHomeData;
   onVoiceOpen: () => void;
+  onRecommendationFeedback?: (recommendationId: string, feedback: "positive" | "negative") => void;
   voiceOpen: boolean;
 };
 
-export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
+export function DashboardHome({
+  data = getDashboardHomeFallbackData(),
+  onVoiceOpen,
+  onRecommendationFeedback,
+  voiceOpen,
+}: DashboardHomeProps) {
   const navigate = useNavigate();
   const [orbDragOffset, setOrbDragOffset] = useState({ x: 0, y: 0 });
   const [hoveredEntranceKey, setHoveredEntranceKey] = useState<string | null>(null);
@@ -56,17 +63,17 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
   const summonIdRef = useRef(0);
   const summonTimerRef = useRef<number | null>(null);
 
-  const activeState = activeStateKey ? dashboardHomeStates[activeStateKey] : null;
+  const activeState = activeStateKey ? data.stateMap[activeStateKey] : null;
   const activeModule = hoveredEntranceKey
     ? dashboardEntranceOrbs.find((config) => config.key === hoveredEntranceKey)?.module ?? activeState?.module ?? null
     : activeState?.module ?? null;
   const activeModuleColor = activeModule ? dashboardModuleColors[activeModule].color : null;
-  const currentFocusLine = activeState?.headline ?? summons[0]?.message ?? "让中心球和 4 个入口球一起构成今天的任务轨道。";
-  const currentReasonLine = activeState?.subline ?? summons[0]?.reason ?? "长按中心球可以直接进入语音模式，四个入口球会始终保持最显眼的位置。";
+  const currentFocusLine = activeState?.headline ?? summons[0]?.message ?? data.focusLine.headline;
+  const currentReasonLine = activeState?.subline ?? summons[0]?.reason ?? data.focusLine.reason;
   const isOverlayOpen = Boolean(activeState || voiceOpen);
 
   const scheduleSummon = useCallback(() => {
-    const template = dashboardSummonTemplates[summonIndexRef.current % dashboardSummonTemplates.length];
+    const template = data.summonTemplates[summonIndexRef.current % data.summonTemplates.length];
     summonIndexRef.current += 1;
 
     setSummons((current) => {
@@ -83,12 +90,16 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
       ];
     });
 
-    const gap = (template.duration ?? 5000) + 7000;
+    const gap = (template.duration ?? 5_000) + 7_000;
     summonTimerRef.current = window.setTimeout(scheduleSummon, gap);
-  }, []);
+  }, [data.summonTemplates]);
 
   useEffect(() => {
-    summonTimerRef.current = window.setTimeout(scheduleSummon, 2500);
+    summonIndexRef.current = 0;
+    summonIdRef.current = 0;
+    setSummons([]);
+
+    summonTimerRef.current = window.setTimeout(scheduleSummon, 2_500);
 
     return () => {
       if (summonTimerRef.current) {
@@ -105,12 +116,9 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
         return;
       }
 
-      if (event.key === "Escape") {
-        if (activeStateKey) {
-          event.preventDefault();
-          setActiveStateKey(null);
-        }
-        return;
+      if (event.key === "Escape" && activeStateKey) {
+        event.preventDefault();
+        setActiveStateKey(null);
       }
     };
 
@@ -133,10 +141,13 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
     });
   }, []);
 
-  const handleModuleNavigate = useCallback((module: DashboardHomeModuleKey) => {
-    const nextPath = getRouteForModule(module);
-    navigate(nextPath);
-  }, [navigate]);
+  const handleModuleNavigate = useCallback(
+    (module: DashboardHomeModuleKey) => {
+      const nextPath = getRouteForModule(module);
+      navigate(nextPath);
+    },
+    [navigate],
+  );
 
   return (
     <ClickSpark className="dashboard-orbit-home" duration={360} extraScale={1.12} sparkColor="#d9b980" sparkCount={10} sparkRadius={18} sparkSize={11} style={pageStyle}>
@@ -172,7 +183,25 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
         ))}
 
         {!isOverlayOpen
-          ? summons.map((event) => <DashboardEventOrb key={event.id} event={event} onDismiss={(id) => setSummons((current) => current.filter((item) => item.id !== id))} onExpand={(stateKey) => setActiveStateKey(stateKey)} />)
+          ? summons.map((event) => (
+              <DashboardEventOrb
+                key={event.id}
+                event={event}
+                stateMap={data.stateMap}
+                onDismiss={(id) => {
+                  setSummons((current) => current.filter((item) => item.id !== id));
+                  if (event.recommendationId) {
+                    onRecommendationFeedback?.(event.recommendationId, "negative");
+                  }
+                }}
+                onExpand={(stateKey) => {
+                  setActiveStateKey(stateKey);
+                  if (event.recommendationId) {
+                    onRecommendationFeedback?.(event.recommendationId, "positive");
+                  }
+                }}
+              />
+            ))
           : null}
 
         <DashboardCenterOrb activeColor={activeModuleColor} onDragOffset={handleOrbDragOffset} onLongPress={onVoiceOpen} visualState={centerVisualState} />
@@ -186,12 +215,11 @@ export function DashboardHome({ onVoiceOpen, voiceOpen }: DashboardHomeProps) {
         </div>
         <div className="dashboard-orbit-home__focus-hint">
           <Sparkles className="h-4 w-4" />
-          入口球负责跳页，事件球负责打开首页事件舱
+          入口球负责跳页，事件球负责展开首页实时信号。
         </div>
       </div>
 
-      <DashboardEventPanel activeState={activeState} onClose={() => setActiveStateKey(null)} onStateChange={setActiveStateKey} />
-
+      <DashboardEventPanel activeState={activeState} onClose={() => setActiveStateKey(null)} onStateChange={setActiveStateKey} stateGroups={data.stateGroups} stateMap={data.stateMap} />
     </ClickSpark>
   );
 }

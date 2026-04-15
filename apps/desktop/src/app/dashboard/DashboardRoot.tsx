@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardVoiceField } from "@/features/dashboard/home/components/DashboardVoiceField";
-import { dashboardVoiceSequences } from "@/features/dashboard/home/dashboardHome.mocks";
+import { getDashboardHomeFallbackData, loadDashboardHomeData, submitDashboardHomeRecommendationFeedback } from "@/features/dashboard/home/dashboardHome.service";
 import { MemoryPage } from "@/features/dashboard/memory/MemoryPage";
 import { NotesPage } from "@/features/dashboard/notes/NotesPage";
 import { SafetyPage } from "@/features/dashboard/safety/SafetyPage";
@@ -10,6 +11,7 @@ import { resolveDashboardModuleRoutePath, resolveDashboardRoutePath } from "@/fe
 import { TasksPage } from "@/features/dashboard/tasks/TasksPage";
 import { cn } from "@/utils/cn";
 import { DashboardHome } from "./DashboardHome";
+import { subscribeApprovalPending, subscribeDeliveryReady, subscribeTaskUpdated } from "@/rpc/subscriptions";
 import "./dashboard.css";
 
 function useDashboardDomainExpansion() {
@@ -63,8 +65,50 @@ function useDashboardDomainExpansion() {
 function DashboardRoutes() {
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const isOpening = useDashboardDomainExpansion();
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const dashboardHomeQuery = useQuery({
+    queryKey: ["dashboard", "home"],
+    queryFn: loadDashboardHomeData,
+    placeholderData: (previousData) => previousData,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const dashboardHomeData = dashboardHomeQuery.data ?? getDashboardHomeFallbackData();
+  const recommendationFeedbackMutation = useMutation({
+    mutationFn: ({ feedback, recommendationId }: { feedback: "positive" | "negative"; recommendationId: string }) =>
+      submitDashboardHomeRecommendationFeedback(recommendationId, feedback),
+    retry: false,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "home"] });
+    },
+    onError: (error) => {
+      console.warn("dashboard recommendation feedback failed", error);
+    },
+  });
+
+  useEffect(() => {
+    const clearTaskSubscription = subscribeTaskUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "home"] });
+    });
+
+    const clearApprovalSubscription = subscribeApprovalPending(() => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "home"] });
+    });
+
+    const clearDeliverySubscription = subscribeDeliveryReady(() => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "home"] });
+    });
+
+    return () => {
+      clearTaskSubscription();
+      clearApprovalSubscription();
+      clearDeliverySubscription();
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -120,6 +164,9 @@ function DashboardRoutes() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [navigate, voiceOpen]);
 
+  const handleRecommendationFeedback = (recommendationId: string, feedback: "positive" | "negative") => {
+    recommendationFeedbackMutation.mutate({ feedback, recommendationId });
+  };
   return (
     <div className={cn("dashboard-app", isOpening && "is-opening")}>
       <AnimatePresence mode="wait">
@@ -133,7 +180,17 @@ function DashboardRoutes() {
           transition={{ duration: 0.46, ease: [0.22, 1, 0.36, 1] }}
         >
           <Routes location={location}>
-            <Route element={<DashboardHome onVoiceOpen={() => setVoiceOpen(true)} voiceOpen={voiceOpen} />} path={resolveDashboardRoutePath("home")} />
+            <Route
+              element={
+                <DashboardHome
+                  data={dashboardHomeData}
+                  onRecommendationFeedback={handleRecommendationFeedback}
+                  onVoiceOpen={() => setVoiceOpen(true)}
+                  voiceOpen={voiceOpen}
+                />
+              }
+              path={resolveDashboardRoutePath("home")}
+            />
             <Route element={<TasksPage />} path={`${resolveDashboardModuleRoutePath("tasks")}/*`} />
             <Route element={<NotesPage />} path={`${resolveDashboardModuleRoutePath("notes")}/*`} />
             <Route element={<MemoryPage />} path={`${resolveDashboardModuleRoutePath("memory")}/*`} />
@@ -142,7 +199,14 @@ function DashboardRoutes() {
           </Routes>
         </motion.div>
       </AnimatePresence>
-      <DashboardVoiceField isOpen={voiceOpen} onClose={() => setVoiceOpen(false)} sequences={dashboardVoiceSequences} />
+      <DashboardVoiceField
+        isOpen={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onRecommendationConfirm={(recommendationId) => {
+          recommendationFeedbackMutation.mutate({ feedback: "positive", recommendationId });
+        }}
+        sequences={dashboardHomeData.voiceSequences}
+      />
     </div>
   );
 }
