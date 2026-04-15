@@ -3,7 +3,7 @@ import type { AgentMirrorOverviewGetResult, RecoveryPoint } from "@cialloclaw/pr
 import { BookMarked, BrainCircuit, CalendarDays } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { StatusBadge } from "@cialloclaw/ui";
-import { Button, SegmentedControl, Switch } from "@radix-ui/themes";
+import { SegmentedControl, Switch } from "@radix-ui/themes";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { buildDashboardSafetyRestorePointNavigationState } from "@/features/dashboard/shared/dashboardSafetyNavigation";
@@ -33,18 +33,6 @@ import {
 } from "./mirrorViewModel";
 import type { MirrorDirectionKey } from "./mirrorDirections";
 import type { MirrorConversationRecord } from "@/services/mirrorMemoryService";
-import {
-  applyMirrorMemoryDrafts,
-  applyMirrorProfileDrafts,
-  clearMirrorProfileDraft,
-  loadMirrorGovernanceDraftSnapshot,
-  saveMirrorGovernanceDraftSnapshot,
-  setMirrorMemoryHidden,
-  upsertMirrorProfileDraft,
-  type MirrorGovernanceDraftSnapshot,
-  type MirrorGovernedMemoryReference,
-  type MirrorGovernedProfileItem,
-} from "./mirrorGovernanceDraftService";
 
 type MirrorDetailContentProps = {
   activeDetailKey: MirrorDirectionKey;
@@ -450,44 +438,14 @@ function MirrorDailyDetail({
   );
 }
 
-function getMirrorProfileDraftLabel(mode: MirrorGovernedProfileItem["draft_mode"]) {
-  if (mode === "edited") {
-    return "本地纠正";
-  }
-
-  if (mode === "hidden") {
-    return "本地隐藏";
-  }
-
-  if (mode === "deleted") {
-    return "本地删除";
-  }
-
-  return null;
-}
-
-type MirrorProfileGovernanceHandlers = {
-  editingItemId: string | null;
-  editingValue: string;
-  onStartEdit: (item: MirrorGovernedProfileItem) => void;
-  onEditValueChange: (value: string) => void;
-  onSaveEdit: (item: MirrorGovernedProfileItem) => void;
-  onCancelEdit: () => void;
-  onHide: (item: MirrorGovernedProfileItem) => void;
-  onDelete: (item: MirrorGovernedProfileItem) => void;
-  onRestore: (item: MirrorGovernedProfileItem) => void;
-};
-
-function MirrorGovernedProfileGrid({
+function MirrorProfileGrid({
   items,
   emptyState,
   badgeTone,
-  governance,
 }: {
-  items: MirrorGovernedProfileItem[];
+  items: MirrorProfileItemView[];
   emptyState: string;
   badgeTone: "green" | "processing";
-  governance: MirrorProfileGovernanceHandlers;
 }) {
   if (items.length === 0) {
     return <MirrorEmptyState>{emptyState}</MirrorEmptyState>;
@@ -495,80 +453,20 @@ function MirrorGovernedProfileGrid({
 
   return (
     <div className="mirror-page__profile-grid">
-      {items.map((item) => {
-        const draftLabel = getMirrorProfileDraftLabel(item.draft_mode);
-        const isEditing = governance.editingItemId === item.id;
-        const isArchived = item.draft_mode === "hidden" || item.draft_mode === "deleted";
-
-        return (
-          <article
-            key={item.id}
-            className={`mirror-page__profile-item${isArchived ? " mirror-page__profile-item--archived" : ""}`}
-            data-testid={`mirror-profile-item-${item.id}`}
-          >
-            <div className="mirror-page__stage-card-top">
-              <div>
-                <p className="mirror-page__micro-label">{item.label}</p>
-                <p className="mirror-page__stage-headline">{item.display_value}</p>
-              </div>
-              <div className="mirror-page__profile-badges">
-                <StatusBadge tone={badgeTone}>{item.source_label}</StatusBadge>
-                {draftLabel ? <StatusBadge tone={isArchived ? "yellow" : "processing"}>{draftLabel}</StatusBadge> : null}
-              </div>
+      {items.map((item) => (
+        <article key={item.id} className="mirror-page__profile-item" data-testid={`mirror-profile-item-${item.id}`}>
+          <div className="mirror-page__stage-card-top">
+            <div>
+              <p className="mirror-page__micro-label">{item.label}</p>
+              <p className="mirror-page__stage-headline">{item.value}</p>
             </div>
-            <p className="mirror-page__summary-copy">
-              {item.hint}
-              {item.display_value !== item.original_value ? ` 当前原值：${item.original_value}。` : ""}
-              {item.draft_updated_at
-                ? ` 草稿更新时间 ${new Date(item.draft_updated_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}。`
-                : ""}
-            </p>
-
-            {isEditing ? (
-              <div className="mirror-page__profile-edit-shell">
-                <textarea
-                  className="mirror-page__profile-edit-input"
-                  value={governance.editingValue}
-                  onChange={(event) => governance.onEditValueChange(event.currentTarget.value)}
-                />
-                <div className="mirror-page__profile-actions">
-                  <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onCancelEdit()}>
-                    取消
-                  </Button>
-                  <Button className="mirror-page__action-button" variant="soft" color="green" onClick={() => governance.onSaveEdit(item)}>
-                    保存本地草稿
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="mirror-page__profile-actions">
-                {item.draft_mode === "hidden" || item.draft_mode === "deleted" ? (
-                  <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onRestore(item)}>
-                    恢复显示
-                  </Button>
-                ) : (
-                  <>
-                    <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onStartEdit(item)}>
-                      纠正
-                    </Button>
-                    <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onHide(item)}>
-                      隐藏
-                    </Button>
-                    <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onDelete(item)}>
-                      删除
-                    </Button>
-                    {item.draft_mode === "edited" ? (
-                      <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => governance.onRestore(item)}>
-                        撤回草稿
-                      </Button>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            )}
-          </article>
-        );
-      })}
+            <div className="mirror-page__profile-badges">
+              <StatusBadge tone={badgeTone}>{item.source_label}</StatusBadge>
+            </div>
+          </div>
+          <p className="mirror-page__summary-copy">{item.hint}</p>
+        </article>
+      ))}
     </div>
   );
 }
@@ -576,15 +474,11 @@ function MirrorGovernedProfileGrid({
 function MirrorProfileDetail({
   backendItems,
   localItems,
-  draftedItems,
-  governance,
 }: {
-  backendItems: MirrorGovernedProfileItem[];
-  localItems: MirrorGovernedProfileItem[];
-  draftedItems: MirrorGovernedProfileItem[];
-  governance: MirrorProfileGovernanceHandlers;
+  backendItems: MirrorProfileItemView[];
+  localItems: MirrorProfileItemView[];
 }) {
-  const defaultTab = backendItems.length > 0 ? "backend" : localItems.length > 0 ? "local" : "drafts";
+  const defaultTab = backendItems.length > 0 ? "backend" : "local";
 
   return (
     <Tabs className="mirror-page__detail-tabs" defaultValue={defaultTab}>
@@ -595,44 +489,24 @@ function MirrorProfileDetail({
         <TabsTrigger className="mirror-page__detail-tab-trigger" value="local">
           最近本地统计
         </TabsTrigger>
-        <TabsTrigger className="mirror-page__detail-tab-trigger" value="drafts">
-          本地治理草稿
-        </TabsTrigger>
       </TabsList>
 
       <TabsContent className="mirror-page__detail-tab-panel" value="backend">
         <div className="mirror-page__profile-local-note">
           <BrainCircuit className="mirror-page__profile-icon" />
-          <p className="mirror-page__summary-copy">这里仍以后端 mirror overview 返回的 profile 字段为底；下方“纠正 / 隐藏 / 删除”只会生成本地治理草稿，不会伪装成正式后端写入。</p>
+          <p className="mirror-page__summary-copy">这里直接展示后端 `mirror overview` 返回的 profile 字段。</p>
         </div>
 
-        <MirrorGovernedProfileGrid badgeTone="green" emptyState="当前没有后端画像字段。" items={backendItems} governance={governance} />
+        <MirrorProfileGrid badgeTone="green" emptyState="当前没有后端画像字段。" items={backendItems} />
       </TabsContent>
 
       <TabsContent className="mirror-page__detail-tab-panel" value="local">
         <div className="mirror-page__profile-local-note">
           <BrainCircuit className="mirror-page__profile-icon" />
-          <p className="mirror-page__summary-copy">这里的条目只按最近 100 条本地对话机械统计，用于展示近期使用情况；本地治理草稿同样只影响当前前端视图。</p>
+          <p className="mirror-page__summary-copy">这里的条目只按最近 100 条本地对话机械统计，用于展示近期使用情况，并与后端画像字段分层展示。</p>
         </div>
 
-        <MirrorGovernedProfileGrid badgeTone="processing" emptyState="当前没有可展示的最近本地统计。" items={localItems} governance={governance} />
-      </TabsContent>
-
-      <TabsContent className="mirror-page__detail-tab-panel" value="drafts">
-        <div className="mirror-page__profile-local-note">
-          <BrainCircuit className="mirror-page__profile-icon" />
-          <p className="mirror-page__summary-copy">这里汇总前端本地治理草稿，用来提前承接 issue #187 里 planned 的 `agent.mirror.memory.manage` 交互位；当前不会回写后端。</p>
-        </div>
-
-        {draftedItems.length === 0 ? (
-          <MirrorEmptyState>当前还没有画像治理草稿。</MirrorEmptyState>
-        ) : (
-          <ScrollArea className="mirror-page__profile-archive-scroll">
-            <div className="mirror-page__profile-archive-list">
-              <MirrorGovernedProfileGrid badgeTone="processing" emptyState="当前还没有画像治理草稿。" items={draftedItems} governance={governance} />
-            </div>
-          </ScrollArea>
-        )}
+        <MirrorProfileGrid badgeTone="processing" emptyState="当前没有可展示的最近本地统计。" items={localItems} />
       </TabsContent>
     </Tabs>
   );
@@ -645,16 +519,8 @@ function MirrorMemoryDetail({
   rpcContext,
   conversations,
   focusMemoryId,
-  visibleReferences,
-  hiddenReferences,
-  onHideReference,
-  onRestoreReference,
   onOpenTaskDetail,
 }: Pick<MirrorDetailContentProps, "overview" | "onUpdateSettings" | "settingsSnapshot" | "rpcContext" | "conversations" | "focusMemoryId"> & {
-  visibleReferences: MirrorGovernedMemoryReference[];
-  hiddenReferences: MirrorGovernedMemoryReference[];
-  onHideReference: (memoryId: string) => void;
-  onRestoreReference: (memoryId: string) => void;
   onOpenTaskDetail: (taskId: string) => void;
 }) {
   const conversationSummary = buildMirrorConversationSummary(conversations);
@@ -680,13 +546,12 @@ function MirrorMemoryDetail({
       return focusMemoryId;
     }
 
-    return visibleReferences[0]?.memory_id ?? hiddenReferences[0]?.memory_id ?? null;
-  }, [focusMemoryId, hiddenReferences, overview.memory_references, visibleReferences]);
-  const defaultTab = visibleReferences.length > 0 ? "references" : "policy";
+    return overview.memory_references[0]?.memory_id ?? null;
+  }, [focusMemoryId, overview.memory_references]);
+  const defaultTab = overview.memory_references.length > 0 ? "references" : "policy";
   const runSettingsUpdate = useCallback(
     async (actionKey: string, subject: string, patch: DashboardSettingsPatch) => {
-      // Only stable settings keys are written through here; planned memory
-      // governance actions still stay in local drafts until the RPC is formalized.
+      // Only stable settings keys are written through here.
       setSettingsActionKey(actionKey);
 
       try {
@@ -713,22 +578,19 @@ function MirrorMemoryDetail({
         <TabsTrigger className="mirror-page__detail-tab-trigger" value="policy">
           记忆策略
         </TabsTrigger>
-        <TabsTrigger className="mirror-page__detail-tab-trigger" value="drafts">
-          本地治理草稿
-        </TabsTrigger>
       </TabsList>
 
       <TabsContent className="mirror-page__detail-tab-panel" value="references">
-        {visibleReferences.length === 0 ? (
+        {overview.memory_references.length === 0 ? (
           <MirrorEmptyState>暂无近期记忆引用。</MirrorEmptyState>
         ) : (
           <div className="mirror-page__memory-list mirror-page__memory-list--expanded">
             <div className="mirror-page__profile-local-note">
               <BookMarked className="mirror-page__memory-icon" />
-              <p className="mirror-page__summary-copy">当前协议只返回 `memory_id / reason / summary`，还没有时间、来源 task 或命中场景明细，所以这里不会伪造引用来源；“本地隐藏”只影响前端视图。</p>
+              <p className="mirror-page__summary-copy">当前协议只返回 `memory_id / reason / summary`，还没有时间、来源 task 或命中场景明细，所以这里按后端真源直出，不伪造额外来源字段。</p>
             </div>
 
-            {visibleReferences.map((reference, index) => (
+            {overview.memory_references.map((reference, index) => (
               <article key={reference.memory_id} className={`mirror-page__memory-card${reference.memory_id === highlightedMemoryId ? " is-active" : ""}`}>
                 <div className="mirror-page__memory-header">
                   <div className="mirror-page__memory-meta">
@@ -745,11 +607,6 @@ function MirrorMemoryDetail({
 
                 <p className="mirror-page__memory-reason">{reference.reason}</p>
                 <div className="mirror-page__memory-summary">{reference.summary}</div>
-                <div className="mirror-page__profile-actions">
-                  <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => onHideReference(reference.memory_id)}>
-                    本地隐藏
-                  </Button>
-                </div>
               </article>
             ))}
           </div>
@@ -791,17 +648,6 @@ function MirrorMemoryDetail({
             <p className="mirror-page__summary-copy">{rpcContext.warnings.length > 0 ? rpcContext.warnings.join("；") : "当前没有额外 RPC warnings。"}</p>
           </article>
 
-          <article className="mirror-page__risk-card">
-            <div className="mirror-page__stage-card-top">
-              <div>
-                <p className="mirror-page__micro-label">本地治理草稿</p>
-                <p className="mirror-page__stage-headline">{hiddenReferences.length} 条隐藏引用</p>
-              </div>
-              <StatusBadge tone={hiddenReferences.length > 0 ? "yellow" : "processing"}>{hiddenReferences.length > 0 ? "已生效" : "空白"}</StatusBadge>
-            </div>
-            <p className="mirror-page__summary-copy">这些草稿只影响镜子详情视图，用来提前承接 planned 的记忆治理动作，不会改写后端真实记忆。</p>
-          </article>
-
           {recentTaskLinkedConversations.length > 0 ? (
             <article className="mirror-page__risk-card">
               <div className="mirror-page__stage-card-top">
@@ -828,7 +674,7 @@ function MirrorMemoryDetail({
         <div className="mirror-page__profile-local-note">
           <BookMarked className="mirror-page__memory-icon" />
           <p className="mirror-page__summary-copy">
-            这里展示 `agent.settings.get` 或本地设置回退快照中的镜子记忆策略；已登记到真源的开关会直接写回 `agent.settings.update`，planned 的记忆治理动作仍只保留本地草稿。
+            这里展示 `agent.settings.get` 或本地设置回退快照中的镜子记忆策略；已登记到真源的开关会直接写回 `agent.settings.update`。
           </p>
         </div>
         {settingsFeedback ? <div className="mirror-page__profile-local-note mirror-page__settings-feedback">{settingsFeedback}</div> : null}
@@ -940,51 +786,12 @@ function MirrorMemoryDetail({
           </article>
         </div>
       </TabsContent>
-
-      <TabsContent className="mirror-page__detail-tab-panel" value="drafts">
-        <div className="mirror-page__profile-local-note">
-          <BookMarked className="mirror-page__memory-icon" />
-          <p className="mirror-page__summary-copy">这里汇总本地隐藏的记忆引用。它们来自前端治理草稿，不是后端已删除或已关闭的正式记忆状态。</p>
-        </div>
-
-        {hiddenReferences.length === 0 ? (
-          <MirrorEmptyState>当前还没有记忆治理草稿。</MirrorEmptyState>
-        ) : (
-          <div className="mirror-page__memory-list mirror-page__memory-list--expanded">
-            {hiddenReferences.map((reference, index) => (
-              <article key={reference.memory_id} className={`mirror-page__memory-card mirror-page__profile-item--archived${reference.memory_id === highlightedMemoryId ? " is-active" : ""}`}>
-                <div className="mirror-page__memory-header">
-                  <div className="mirror-page__memory-meta">
-                    <p className="mirror-page__memory-index">草稿 {index + 1}</p>
-                    <div className="mirror-page__memory-title-row">
-                      <BookMarked className="mirror-page__memory-icon" />
-                      <h3 className="mirror-page__memory-title">{reference.memory_id}</h3>
-                    </div>
-                  </div>
-                  <StatusBadge tone="yellow">本地隐藏</StatusBadge>
-                </div>
-
-                <p className="mirror-page__memory-reason">{reference.reason}</p>
-                <div className="mirror-page__memory-summary">{reference.summary}</div>
-                <div className="mirror-page__profile-actions">
-                  <Button className="mirror-page__action-button" variant="soft" color="gray" onClick={() => onRestoreReference(reference.memory_id)}>
-                    恢复显示
-                  </Button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </TabsContent>
     </Tabs>
   );
 }
 
 export function MirrorDetailContent(props: MirrorDetailContentProps) {
   const navigate = useNavigate();
-  const [governanceDrafts, setGovernanceDrafts] = useState<MirrorGovernanceDraftSnapshot>(() => loadMirrorGovernanceDraftSnapshot());
-  const [editingProfileItemId, setEditingProfileItemId] = useState<string | null>(null);
-  const [editingProfileValue, setEditingProfileValue] = useState("");
   const openTaskDetail = useMemo(
     () => (taskId: string) => {
       navigate(resolveDashboardModuleRoutePath("tasks"), {
@@ -1004,101 +811,6 @@ export function MirrorDetailContent(props: MirrorDetailContentProps) {
     },
     [navigate],
   );
-  const updateGovernanceDrafts = useMemo(
-    () => (updater: (current: MirrorGovernanceDraftSnapshot) => MirrorGovernanceDraftSnapshot) => {
-      // Governance drafts intentionally stay local until the planned mirror
-      // management RPC becomes stable, so every mutation is persisted locally only.
-      setGovernanceDrafts((current) => {
-        const nextSnapshot = updater(current);
-        saveMirrorGovernanceDraftSnapshot(nextSnapshot);
-        return nextSnapshot;
-      });
-    },
-    [],
-  );
-  const governedBackendProfiles = useMemo(
-    () => applyMirrorProfileDrafts(props.profileView.backend_items, governanceDrafts),
-    [governanceDrafts, props.profileView.backend_items],
-  );
-  const governedLocalProfiles = useMemo(
-    () => applyMirrorProfileDrafts(props.profileView.local_stat_items, governanceDrafts),
-    [governanceDrafts, props.profileView.local_stat_items],
-  );
-  const draftedProfileItems = useMemo(
-    () =>
-      [...governedBackendProfiles.drafted_items, ...governedLocalProfiles.drafted_items].sort((left, right) =>
-        (right.draft_updated_at ?? "").localeCompare(left.draft_updated_at ?? ""),
-      ),
-    [governedBackendProfiles.drafted_items, governedLocalProfiles.drafted_items],
-  );
-  const governedMemoryReferences = useMemo(
-    () => applyMirrorMemoryDrafts(props.overview.memory_references, governanceDrafts),
-    [governanceDrafts, props.overview.memory_references],
-  );
-  const startProfileEdit = useMemo(
-    () => (item: MirrorGovernedProfileItem) => {
-      setEditingProfileItemId(item.id);
-      setEditingProfileValue(item.display_value);
-    },
-    [],
-  );
-  const cancelProfileEdit = useMemo(
-    () => () => {
-      setEditingProfileItemId(null);
-      setEditingProfileValue("");
-    },
-    [],
-  );
-  const saveProfileEdit = useMemo(
-    () => (item: MirrorGovernedProfileItem) => {
-      updateGovernanceDrafts((current) => upsertMirrorProfileDraft(current, item.id, "edited", editingProfileValue));
-      setEditingProfileItemId(null);
-      setEditingProfileValue("");
-    },
-    [editingProfileValue, updateGovernanceDrafts],
-  );
-  const hideProfileItem = useMemo(
-    () => (item: MirrorGovernedProfileItem) => {
-      updateGovernanceDrafts((current) => upsertMirrorProfileDraft(current, item.id, "hidden"));
-      if (editingProfileItemId === item.id) {
-        setEditingProfileItemId(null);
-        setEditingProfileValue("");
-      }
-    },
-    [editingProfileItemId, updateGovernanceDrafts],
-  );
-  const deleteProfileItem = useMemo(
-    () => (item: MirrorGovernedProfileItem) => {
-      updateGovernanceDrafts((current) => upsertMirrorProfileDraft(current, item.id, "deleted"));
-      if (editingProfileItemId === item.id) {
-        setEditingProfileItemId(null);
-        setEditingProfileValue("");
-      }
-    },
-    [editingProfileItemId, updateGovernanceDrafts],
-  );
-  const restoreProfileItem = useMemo(
-    () => (item: MirrorGovernedProfileItem) => {
-      updateGovernanceDrafts((current) => clearMirrorProfileDraft(current, item.id));
-      if (editingProfileItemId === item.id) {
-        setEditingProfileItemId(null);
-        setEditingProfileValue("");
-      }
-    },
-    [editingProfileItemId, updateGovernanceDrafts],
-  );
-  const hideMemoryReference = useMemo(
-    () => (memoryId: string) => {
-      updateGovernanceDrafts((current) => setMirrorMemoryHidden(current, memoryId, true));
-    },
-    [updateGovernanceDrafts],
-  );
-  const restoreMemoryReference = useMemo(
-    () => (memoryId: string) => {
-      updateGovernanceDrafts((current) => setMirrorMemoryHidden(current, memoryId, false));
-    },
-    [updateGovernanceDrafts],
-  );
 
   if (props.activeDetailKey === "history") {
     return <MirrorHistoryDetail conversationSummary={props.conversationSummary} conversations={props.conversations} onOpenTaskDetail={openTaskDetail} overview={props.overview} />;
@@ -1109,39 +821,18 @@ export function MirrorDetailContent(props: MirrorDetailContentProps) {
   }
 
   if (props.activeDetailKey === "profile") {
-    return (
-      <MirrorProfileDetail
-        backendItems={governedBackendProfiles.active_items}
-        localItems={governedLocalProfiles.active_items}
-        draftedItems={draftedProfileItems}
-        governance={{
-          editingItemId: editingProfileItemId,
-          editingValue: editingProfileValue,
-          onStartEdit: startProfileEdit,
-          onEditValueChange: setEditingProfileValue,
-          onSaveEdit: saveProfileEdit,
-          onCancelEdit: cancelProfileEdit,
-          onHide: hideProfileItem,
-          onDelete: deleteProfileItem,
-          onRestore: restoreProfileItem,
-        }}
-      />
-    );
+    return <MirrorProfileDetail backendItems={props.profileView.backend_items} localItems={props.profileView.local_stat_items} />;
   }
 
   return (
     <MirrorMemoryDetail
       conversations={props.conversations}
       focusMemoryId={props.focusMemoryId}
-      hiddenReferences={governedMemoryReferences.hidden_references}
-      onHideReference={hideMemoryReference}
       onOpenTaskDetail={openTaskDetail}
       onUpdateSettings={props.onUpdateSettings}
-      onRestoreReference={restoreMemoryReference}
       overview={props.overview}
       rpcContext={props.rpcContext}
       settingsSnapshot={props.settingsSnapshot}
-      visibleReferences={governedMemoryReferences.visible_references}
     />
   );
 }

@@ -18,16 +18,6 @@ import {
   type MirrorConversationRecord,
 } from "../../../services/mirrorMemoryService";
 import { loadSettings, saveSettings } from "../../../services/settingsService";
-import {
-  applyMirrorMemoryDrafts,
-  applyMirrorProfileDrafts,
-  clearMirrorProfileDraft,
-  getEmptyMirrorGovernanceDraftSnapshot,
-  loadMirrorGovernanceDraftSnapshot,
-  saveMirrorGovernanceDraftSnapshot,
-  setMirrorMemoryHidden,
-  upsertMirrorProfileDraft,
-} from "./mirrorGovernanceDraftService";
 
 class MemoryStorage {
   #store = new Map<string, string>();
@@ -351,60 +341,4 @@ test("buildMirrorConversationTaskOptions keeps recent task filters ordered by la
   assert.deepEqual(taskOptions.map((option) => option.task_id), ["task-1", "task-2"]);
   assert.equal(taskOptions[0]?.count, 2);
   assert.equal(taskOptions[0]?.latest_at, "2026-04-13T10:09:00+08:00");
-});
-
-test("mirror governance drafts apply local profile edits, hides, and deletes without mutating base items", () => {
-  const profileItems = buildMirrorProfileView(
-    buildMirrorProfileBaseItems({
-      profile: createOverview().profile,
-      conversations: [createConversationRecord(1), createConversationRecord(2), createConversationRecord(3)],
-    }),
-  );
-  const snapshot = clearMirrorProfileDraft(
-    upsertMirrorProfileDraft(
-      upsertMirrorProfileDraft(
-        upsertMirrorProfileDraft(getEmptyMirrorGovernanceDraftSnapshot(), "profile-work-style", "edited", "先对齐协议，再推进实现。"),
-        "profile-preferred-output",
-        "hidden",
-      ),
-      "local-stat-continuity",
-      "deleted",
-    ),
-    "profile-active-hours",
-  );
-
-  const backendGovernance = applyMirrorProfileDrafts(profileItems.backend_items, snapshot);
-  const localGovernance = applyMirrorProfileDrafts(profileItems.local_stat_items, snapshot);
-
-  assert.equal(backendGovernance.active_items[0]?.display_value, "先对齐协议，再推进实现。");
-  assert.ok(backendGovernance.active_items.every((item) => item.id !== "profile-preferred-output"));
-  assert.ok(localGovernance.active_items.every((item) => item.id !== "local-stat-continuity"));
-  assert.equal(backendGovernance.drafted_items.length, 2);
-  assert.equal(localGovernance.drafted_items.length, 1);
-});
-
-test("mirror governance drafts split visible and hidden memory references", () => {
-  const snapshot = setMirrorMemoryHidden(getEmptyMirrorGovernanceDraftSnapshot(), "mem_001", true);
-  const memoryDrafts = applyMirrorMemoryDrafts(createOverview().memory_references, snapshot);
-
-  assert.equal(memoryDrafts.visible_references.length, 0);
-  assert.equal(memoryDrafts.hidden_references[0]?.memory_id, "mem_001");
-});
-
-test("mirror governance drafts persist to local storage and remove empty snapshots", () => {
-  const storage = installWindowStorage();
-  const snapshot = setMirrorMemoryHidden(
-    upsertMirrorProfileDraft(getEmptyMirrorGovernanceDraftSnapshot(), "profile-work-style", "edited", "本地草稿"),
-    "mem_001",
-    true,
-  );
-
-  saveMirrorGovernanceDraftSnapshot(snapshot);
-  const loaded = loadMirrorGovernanceDraftSnapshot();
-
-  assert.equal(loaded.profile_drafts["profile-work-style"]?.draft_value, "本地草稿");
-  assert.equal(loaded.memory_drafts.mem_001?.hidden, true);
-
-  saveMirrorGovernanceDraftSnapshot(getEmptyMirrorGovernanceDraftSnapshot());
-  assert.equal(storage.getItem("cialloclaw.mirror.governance.drafts"), null);
 });
