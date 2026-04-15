@@ -297,7 +297,8 @@
 - `delivery_results.payload_json`：描述结果如何被打开、展示或跳转，是正式交付结构，不是工具原始输出。
 - `delivery_results.preview_text`：供气泡、仪表盘或任务摘要使用的短预览。
 - `artifacts.artifact_type`：产物类型，统一使用 `snake_case`。
-- `artifacts.path / mime_type / citation_json`：分别描述文件位置、媒体类型和引用来源。
+- `artifacts.path / mime_type`：分别描述文件位置与媒体类型。
+- `artifacts.delivery_type / delivery_payload_json`：用于把 artifact 与正式 `delivery_result` 打开语义稳定关联，支持任务详情、artifact 列表与统一打开动作复用同一套结果结构。
 
 ### 7A.7 approval_requests / authorization_records / audit_records / recovery_points
 
@@ -537,9 +538,10 @@ CREATE TABLE artifacts (
     task_id TEXT NOT NULL,                       -- 所属task
     artifact_type TEXT NOT NULL,                 -- 产物类型
     title TEXT NOT NULL,                         -- 标题
-    path TEXT,                                   -- 文件路径
-    mime_type TEXT,                              -- MIME类型
-    citation_json TEXT,                          -- 引用信息(JSON)
+    path TEXT NOT NULL,                          -- 文件路径
+    mime_type TEXT NOT NULL,                     -- MIME类型
+    delivery_type TEXT NOT NULL,                 -- 对齐 delivery_result.type
+    delivery_payload_json TEXT NOT NULL,         -- 对齐 delivery_result.payload(JSON)
     created_at TEXT NOT NULL,                    -- 创建时间
     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );

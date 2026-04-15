@@ -16,6 +16,9 @@ func (s *Server) registerHandlers() {
 		"agent.input.submit":                   s.handleAgentInputSubmit,
 		"agent.task.start":                     s.handleAgentTaskStart,
 		"agent.task.confirm":                   s.handleAgentTaskConfirm,
+		"agent.task.artifact.list":             s.handleAgentTaskArtifactList,
+		"agent.task.artifact.open":             s.handleAgentTaskArtifactOpen,
+		"agent.delivery.open":                  s.handleAgentDeliveryOpen,
 		"agent.recommendation.get":             s.handleAgentRecommendationGet,
 		"agent.recommendation.feedback.submit": s.handleAgentRecommendationFeedbackSubmit,
 		"agent.task.list":                      s.handleAgentTaskList,
@@ -38,6 +41,24 @@ func (s *Server) registerHandlers() {
 		"agent.settings.get":                   s.handleAgentSettingsGet,
 		"agent.settings.update":                s.handleAgentSettingsUpdate,
 	}
+}
+
+// handleAgentTaskArtifactList handles agent.task.artifact.list.
+func (s *Server) handleAgentTaskArtifactList(params map[string]any) (any, *rpcError) {
+	data, err := s.orchestrator.TaskArtifactList(params)
+	return wrapOrchestratorResult(data, err)
+}
+
+// handleAgentTaskArtifactOpen handles agent.task.artifact.open.
+func (s *Server) handleAgentTaskArtifactOpen(params map[string]any) (any, *rpcError) {
+	data, err := s.orchestrator.TaskArtifactOpen(params)
+	return wrapOrchestratorResult(data, err)
+}
+
+// handleAgentDeliveryOpen handles agent.delivery.open.
+func (s *Server) handleAgentDeliveryOpen(params map[string]any) (any, *rpcError) {
+	data, err := s.orchestrator.DeliveryOpen(params)
+	return wrapOrchestratorResult(data, err)
 }
 
 // handleAgentInputSubmit 处理当前模块的相关逻辑。
@@ -249,6 +270,14 @@ func wrapOrchestratorResult(data any, err error) (any, *rpcError) {
 			Message: "TASK_NOT_FOUND",
 			Detail:  err.Error(),
 			TraceID: "trace_task_not_found",
+		}
+	}
+	if errors.Is(err, orchestrator.ErrArtifactNotFound) {
+		return nil, &rpcError{
+			Code:    1005002,
+			Message: "ARTIFACT_NOT_FOUND",
+			Detail:  err.Error(),
+			TraceID: "trace_artifact_not_found",
 		}
 	}
 	if errors.Is(err, orchestrator.ErrTaskStatusInvalid) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -2695,6 +2696,17 @@ func TestServiceDashboardModuleFallsBackToStoredTaskRuns(t *testing.T) {
 				"path": "workspace/dashboard.md",
 			},
 		},
+		Artifacts: []map[string]any{{
+			"artifact_id":      "art_dashboard_finished",
+			"task_id":          "task_dashboard_finished",
+			"artifact_type":    "generated_doc",
+			"title":            "dashboard.md",
+			"path":             "workspace/dashboard.md",
+			"mime_type":        "text/markdown",
+			"delivery_type":    "workspace_document",
+			"delivery_payload": map[string]any{"path": "workspace/dashboard.md", "task_id": "task_dashboard_finished"},
+			"created_at":       "2026-04-14T12:06:00Z",
+		}},
 		AuditRecords: []map[string]any{{
 			"audit_id":   "audit_dashboard_001",
 			"task_id":    "task_dashboard_finished",
@@ -2707,6 +2719,20 @@ func TestServiceDashboardModuleFallsBackToStoredTaskRuns(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("save finished task run failed: %v", err)
+	}
+	err = service.storage.ArtifactStore().SaveArtifacts(context.Background(), []storage.ArtifactRecord{{
+		ArtifactID:          "art_dashboard_finished",
+		TaskID:              "task_dashboard_finished",
+		ArtifactType:        "generated_doc",
+		Title:               "dashboard.md",
+		Path:                "workspace/dashboard.md",
+		MimeType:            "text/markdown",
+		DeliveryType:        "workspace_document",
+		DeliveryPayloadJSON: `{"path":"workspace/dashboard.md","task_id":"task_dashboard_finished"}`,
+		CreatedAt:           "2026-04-14T12:06:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("save dashboard artifact failed: %v", err)
 	}
 
 	moduleResult, err := service.DashboardModuleGet(map[string]any{
@@ -2727,6 +2753,16 @@ func TestServiceDashboardModuleFallsBackToStoredTaskRuns(t *testing.T) {
 	highlights := moduleResult["highlights"].([]string)
 	if len(highlights) == 0 {
 		t.Fatal("expected storage-backed dashboard highlights")
+	}
+	foundArtifactHighlight := false
+	for _, highlight := range highlights {
+		if strings.Contains(highlight, "workspace/dashboard.md") {
+			foundArtifactHighlight = true
+			break
+		}
+	}
+	if !foundArtifactHighlight {
+		t.Fatalf("expected dashboard highlights to mention artifact-backed path, got %+v", highlights)
 	}
 }
 
@@ -3191,9 +3227,34 @@ func TestServiceTaskDetailGetFallsBackToStoredTaskRun(t *testing.T) {
 			InputSummary:  "stored input",
 			OutputSummary: "stored output",
 		}},
+		Artifacts: []map[string]any{{
+			"artifact_id":      "art_task_stored_detail",
+			"task_id":          "task_stored_detail",
+			"artifact_type":    "generated_doc",
+			"title":            "stored-detail.md",
+			"path":             "workspace/stored-detail.md",
+			"mime_type":        "text/markdown",
+			"delivery_type":    "workspace_document",
+			"delivery_payload": map[string]any{"path": "workspace/stored-detail.md", "task_id": "task_stored_detail"},
+			"created_at":       "2026-04-14T10:06:00Z",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("save task run failed: %v", err)
+	}
+	err = service.storage.ArtifactStore().SaveArtifacts(context.Background(), []storage.ArtifactRecord{{
+		ArtifactID:          "art_task_stored_detail",
+		TaskID:              "task_stored_detail",
+		ArtifactType:        "generated_doc",
+		Title:               "stored-detail.md",
+		Path:                "workspace/stored-detail.md",
+		MimeType:            "text/markdown",
+		DeliveryType:        "workspace_document",
+		DeliveryPayloadJSON: `{"path":"workspace/stored-detail.md","task_id":"task_stored_detail"}`,
+		CreatedAt:           "2026-04-14T10:06:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("save artifact failed: %v", err)
 	}
 
 	detailResult, err := service.TaskDetailGet(map[string]any{"task_id": "task_stored_detail"})
@@ -3208,6 +3269,328 @@ func TestServiceTaskDetailGetFallsBackToStoredTaskRun(t *testing.T) {
 	timeline := detailResult["timeline"].([]map[string]any)
 	if len(timeline) != 1 || timeline[0]["name"] != "deliver_result" {
 		t.Fatalf("expected storage-backed timeline, got %+v", timeline)
+	}
+	artifacts := detailResult["artifacts"].([]map[string]any)
+	if len(artifacts) != 1 || artifacts[0]["artifact_id"] != "art_task_stored_detail" {
+		t.Fatalf("expected storage-backed artifacts, got %+v", artifacts)
+	}
+}
+
+func TestServiceTaskArtifactListReturnsStoredArtifacts(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "artifact list")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	err := service.storage.ArtifactStore().SaveArtifacts(context.Background(), []storage.ArtifactRecord{{
+		ArtifactID:          "art_list_001",
+		TaskID:              "task_artifact_list",
+		ArtifactType:        "generated_doc",
+		Title:               "artifact-list.md",
+		Path:                "workspace/artifact-list.md",
+		MimeType:            "text/markdown",
+		DeliveryType:        "workspace_document",
+		DeliveryPayloadJSON: `{"path":"workspace/artifact-list.md","task_id":"task_artifact_list"}`,
+		CreatedAt:           "2026-04-14T10:00:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("save artifacts failed: %v", err)
+	}
+	result, err := service.TaskArtifactList(map[string]any{"task_id": "task_artifact_list", "limit": 20, "offset": 0})
+	if err != nil {
+		t.Fatalf("task artifact list failed: %v", err)
+	}
+	items := result["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["artifact_id"] != "art_list_001" {
+		t.Fatalf("expected stored artifact list item, got %+v", items)
+	}
+}
+
+func TestServiceTaskArtifactListUsesStorePaginationBeyondHundred(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "artifact pagination")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	records := make([]storage.ArtifactRecord, 0, 120)
+	for index := 0; index < 120; index++ {
+		records = append(records, storage.ArtifactRecord{
+			ArtifactID:          fmt.Sprintf("art_page_%03d", index),
+			TaskID:              "task_artifact_page",
+			ArtifactType:        "generated_doc",
+			Title:               fmt.Sprintf("artifact-%03d.md", index),
+			Path:                fmt.Sprintf("workspace/artifact-%03d.md", index),
+			MimeType:            "text/markdown",
+			DeliveryType:        "workspace_document",
+			DeliveryPayloadJSON: fmt.Sprintf(`{"path":"workspace/artifact-%03d.md","task_id":"task_artifact_page"}`, index),
+			CreatedAt:           time.Date(2026, 4, 14, 10, 0, index, 0, time.UTC).Format(time.RFC3339),
+		})
+	}
+	if err := service.storage.ArtifactStore().SaveArtifacts(context.Background(), records); err != nil {
+		t.Fatalf("save artifacts failed: %v", err)
+	}
+	result, err := service.TaskArtifactList(map[string]any{"task_id": "task_artifact_page", "limit": 20, "offset": 100})
+	if err != nil {
+		t.Fatalf("task artifact list failed: %v", err)
+	}
+	items := result["items"].([]map[string]any)
+	page := result["page"].(map[string]any)
+	if len(items) != 20 {
+		t.Fatalf("expected 20 paged artifacts, got %d", len(items))
+	}
+	if page["total"] != 120 {
+		t.Fatalf("expected full artifact total, got %+v", page)
+	}
+}
+
+func TestServiceTaskArtifactOpenFindsStoredArtifactBeyondFirstHundred(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "artifact open pagination")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	records := make([]storage.ArtifactRecord, 0, 120)
+	for index := 0; index < 120; index++ {
+		records = append(records, storage.ArtifactRecord{
+			ArtifactID:          fmt.Sprintf("art_open_page_%03d", index),
+			TaskID:              "task_artifact_open_page",
+			ArtifactType:        "generated_doc",
+			Title:               fmt.Sprintf("artifact-open-%03d.md", index),
+			Path:                fmt.Sprintf("workspace/artifact-open-%03d.md", index),
+			MimeType:            "text/markdown",
+			DeliveryType:        "open_file",
+			DeliveryPayloadJSON: fmt.Sprintf(`{"path":"workspace/artifact-open-%03d.md","task_id":"task_artifact_open_page"}`, index),
+			CreatedAt:           time.Date(2026, 4, 14, 10, 0, index, 0, time.UTC).Format(time.RFC3339),
+		})
+	}
+	if err := service.storage.ArtifactStore().SaveArtifacts(context.Background(), records); err != nil {
+		t.Fatalf("save artifacts failed: %v", err)
+	}
+	result, err := service.TaskArtifactOpen(map[string]any{"task_id": "task_artifact_open_page", "artifact_id": "art_open_page_000"})
+	if err != nil {
+		t.Fatalf("task artifact open failed: %v", err)
+	}
+	if result["artifact"].(map[string]any)["artifact_id"] != "art_open_page_000" {
+		t.Fatalf("expected artifact beyond first hundred to resolve, got %+v", result)
+	}
+}
+
+func TestServiceTaskArtifactOpenReturnsStableOpenPayload(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "artifact open")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	err := service.storage.ArtifactStore().SaveArtifacts(context.Background(), []storage.ArtifactRecord{{
+		ArtifactID:          "art_open_001",
+		TaskID:              "task_artifact_open",
+		ArtifactType:        "generated_doc",
+		Title:               "artifact-open.md",
+		Path:                "workspace/artifact-open.md",
+		MimeType:            "text/markdown",
+		DeliveryType:        "open_file",
+		DeliveryPayloadJSON: `{"path":"workspace/artifact-open.md","task_id":"task_artifact_open"}`,
+		CreatedAt:           "2026-04-14T10:05:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("save artifact failed: %v", err)
+	}
+	result, err := service.TaskArtifactOpen(map[string]any{"task_id": "task_artifact_open", "artifact_id": "art_open_001"})
+	if err != nil {
+		t.Fatalf("task artifact open failed: %v", err)
+	}
+	if result["open_action"] != "open_file" {
+		t.Fatalf("expected open_file action, got %+v", result)
+	}
+	deliveryResult := result["delivery_result"].(map[string]any)
+	if deliveryResult["type"] != "open_file" {
+		t.Fatalf("expected open_file delivery result, got %+v", deliveryResult)
+	}
+	payload := result["resolved_payload"].(map[string]any)
+	if payload["path"] != "workspace/artifact-open.md" {
+		t.Fatalf("expected resolved payload path, got %+v", payload)
+	}
+}
+
+func TestServiceTaskArtifactOpenReturnsArtifactNotFoundWhenTaskExists(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "artifact not found")
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_artifact_not_found",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请整理成文档",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	_, err = service.TaskArtifactOpen(map[string]any{"task_id": taskID, "artifact_id": "art_missing"})
+	if !errors.Is(err, ErrArtifactNotFound) {
+		t.Fatalf("expected ErrArtifactNotFound, got %v", err)
+	}
+}
+
+func TestServiceStartTaskPersistsArtifactsToStore(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "persist artifact store")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_artifact_persist",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请整理成文档",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	records, total, err := service.storage.ArtifactStore().ListArtifacts(context.Background(), taskID, 20, 0)
+	if err != nil {
+		t.Fatalf("list persisted artifacts failed: %v", err)
+	}
+	if total != 1 || len(records) != 1 {
+		t.Fatalf("expected one persisted artifact, got total=%d records=%+v", total, records)
+	}
+	if records[0].DeliveryType != "workspace_document" {
+		t.Fatalf("expected persisted workspace_document artifact, got %+v", records[0])
+	}
+}
+
+func TestServiceDeliveryOpenReturnsTaskDeliveryResult(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "delivery open task")
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_delivery_open",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请整理成文档",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	result, err := service.DeliveryOpen(map[string]any{"task_id": taskID})
+	if err != nil {
+		t.Fatalf("delivery open failed: %v", err)
+	}
+	if result["open_action"] != "workspace_document" {
+		t.Fatalf("expected workspace_document open action, got %+v", result)
+	}
+	payload := result["resolved_payload"].(map[string]any)
+	if payload["task_id"] != taskID {
+		t.Fatalf("expected payload to carry task_id, got %+v", payload)
+	}
+}
+
+func TestServiceDeliveryOpenReturnsArtifactDeliveryResult(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "delivery open artifact")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	err := service.storage.ArtifactStore().SaveArtifacts(context.Background(), []storage.ArtifactRecord{{
+		ArtifactID:          "art_delivery_open_001",
+		TaskID:              "task_delivery_open",
+		ArtifactType:        "generated_doc",
+		Title:               "delivery-open.md",
+		Path:                "workspace/delivery-open.md",
+		MimeType:            "text/markdown",
+		DeliveryType:        "open_file",
+		DeliveryPayloadJSON: `{"path":"workspace/delivery-open.md","task_id":"task_delivery_open"}`,
+		CreatedAt:           "2026-04-14T10:10:00Z",
+	}})
+	if err != nil {
+		t.Fatalf("save artifact failed: %v", err)
+	}
+	result, err := service.DeliveryOpen(map[string]any{"task_id": "task_delivery_open", "artifact_id": "art_delivery_open_001"})
+	if err != nil {
+		t.Fatalf("delivery open artifact failed: %v", err)
+	}
+	if result["open_action"] != "open_file" {
+		t.Fatalf("expected open_file action, got %+v", result)
+	}
+	if result["artifact"].(map[string]any)["artifact_id"] != "art_delivery_open_001" {
+		t.Fatalf("expected artifact payload, got %+v", result)
+	}
+}
+
+func TestTaskArtifactHelpersCoverFallbackBranches(t *testing.T) {
+	if got := inferArtifactDeliveryType(map[string]any{"path": "workspace/file.md"}); got != "open_file" {
+		t.Fatalf("expected path-backed artifact to infer open_file, got %q", got)
+	}
+	if got := inferArtifactDeliveryType(map[string]any{"title": "no-path"}); got != "task_detail" {
+		t.Fatalf("expected no-path artifact to infer task_detail, got %q", got)
+	}
+	result := normalizeDeliveryOpenResult(nil, map[string]any{"payload": map[string]any{}}, "task_001")
+	if result["type"] != "task_detail" || result["title"] != "任务交付结果" || result["preview_text"] != "任务交付结果" {
+		t.Fatalf("expected defaulted delivery result fields, got %+v", result)
+	}
+}
+
+func TestServiceTaskArtifactListFallsBackToRuntimeArtifactsWhenStoreEmpty(t *testing.T) {
+	service := newTestService()
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_runtime_artifact",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请整理成文档",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	task, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected runtime task to exist")
+	}
+	_, _ = service.runEngine.SetPresentation(taskID, task.BubbleMessage, task.DeliveryResult, []map[string]any{{
+		"artifact_id":      "art_runtime_001",
+		"task_id":          taskID,
+		"artifact_type":    "generated_doc",
+		"title":            "runtime.md",
+		"path":             "workspace/runtime.md",
+		"mime_type":        "text/markdown",
+		"delivery_type":    "workspace_document",
+		"delivery_payload": map[string]any{"path": "workspace/runtime.md", "task_id": taskID},
+	}})
+	result, err := service.TaskArtifactList(map[string]any{"task_id": taskID, "limit": 20, "offset": 0})
+	if err != nil {
+		t.Fatalf("task artifact list failed: %v", err)
+	}
+	items := result["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["artifact_id"] != "art_runtime_001" {
+		t.Fatalf("expected runtime artifact fallback to return item, got %+v", items)
 	}
 }
 

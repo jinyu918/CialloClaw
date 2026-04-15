@@ -50,3 +50,58 @@ func TestBuildDeliveryResultWithTargetPath(t *testing.T) {
 		t.Fatalf("expected artifact title to follow target path base name, got %v", artifacts[0]["title"])
 	}
 }
+
+func TestBuildArtifactPersistPlansBackfillsDeliveryPayloadAndCreatedAt(t *testing.T) {
+	service := NewService()
+	plans := service.BuildArtifactPersistPlans("task_001", []map[string]any{{
+		"artifact_id":      "art_001",
+		"artifact_type":    "generated_doc",
+		"title":            "result.md",
+		"path":             "workspace/result.md",
+		"mime_type":        "text/markdown",
+		"delivery_type":    "open_file",
+		"delivery_payload": nil,
+	}})
+	if len(plans) != 1 {
+		t.Fatalf("expected one artifact persist plan, got %d", len(plans))
+	}
+	if plans[0]["delivery_payload_json"] != "{}" {
+		t.Fatalf("expected empty delivery payload json fallback, got %+v", plans[0])
+	}
+	if plans[0]["created_at"] == "" {
+		t.Fatalf("expected created_at fallback, got %+v", plans[0])
+	}
+}
+
+func TestBuildArtifactReturnsNilWithoutUsablePayload(t *testing.T) {
+	service := NewService()
+	if artifacts := service.BuildArtifact("task_001", "title", map[string]any{"payload": "invalid"}); artifacts != nil {
+		t.Fatalf("expected invalid payload to skip artifacts, got %+v", artifacts)
+	}
+	if artifacts := service.BuildArtifact("task_001", "title", map[string]any{"payload": map[string]any{"path": ""}}); artifacts != nil {
+		t.Fatalf("expected empty path to skip artifacts, got %+v", artifacts)
+	}
+}
+
+func TestBuildApprovalExecutionPlanRoutesByIntent(t *testing.T) {
+	service := NewService()
+	translatePlan := service.BuildApprovalExecutionPlan("task_001", map[string]any{"name": "translate"})
+	if translatePlan["delivery_type"] != "bubble" {
+		t.Fatalf("expected translate plan to use bubble delivery, got %+v", translatePlan)
+	}
+	writePlan := service.BuildApprovalExecutionPlan("task_001", map[string]any{"name": "write_file"})
+	if writePlan["result_title"] != "文件写入结果" {
+		t.Fatalf("expected write_file title override, got %+v", writePlan)
+	}
+}
+
+func TestDeliveryHelpersExposeDefaultAndBubbleContract(t *testing.T) {
+	service := NewService()
+	if service.DefaultResultType() != "workspace_document" {
+		t.Fatalf("expected workspace_document default result type, got %q", service.DefaultResultType())
+	}
+	bubble := service.BuildBubbleMessage("task_001", "status", "done", "2026-04-14T10:00:00Z")
+	if bubble["bubble_id"] != "bubble_task_001" || bubble["task_id"] != "task_001" || bubble["type"] != "status" {
+		t.Fatalf("unexpected bubble message payload: %+v", bubble)
+	}
+}
