@@ -496,7 +496,7 @@ test("task page no longer exposes edit guidance and uses 安全总览 without an
   assert.doesNotMatch(taskPageSource, /action === "edit"/);
 });
 
-test("task page keeps waiting-auth anchors and waiting-input escape hatches", () => {
+test("task page keeps waiting-auth anchors and removes waiting-input shell-ball action", () => {
   const { getTaskPrimaryActions } = loadTaskPageMapperModule();
   const waitingAuthTask = createTask({ status: "waiting_auth" });
   const waitingInputTask = createTask({ status: "waiting_input" });
@@ -504,7 +504,7 @@ test("task page keeps waiting-auth anchors and waiting-input escape hatches", ()
   assert.equal(getTaskPrimaryActions(waitingAuthTask, createDetail({ approval_request: null, security_summary: { latest_restore_point: null, pending_authorizations: 0, risk_level: "yellow", security_status: "normal" }, task: waitingAuthTask })).at(-1)?.label, "安全详情");
   assert.deepEqual(
     getTaskPrimaryActions(waitingInputTask, createDetail({ approval_request: null, security_summary: { latest_restore_point: null, pending_authorizations: 0, risk_level: "yellow", security_status: "normal" }, task: waitingInputTask })).map((action) => action.action),
-    ["open-shell-ball", "cancel", "open-safety"],
+    ["cancel", "open-safety"],
   );
 });
 

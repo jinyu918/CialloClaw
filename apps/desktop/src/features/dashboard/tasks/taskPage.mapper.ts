@@ -92,7 +92,14 @@ export function getTaskStateVoice(task: Task, experience: TaskExperience, timeli
     };
   }
 
-  if (task.status === "waiting_auth" || task.status === "waiting_input" || task.status === "paused") {
+  if (task.status === "waiting_input") {
+    return {
+      title: "等待补充输入",
+      body: "当前任务还在等待补充输入，如需修改或补充，请到悬浮球继续处理。",
+    };
+  }
+
+  if (task.status === "waiting_auth" || task.status === "paused") {
     return {
       title: "暂时等待中",
       body: experience.waitingReason ?? "当前任务暂时停在等待节点，需要额外确认后继续。",
@@ -185,7 +192,6 @@ export function getTaskPrimaryActions(task: Task, detail: AgentTaskDetailGetResu
 
   if (task.status === "waiting_input") {
     return [
-      { action: "open-shell-ball", label: "补充输入", tooltip: "打开悬浮球输入窗口，继续补齐这条任务需要的内容。" },
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       safetyAction,
     ];
@@ -259,7 +265,11 @@ export function describeCurrentStep(task: Task, experience: TaskExperience) {
     return experience.endedSummary ?? "本次任务已经结束。";
   }
 
-  if (task.status === "waiting_auth" || task.status === "waiting_input" || task.status === "paused") {
+  if (task.status === "waiting_input") {
+    return "当前任务还在等待补充输入，如需修改或补充，请到悬浮球继续处理。";
+  }
+
+  if (task.status === "waiting_auth" || task.status === "paused") {
     return experience.waitingReason ?? experience.phase;
   }
 
