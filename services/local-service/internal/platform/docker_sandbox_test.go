@@ -20,6 +20,14 @@ type stubDockerSandboxRunner struct {
 	blockUntilContext bool
 }
 
+type stubLocalExecutionRunner struct {
+	result      tools.CommandExecutionResult
+	err         error
+	lastCommand string
+	lastArgs    []string
+	lastWorkdir string
+}
+
 func (s *stubDockerSandboxRunner) RunDocker(ctx context.Context, args []string) (tools.CommandExecutionResult, error) {
 	s.lastArgs = append([]string(nil), args...)
 	if s.blockUntilContext {
@@ -32,6 +40,13 @@ func (s *stubDockerSandboxRunner) RunDocker(ctx context.Context, args []string) 
 func (s *stubDockerSandboxRunner) RemoveContainer(_ context.Context, containerName string) error {
 	s.removeCalls = append(s.removeCalls, containerName)
 	return nil
+}
+
+func (s *stubLocalExecutionRunner) RunCommand(_ context.Context, command string, args []string, workingDir string) (tools.CommandExecutionResult, error) {
+	s.lastCommand = command
+	s.lastArgs = append([]string(nil), args...)
+	s.lastWorkdir = workingDir
+	return s.result, s.err
 }
 
 func TestDockerSandboxExecutionBackendBuildsRestrictedDockerRun(t *testing.T) {
@@ -132,12 +147,17 @@ func TestDockerSandboxExecutionBackendReportsMissingDockerCLI(t *testing.T) {
 func TestControlledExecutionBackendRoutesWindowsShellCommandsToLocalHost(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	backend := NewControlledExecutionBackend(workspaceRoot)
+	localRunner := &stubLocalExecutionRunner{result: tools.CommandExecutionResult{Stdout: "ok", ExitCode: 0, ExecutionBackend: "local_host"}}
+	backend.local = localRunner
 	result, err := backend.RunCommand(context.Background(), "cmd", []string{"/c", "echo", "ok"}, workspaceRoot)
 	if err != nil {
 		t.Fatalf("RunCommand returned error: %v", err)
 	}
 	if result.ExecutionBackend != "local_host" {
 		t.Fatalf("expected local_host backend, got %+v", result)
+	}
+	if localRunner.lastCommand != "cmd" || localRunner.lastWorkdir != workspaceRoot {
+		t.Fatalf("expected local runner invocation, got %+v", localRunner)
 	}
 }
 

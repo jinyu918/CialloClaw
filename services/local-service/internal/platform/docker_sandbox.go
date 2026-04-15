@@ -86,6 +86,10 @@ type dockerSandboxRunner interface {
 	RemoveContainer(ctx context.Context, containerName string) error
 }
 
+type commandExecutionRunner interface {
+	RunCommand(ctx context.Context, command string, args []string, workingDir string) (tools.CommandExecutionResult, error)
+}
+
 type dockerCLIRunner struct{}
 
 // ControlledExecutionBackend routes commands either to Docker sandbox execution
@@ -93,7 +97,7 @@ type dockerCLIRunner struct{}
 // inside the Linux container image.
 type ControlledExecutionBackend struct {
 	sandbox       *DockerSandboxExecutionBackend
-	local         LocalExecutionBackend
+	local         commandExecutionRunner
 	localCommands map[string]struct{}
 }
 
