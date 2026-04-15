@@ -1,4 +1,4 @@
-import { ArrowUpRight, Pause, Play, RotateCcw, Sparkles, XCircle } from "lucide-react";
+import { ArrowUpRight, Pause, Play, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getTaskPrimaryActions } from "../taskPage.mapper";
@@ -6,12 +6,11 @@ import type { TaskDetailData } from "../taskPage.types";
 
 type TaskActionBarProps = {
   detailData: TaskDetailData;
-  onAction: (action: "pause" | "resume" | "cancel" | "restart" | "open-safety" | "open-shell-ball") => void;
+  onAction: (action: "pause" | "resume" | "cancel" | "restart" | "open-safety") => void;
 };
 
 const actionIcons = {
   cancel: XCircle,
-  "open-shell-ball": Sparkles,
   "open-safety": ArrowUpRight,
   pause: Pause,
   restart: RotateCcw,

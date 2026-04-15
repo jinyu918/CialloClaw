@@ -185,7 +185,6 @@ export function getTaskPrimaryActions(task: Task, detail: AgentTaskDetailGetResu
 
   if (task.status === "waiting_input") {
     return [
-      { action: "open-shell-ball", label: "补充输入", tooltip: "打开悬浮球输入窗口，继续补齐这条任务需要的内容。" },
       { action: "cancel", label: "取消", tooltip: "结束当前任务，并保留已有轨迹。" },
       safetyAction,
     ];
