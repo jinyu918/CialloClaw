@@ -15,6 +15,9 @@ type ModelConfig struct {
 	SingleTaskLimit     float64
 	DailyLimit          float64
 	BudgetAutoDowngrade bool
+	MaxToolIterations   int
+	ContextCompressChars int
+	ContextKeepRecent   int
 }
 
 // RPCConfig 描述当前模块配置。
@@ -50,6 +53,9 @@ func Load() Config {
 			SingleTaskLimit:     10.0,
 			DailyLimit:          50.0,
 			BudgetAutoDowngrade: true,
+			MaxToolIterations:   4,
+			ContextCompressChars: 2400,
+			ContextKeepRecent:   4,
 		},
 	}
 }

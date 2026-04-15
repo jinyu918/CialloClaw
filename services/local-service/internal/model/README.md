@@ -86,8 +86,15 @@ The live smoke test stays skipped by default unless `RUN_LIVE_OPENAI_RESPONSES_T
   - `single_task_limit`
   - `daily_limit`
   - `budget_auto_downgrade`
+  - `max_tool_iterations`
+  - `context_compress_chars`
+  - `context_keep_recent`
 - `bootstrap` consumes the config-backed API key instead of directly reading the environment
 - `ServiceConfig.APIKey` remains as a temporary fallback input so the module can migrate without breaking existing tests and callers in one step
+
+The loop-related fields are consumed by the execution layer through `model.Service`
+so the first Agent Loop runtime remains configurable without wiring a second
+parallel config object through every caller.
 
 ## Secret Integration Boundary
 

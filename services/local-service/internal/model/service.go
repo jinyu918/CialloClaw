@@ -11,15 +11,24 @@ import (
 
 // Service 提供当前模块的服务能力。
 type Service struct {
-	provider string
-	modelID  string
-	endpoint string
-	client   Client
+	provider             string
+	modelID              string
+	endpoint             string
+	client               Client
+	maxToolIterations    int
+	contextCompressChars int
+	contextKeepRecent    int
 }
 
 // ErrClientNotConfigured 定义当前模块的基础变量。
 var ErrClientNotConfigured = errors.New("model client not configured")
 var ErrToolCallingNotSupported = errors.New("model client does not support tool calling")
+
+const (
+	defaultMaxToolIterations    = 4
+	defaultContextCompressChars = 2400
+	defaultContextKeepRecent    = 4
+)
 
 // ErrModelProviderRequired 定义当前模块的基础变量。
 var ErrModelProviderRequired = errors.New("model provider is required")
@@ -52,10 +61,13 @@ func NewService(cfg config.ModelConfig, clients ...Client) *Service {
 	}
 
 	return &Service{
-		provider: cfg.Provider,
-		modelID:  cfg.ModelID,
-		endpoint: cfg.Endpoint,
-		client:   client,
+		provider:             cfg.Provider,
+		modelID:              cfg.ModelID,
+		endpoint:             cfg.Endpoint,
+		client:               client,
+		maxToolIterations:    cfg.MaxToolIterations,
+		contextCompressChars: cfg.ContextCompressChars,
+		contextKeepRecent:    cfg.ContextKeepRecent,
 	}
 }
 
@@ -91,6 +103,32 @@ func (s *Service) ModelID() string {
 // Endpoint 处理当前模块的相关逻辑。
 func (s *Service) Endpoint() string {
 	return s.endpoint
+}
+
+// MaxToolIterations returns the configured upper bound for one agent loop run.
+func (s *Service) MaxToolIterations() int {
+	if s.maxToolIterations > 0 {
+		return s.maxToolIterations
+	}
+	return defaultMaxToolIterations
+}
+
+// ContextCompressChars returns the planner-input size budget that triggers
+// lightweight history compaction inside the agent loop.
+func (s *Service) ContextCompressChars() int {
+	if s.contextCompressChars > 0 {
+		return s.contextCompressChars
+	}
+	return defaultContextCompressChars
+}
+
+// ContextKeepRecent returns how many recent observations should remain verbatim
+// when older history is compacted.
+func (s *Service) ContextKeepRecent() int {
+	if s.contextKeepRecent > 0 {
+		return s.contextKeepRecent
+	}
+	return defaultContextKeepRecent
 }
 
 // GenerateText 处理当前模块的相关逻辑。
