@@ -87,12 +87,14 @@ function getDetailStatus(item: TodoItem) {
 }
 
 function getTimeHint(item: TodoItem) {
-  if (!item.due_at) {
-    return item.bucket === "recurring_rule" ? "规则时间待补充" : "未设置时间";
-  }
+  const completedTime = item.ended_at ?? item.due_at;
 
   if (item.bucket === "closed") {
-    return formatAbsoluteTime(item.due_at);
+    return completedTime ? formatAbsoluteTime(completedTime) : "未设置时间";
+  }
+
+  if (!item.due_at) {
+    return item.bucket === "recurring_rule" ? "规则时间待补充" : "未设置时间";
   }
 
   if (item.bucket === "recurring_rule") {
