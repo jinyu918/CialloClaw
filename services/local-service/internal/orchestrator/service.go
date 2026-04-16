@@ -820,6 +820,9 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 	if status := stringValue(item, "status", "normal"); status == "completed" || status == "cancelled" {
 		return nil, fmt.Errorf("notepad item is already closed: %s", itemID)
 	}
+	if linkedTaskID := stringValue(item, "linked_task_id", ""); linkedTaskID != "" {
+		return nil, fmt.Errorf("notepad item is already linked to task: %s", linkedTaskID)
+	}
 
 	itemTitle := stringValue(item, "title", "待办事项")
 	taskIntent := notepadIntent(item)
@@ -833,9 +836,15 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 		Timeline:    initialTimeline("confirming_intent", "intent_confirmation"),
 	})
 	s.attachMemoryReadPlans(task.TaskID, task.RunID, notepadSnapshot(item), taskIntent)
+	updatedItem, ok := s.runEngine.LinkNotepadItemTask(itemID, task.TaskID)
+	if !ok {
+		return nil, fmt.Errorf("failed to link notepad item to task: %s", itemID)
+	}
 
 	return map[string]any{
-		"task": taskMap(task),
+		"task":          taskMap(task),
+		"notepad_item":  updatedItem,
+		"refresh_groups": []string{stringValue(updatedItem, "bucket", "upcoming")},
 	}, nil
 }
 

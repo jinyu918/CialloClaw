@@ -634,6 +634,36 @@ func TestEngineCompleteNotepadItemMovesItemToClosedBucket(t *testing.T) {
 	if closedItems[0]["item_id"] != "todo_convert" {
 		t.Fatalf("expected closed list to contain completed item, got %+v", closedItems[0])
 	}
+	if closedItems[0]["ended_at"] == nil {
+		t.Fatalf("expected completed item to carry ended_at, got %+v", closedItems[0])
+	}
+}
+
+func TestEngineLinkNotepadItemTaskPersistsReference(t *testing.T) {
+	engine := NewEngine()
+	engine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_link",
+		"title":   "link me",
+		"bucket":  "upcoming",
+		"status":  "normal",
+		"type":    "todo_item",
+	}})
+
+	linked, ok := engine.LinkNotepadItemTask("todo_link", "task_123")
+	if !ok {
+		t.Fatal("expected LinkNotepadItemTask to succeed")
+	}
+	if linked["linked_task_id"] != "task_123" {
+		t.Fatalf("expected linked_task_id on returned item, got %+v", linked)
+	}
+
+	items, total := engine.NotepadItems("upcoming", 10, 0)
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected one linked item, total=%d len=%d", total, len(items))
+	}
+	if items[0]["linked_task_id"] != "task_123" {
+		t.Fatalf("expected linked_task_id to persist in runtime list, got %+v", items[0])
+	}
 }
 
 func TestEngineListTasksSupportsSorting(t *testing.T) {

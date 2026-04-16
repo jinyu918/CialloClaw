@@ -1326,6 +1326,22 @@ func (e *Engine) CompleteNotepadItem(itemID string) (map[string]any, bool) {
 	updated["bucket"] = "closed"
 	updated["status"] = "completed"
 	updated["due_at"] = nil
+	updated["ended_at"] = e.now().Format(time.RFC3339)
+	e.notepadItems[index] = updated
+	return normalizeNotepadItem(updated, e.now()), true
+}
+
+func (e *Engine) LinkNotepadItemTask(itemID, taskID string) (map[string]any, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	item, index, ok := e.findNotepadItem(itemID)
+	if !ok {
+		return nil, false
+	}
+
+	updated := cloneMap(item)
+	updated["linked_task_id"] = strings.TrimSpace(taskID)
 	e.notepadItems[index] = updated
 	return normalizeNotepadItem(updated, e.now()), true
 }
@@ -1827,40 +1843,124 @@ func buildDefaultNotepadItems(now time.Time) []map[string]any {
 
 	return []map[string]any{
 		{
-			"item_id":          "todo_001",
-			"title":            "整理本周会议纪要",
-			"bucket":           "upcoming",
-			"status":           "normal",
-			"type":             "one_time",
-			"due_at":           dueToday.Format(time.RFC3339),
-			"agent_suggestion": "先生成一个结构化摘要",
+			"item_id":              "todo_001",
+			"title":                "整理本周会议纪要",
+			"bucket":               "upcoming",
+			"status":               "normal",
+			"type":                 "one_time",
+			"due_at":               dueToday.Format(time.RFC3339),
+			"agent_suggestion":     "先生成一个结构化摘要",
+			"note_text":            "把这周会议里的共识、待确认事项和风险点整理成一页结构化纪要，方便后续同步给项目组。",
+			"prerequisite":         "先确认会议录音、群聊结论和白板截图都已经归档。",
+			"repeat_rule":          nil,
+			"next_occurrence_at":   nil,
+			"recent_instance_status": nil,
+			"effective_scope":      nil,
+			"ended_at":             nil,
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_001_minutes",
+					"label":         "会议纪要目录",
+					"path":          "workspace/meetings",
+					"resource_type": "folder",
+					"open_action":   "reveal_in_folder",
+					"open_payload": map[string]any{
+						"path":    "workspace/meetings",
+						"task_id": nil,
+						"url":     nil,
+					},
+				},
+			},
 		},
 		{
-			"item_id":          "todo_002",
-			"title":            "补齐下周评审材料",
-			"bucket":           "later",
-			"status":           "normal",
-			"type":             "one_time",
-			"due_at":           later.Format(time.RFC3339),
-			"agent_suggestion": "可以先整理提纲再扩写成文档",
+			"item_id":              "todo_002",
+			"title":                "补齐下周评审材料",
+			"bucket":               "later",
+			"status":               "normal",
+			"type":                 "one_time",
+			"due_at":               later.Format(time.RFC3339),
+			"agent_suggestion":     "可以先整理提纲再扩写成文档",
+			"note_text":            "这份材料暂时不急着执行，但需要提前把背景、目标和评审关注点补齐，否则下周会上无法直接过稿。",
+			"prerequisite":         "等本周结论稳定后再整理，避免材料重复返工。",
+			"repeat_rule":          nil,
+			"next_occurrence_at":   nil,
+			"recent_instance_status": nil,
+			"effective_scope":      nil,
+			"ended_at":             nil,
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_002_review",
+					"label":         "评审材料草稿",
+					"path":          "workspace/reviews/next-week.md",
+					"resource_type": "file",
+					"open_action":   "open_file",
+					"open_payload": map[string]any{
+						"path":    "workspace/reviews/next-week.md",
+						"task_id": nil,
+						"url":     nil,
+					},
+				},
+			},
 		},
 		{
-			"item_id":          "todo_003",
-			"title":            "每周项目复盘",
-			"bucket":           "recurring_rule",
-			"status":           "normal",
-			"type":             "recurring",
-			"due_at":           recurring.Format(time.RFC3339),
-			"agent_suggestion": "建议生成固定模板后重复复用",
+			"item_id":                "todo_003",
+			"title":                  "每周项目复盘",
+			"bucket":                 "recurring_rule",
+			"status":                 "normal",
+			"type":                   "recurring",
+			"due_at":                 recurring.Format(time.RFC3339),
+			"agent_suggestion":       "建议生成固定模板后重复复用",
+			"note_text":              "每周固定回看目标完成情况、风险变化和下周重点，持续沉淀团队可复用的复盘节奏。",
+			"prerequisite":           "先把本周新增任务和已完成交付汇总齐全。",
+			"repeat_rule":            "每周五 18:00",
+			"next_occurrence_at":     recurring.Format(time.RFC3339),
+			"recent_instance_status": "上次复盘已完成并生成摘要",
+			"effective_scope":        "仅对当前项目工作周生效",
+			"ended_at":               nil,
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_003_template",
+					"label":         "复盘模板",
+					"path":          "workspace/templates/weekly-retro.md",
+					"resource_type": "file",
+					"open_action":   "open_file",
+					"open_payload": map[string]any{
+						"path":    "workspace/templates/weekly-retro.md",
+						"task_id": nil,
+						"url":     nil,
+					},
+				},
+			},
 		},
 		{
-			"item_id":          "todo_004",
-			"title":            "已归档的日报整理",
-			"bucket":           "closed",
-			"status":           "completed",
-			"type":             "one_time",
-			"due_at":           completedAt.Format(time.RFC3339),
-			"agent_suggestion": nil,
+			"item_id":                "todo_004",
+			"title":                  "已归档的日报整理",
+			"bucket":                 "closed",
+			"status":                 "completed",
+			"type":                   "one_time",
+			"due_at":                 completedAt.Format(time.RFC3339),
+			"agent_suggestion":       nil,
+			"note_text":              "这条事项已经处理完成并归档，用来保留来源记录和后续追溯入口。",
+			"prerequisite":           nil,
+			"repeat_rule":            nil,
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               completedAt.Format(time.RFC3339),
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_004_archive",
+					"label":         "归档日报",
+					"path":          "workspace/archive/daily-summary.md",
+					"resource_type": "file",
+					"open_action":   "open_file",
+					"open_payload": map[string]any{
+						"path":    "workspace/archive/daily-summary.md",
+						"task_id": nil,
+						"url":     nil,
+					},
+				},
+			},
 		},
 	}
 }

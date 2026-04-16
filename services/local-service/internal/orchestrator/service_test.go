@@ -983,13 +983,28 @@ func TestServiceNotepadListReturnsRuntimeItemsByBucket(t *testing.T) {
 	now := time.Now().UTC()
 	service.runEngine.ReplaceNotepadItems([]map[string]any{
 		{
-			"item_id":          "todo_today",
-			"title":            "translate daily notes",
-			"bucket":           "upcoming",
-			"status":           "normal",
-			"type":             "todo_item",
-			"due_at":           now.Add(2 * time.Hour).Format(time.RFC3339),
-			"agent_suggestion": "translate",
+			"item_id":                "todo_today",
+			"title":                  "translate daily notes",
+			"bucket":                 "upcoming",
+			"status":                 "normal",
+			"type":                   "todo_item",
+			"due_at":                 now.Add(2 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion":       "translate",
+			"note_text":              "Bring the daily notes into English for the external sync.",
+			"prerequisite":           "Confirm the final Chinese source text first.",
+			"repeat_rule":            nil,
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               nil,
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_today_resource",
+					"label":         "Daily note draft",
+					"path":          "workspace/daily.md",
+					"resource_type": "file",
+				},
+			},
 		},
 		{
 			"item_id":          "todo_later",
@@ -1020,6 +1035,13 @@ func TestServiceNotepadListReturnsRuntimeItemsByBucket(t *testing.T) {
 	}
 	if items[0]["status"] != "due_today" {
 		t.Fatalf("expected runtime list to normalize due_today status, got %v", items[0]["status"])
+	}
+	if items[0]["note_text"] != "Bring the daily notes into English for the external sync." {
+		t.Fatalf("expected note_text to survive list response, got %+v", items[0]["note_text"])
+	}
+	resources, ok := items[0]["related_resources"].([]map[string]any)
+	if !ok || len(resources) != 1 || resources[0]["resource_id"] != "todo_today_resource" {
+		t.Fatalf("expected related_resources to survive list response, got %+v", items[0]["related_resources"])
 	}
 }
 
@@ -1068,12 +1090,24 @@ func TestServiceNotepadConvertToTaskUsesRuntimeItemWithoutClosingTodo(t *testing
 		t.Fatal("expected converted task to attach memory read plans")
 	}
 
+	sourceItem := result["notepad_item"].(map[string]any)
+	if sourceItem["linked_task_id"] != taskID {
+		t.Fatalf("expected convert_to_task to return linked source item, got %+v", sourceItem)
+	}
+	refreshGroups := result["refresh_groups"].([]string)
+	if len(refreshGroups) != 1 || refreshGroups[0] != "upcoming" {
+		t.Fatalf("expected refresh_groups to point at updated bucket, got %+v", refreshGroups)
+	}
+
 	upcomingItems, total := service.runEngine.NotepadItems("upcoming", 10, 0)
 	if total != 1 || len(upcomingItems) != 1 {
 		t.Fatalf("expected converted todo item to stay open until task finishes, total=%d len=%d", total, len(upcomingItems))
 	}
 	if upcomingItems[0]["item_id"] != "todo_translate" || upcomingItems[0]["status"] == "completed" {
 		t.Fatalf("expected notepad item to remain open, got %+v", upcomingItems[0])
+	}
+	if upcomingItems[0]["linked_task_id"] != taskID {
+		t.Fatalf("expected runtime notepad item to keep linked_task_id, got %+v", upcomingItems[0])
 	}
 }
 
@@ -1101,6 +1135,29 @@ func TestServiceNotepadConvertToTaskRequiresConfirmedFlag(t *testing.T) {
 	items, total := service.runEngine.NotepadItems("upcoming", 10, 0)
 	if total != 1 || len(items) != 1 {
 		t.Fatalf("expected notepad item to remain untouched after rejected convert, total=%d len=%d", total, len(items))
+	}
+}
+
+func TestServiceNotepadConvertToTaskRejectsAlreadyLinkedItem(t *testing.T) {
+	service := newTestService()
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id":        "todo_linked",
+		"title":          "already linked note",
+		"bucket":         "upcoming",
+		"status":         "normal",
+		"type":           "todo_item",
+		"linked_task_id": "task_existing",
+	}})
+
+	_, err := service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_linked",
+		"confirmed": true,
+	})
+	if err == nil {
+		t.Fatal("expected convert_to_task to reject already linked item")
+	}
+	if err.Error() != "notepad item is already linked to task: task_existing" {
+		t.Fatalf("expected linked item error, got %v", err)
 	}
 }
 
