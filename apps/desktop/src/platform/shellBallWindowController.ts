@@ -91,6 +91,13 @@ export async function showShellBallWindow(role: ShellBallWindowRole) {
   await windowHandle.show();
 }
 
+export async function raiseShellBallWindow(role: ShellBallWindowRole) {
+  const windowHandle = await getShellBallWindow(role);
+  await windowHandle.setAlwaysOnTop(false);
+  await windowHandle.setAlwaysOnTop(true);
+  await windowHandle.show();
+}
+
 export async function hideShellBallWindow(role: ShellBallWindowRole) {
   const windowHandle = await getShellBallWindow(role);
   await windowHandle.hide();

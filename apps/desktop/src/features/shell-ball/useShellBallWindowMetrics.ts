@@ -4,6 +4,7 @@ import {
   createShellBallLogicalPosition,
   createShellBallLogicalSize,
   hideShellBallWindow,
+  raiseShellBallWindow,
   setShellBallWindowFocusable,
   setShellBallWindowIgnoreCursorEvents,
   setShellBallWindowPosition,
@@ -17,6 +18,7 @@ type AnchoredShellBallHelperWindowRole = Exclude<ShellBallHelperWindowRole, "pin
 
 export const SHELL_BALL_WINDOW_SAFE_MARGIN_PX = 12;
 export const SHELL_BALL_BUBBLE_GAP_PX = 6;
+export const SHELL_BALL_BUBBLE_DRAG_CLEARANCE_PX = 24;
 export const SHELL_BALL_INPUT_GAP_PX = 4;
 export const SHELL_BALL_COMPACT_WINDOW_SAFE_MARGIN_PX = 6;
 
@@ -85,12 +87,14 @@ export function getShellBallBubbleAnchor(input: {
   ballFrame: ShellBallWindowFrame;
   helperFrame: ShellBallWindowSize;
   gap?: number;
+  clearance?: number;
 }) {
   const gap = input.gap ?? SHELL_BALL_BUBBLE_GAP_PX;
+  const clearance = input.clearance ?? SHELL_BALL_BUBBLE_DRAG_CLEARANCE_PX;
 
   return {
     x: Math.round(input.ballFrame.x + input.ballFrame.width / 2 - input.helperFrame.width / 2),
-    y: Math.round(input.ballFrame.y - gap - input.helperFrame.height),
+    y: Math.round(input.ballFrame.y - gap - clearance - input.helperFrame.height),
   };
 }
 
@@ -363,6 +367,10 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
 
       if (visible) {
         await showShellBallWindow(role);
+        if (role === "bubble") {
+          // Keep the mascot hotspot above the transient bubble window so drag gestures stay reachable.
+          await raiseShellBallWindow("ball");
+        }
         return;
       }
 
