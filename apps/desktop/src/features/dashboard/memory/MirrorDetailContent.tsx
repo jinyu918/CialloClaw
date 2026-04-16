@@ -889,6 +889,7 @@ export function MirrorDetailContent(props: MirrorDetailContentProps) {
       navigate(resolveDashboardModuleRoutePath("memory"), {
         state: {
           activeDetailKey: "history",
+          historyDetailView: "conversation",
         },
       });
     },

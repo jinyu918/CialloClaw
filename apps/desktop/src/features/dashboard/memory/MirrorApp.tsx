@@ -78,6 +78,7 @@ type DragState = {
 type MirrorRouteState = {
   activeDetailKey?: MirrorDirectionKey;
   focusMemoryId?: string;
+  historyDetailView?: MirrorHistoryDetailView;
 };
 
 const INITIAL_MODULE_STACK: MirrorDirectionKey[] = DEFAULT_MIRROR_DIRECTION_STACK;
@@ -130,6 +131,11 @@ function readMirrorRouteState(value: unknown) {
   return {
     activeDetailKey,
     focusMemoryId,
+    historyDetailView:
+      activeDetailKey === "history" &&
+      (state.historyDetailView === "summary" || state.historyDetailView === "conversation")
+        ? state.historyDetailView
+        : null,
   };
 }
 
@@ -591,9 +597,12 @@ export function MirrorApp() {
 
   dataModeRef.current = dataMode;
 
-  const openDetail = useCallback((key: MirrorDirectionKey, options?: { focusMemoryId?: string | null }) => {
+  const openDetail = useCallback((key: MirrorDirectionKey, options?: { focusMemoryId?: string | null; historyDetailView?: MirrorHistoryDetailView | null }) => {
     setActiveDetailKey(key);
     setFocusedMemoryId(key === "memory" ? options?.focusMemoryId ?? null : null);
+    if (key === "history" && options?.historyDetailView) {
+      setHistoryDetailView(options.historyDetailView);
+    }
   }, []);
 
   const closeDetail = useCallback(() => {
@@ -616,6 +625,7 @@ export function MirrorApp() {
 
     openDetail(routeState.activeDetailKey, {
       focusMemoryId: routeState.focusMemoryId,
+      historyDetailView: routeState.historyDetailView,
     });
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, openDetail]);

@@ -15,6 +15,7 @@ export type DashboardSettingsMutationResult = {
   needRestart: boolean;
   updatedKeys: string[];
   source: DashboardSettingsSource;
+  persisted: boolean;
 };
 
 function createRequestMeta(): RequestMeta {
@@ -109,6 +110,7 @@ export async function updateDashboardSettings(
       needRestart: false,
       updatedKeys: inferUpdatedKeys(patch),
       source: "mock",
+      persisted: true,
     };
   }
 
@@ -127,6 +129,7 @@ export async function updateDashboardSettings(
       needRestart: response.need_restart,
       updatedKeys: response.updated_keys,
       source: snapshot.source,
+      persisted: true,
     };
   } catch (error) {
     if (!isRpcChannelUnavailable(error)) {
@@ -134,19 +137,24 @@ export async function updateDashboardSettings(
     }
 
     logRpcMockFallback("dashboard settings update", error);
-    persistPatchedSettings(patch);
+    const snapshot = await loadDashboardSettingsSnapshot("mock");
 
     return {
-      snapshot: await loadDashboardSettingsSnapshot("mock"),
+      snapshot,
       applyMode: "immediate",
       needRestart: false,
-      updatedKeys: inferUpdatedKeys(patch),
-      source: "mock",
+      updatedKeys: [],
+      source: snapshot.source,
+      persisted: false,
     };
   }
 }
 
 export function formatDashboardSettingsMutationFeedback(result: DashboardSettingsMutationResult, subject: string) {
+  if (!result.persisted) {
+    return `${subject}未保存，当前仅显示本地快照。`;
+  }
+
   const suffix = result.source === "mock" ? " 当前使用本地快照。" : "";
 
   if (result.needRestart || result.applyMode === "restart_required") {

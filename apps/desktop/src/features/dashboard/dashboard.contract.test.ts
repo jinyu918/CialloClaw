@@ -113,12 +113,16 @@ function loadSettingsServiceModule() {
   );
 }
 
-function loadDashboardSettingsMutationModule() {
+function loadDashboardSettingsMutationModule(rpcMethods?: {
+  updateSettings?: (params: unknown) => Promise<unknown>;
+  getSettingsDetailed?: (params: unknown) => Promise<unknown>;
+}) {
   return withDesktopAliasRuntime((requireFn) =>
     requireFn(resolve(desktopRoot, ".cache/dashboard-tests/features/dashboard/shared/dashboardSettingsMutation.js")) as {
       updateDashboardSettings: (patch: Record<string, unknown>, source?: "rpc" | "mock") => Promise<{
         applyMode: string;
         needRestart: boolean;
+        persisted: boolean;
         source: string;
         updatedKeys: string[];
         snapshot: {
@@ -138,11 +142,17 @@ function loadDashboardSettingsMutationModule() {
           };
         };
       }>;
-    },
+    }, rpcMethods,
   );
 }
 
-function withDesktopAliasRuntime<T>(callback: (requireFn: NodeRequire) => T): T {
+function withDesktopAliasRuntime<T>(
+  callback: (requireFn: NodeRequire) => T,
+  rpcMethods?: {
+    updateSettings?: (params: unknown) => Promise<unknown>;
+    getSettingsDetailed?: (params: unknown) => Promise<unknown>;
+  },
+): T {
   const NodeModule = require("node:module") as {
     _load: (request: string, parent: unknown, isMain: boolean) => unknown;
     _resolveFilename: (request: string, parent: unknown, isMain: boolean, options?: unknown) => string;
@@ -207,6 +217,8 @@ function withDesktopAliasRuntime<T>(callback: (requireFn: NodeRequire) => T): T 
         listTasks() {
           throw new Error("listTasks should not run in dashboard contract tests");
         },
+        getSettingsDetailed: rpcMethods?.getSettingsDetailed ?? (() => Promise.reject(new Error("getSettingsDetailed should not run in dashboard contract tests"))),
+        updateSettings: rpcMethods?.updateSettings ?? (() => Promise.reject(new Error("updateSettings should not run in dashboard contract tests"))),
       };
     }
 
@@ -647,7 +659,11 @@ test("task context links back into mirror detail state instead of plain text dea
   assert.match(mirrorDetailSource, /前往恢复点/);
   assert.match(mirrorDetailSource, /前往预算详情/);
   assert.match(mirrorDetailSource, /activeDetailKey: "history"/);
+  assert.match(mirrorDetailSource, /historyDetailView: "conversation"/);
   assert.match(mirrorDetailSource, /前往本地对话/);
+  assert.match(mirrorAppSource, /historyDetailView\?: MirrorHistoryDetailView/);
+  assert.match(mirrorAppSource, /options\?: \{ focusMemoryId\?: string \| null; historyDetailView\?: MirrorHistoryDetailView \| null \}/);
+  assert.match(mirrorAppSource, /setHistoryDetailView\(options\.historyDetailView\)/);
 });
 
 test("task page keeps waiting-auth anchors and waiting-input escape hatches", () => {
@@ -801,6 +817,7 @@ test("dashboard settings mutation updates the local snapshot in mock mode", asyn
     assert.equal(result.source, "mock");
     assert.equal(result.applyMode, "immediate");
     assert.equal(result.needRestart, false);
+    assert.equal(result.persisted, true);
     assert.deepEqual(result.updatedKeys.sort(), ["data_log", "general", "memory"]);
     assert.equal(result.snapshot.settings.memory.enabled, false);
     assert.equal(result.snapshot.settings.memory.lifecycle, "session");
@@ -813,6 +830,59 @@ test("dashboard settings mutation updates the local snapshot in mock mode", asyn
     assert.equal(persisted.settings.memory.lifecycle, "session");
     assert.equal(persisted.settings.general.download.ask_before_save_each_file, false);
     assert.equal(persisted.settings.data_log.budget_auto_downgrade, false);
+  } finally {
+    if (originalWindow === undefined) {
+      Reflect.deleteProperty(globalThis, "window");
+    } else {
+      Object.assign(globalThis, { window: originalWindow });
+    }
+  }
+});
+
+test("dashboard settings mutation keeps fallback snapshots read-only when the RPC transport is unavailable", async () => {
+  const { loadSettings } = loadSettingsServiceModule();
+  const { updateDashboardSettings } = loadDashboardSettingsMutationModule({
+    updateSettings: async () => {
+      throw new Error("transport is not wired");
+    },
+  });
+  const originalWindow = globalThis.window;
+  const storage = new Map<string, string>();
+  const localStorage = {
+    getItem(key: string) {
+      return storage.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      storage.set(key, value);
+    },
+    removeItem(key: string) {
+      storage.delete(key);
+    },
+  };
+
+  Object.assign(globalThis, {
+    window: {
+      localStorage,
+    },
+  });
+
+  try {
+    const before = loadSettings();
+    const result = await updateDashboardSettings({
+      memory: {
+        enabled: false,
+        lifecycle: "session",
+      },
+    });
+    const after = loadSettings();
+
+    assert.equal(result.source, "mock");
+    assert.equal(result.persisted, false);
+    assert.deepEqual(result.updatedKeys, []);
+    assert.equal(result.snapshot.settings.memory.enabled, before.settings.memory.enabled);
+    assert.equal(result.snapshot.settings.memory.lifecycle, before.settings.memory.lifecycle);
+    assert.equal(after.settings.memory.enabled, before.settings.memory.enabled);
+    assert.equal(after.settings.memory.lifecycle, before.settings.memory.lifecycle);
   } finally {
     if (originalWindow === undefined) {
       Reflect.deleteProperty(globalThis, "window");

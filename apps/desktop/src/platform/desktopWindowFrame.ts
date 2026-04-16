@@ -36,9 +36,17 @@ export async function requestCurrentDesktopWindowClose() {
   await currentWindow.close();
 }
 
+type DesktopCloseHandle = {
+  close: () => Promise<void>;
+};
+
 // installDesktopEscapeClose keeps frameless desktop windows dismissible
 // without stealing Escape from active text inputs or editable regions.
-export function installDesktopEscapeClose(windowHandle = getCurrentWindow()) {
+export function installDesktopEscapeClose(windowHandle?: DesktopCloseHandle | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
   let closing = false;
 
   window.addEventListener("keydown", (event) => {
@@ -62,7 +70,14 @@ export function installDesktopEscapeClose(windowHandle = getCurrentWindow()) {
       }
 
       closing = true;
-      void windowHandle.close().finally(() => {
+      const currentWindow = windowHandle ?? getDesktopFrameWindow();
+
+      if (!currentWindow) {
+        closing = false;
+        return;
+      }
+
+      void currentWindow.close().finally(() => {
         closing = false;
       });
     });

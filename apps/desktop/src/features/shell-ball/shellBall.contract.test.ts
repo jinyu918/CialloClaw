@@ -1148,11 +1148,14 @@ test("dashboard and control-panel entrypoints install hide-on-close handling", (
 test("control-panel entrypoint and view keep frameless window close and drag controls wired", () => {
   const controlPanelMainSource = readFileSync(resolve(desktopRoot, "src/app/control-panel/main.tsx"), "utf8");
   const controlPanelAppSource = readFileSync(resolve(desktopRoot, "src/features/control-panel/ControlPanelApp.tsx"), "utf8");
+  const desktopWindowFrameSource = readFileSync(resolve(desktopRoot, "src/platform/desktopWindowFrame.ts"), "utf8");
 
   assert.match(controlPanelMainSource, /installDesktopEscapeClose/);
   assert.match(controlPanelMainSource, /installDesktopEscapeClose\(\)/);
   assert.match(controlPanelAppSource, /startCurrentDesktopWindowDragging/);
   assert.match(controlPanelAppSource, /requestCurrentDesktopWindowClose/);
+  assert.match(desktopWindowFrameSource, /export function installDesktopEscapeClose\(windowHandle\?: DesktopCloseHandle \| null\)/);
+  assert.match(desktopWindowFrameSource, /const currentWindow = windowHandle \?\? getDesktopFrameWindow\(\)/);
   assert.match(controlPanelAppSource, /control-panel-page__topbar/);
   assert.match(controlPanelAppSource, /拖动控制面板窗口/);
   assert.match(controlPanelAppSource, /关闭控制面板/);
