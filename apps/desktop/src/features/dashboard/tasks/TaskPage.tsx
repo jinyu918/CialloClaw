@@ -153,23 +153,23 @@ export function TaskPage() {
       return;
     }
 
-    function invalidateTaskQueries() {
+    function invalidateTaskQueries(deliveryTaskId?: string) {
       for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
         void queryClient.invalidateQueries({ queryKey });
       }
 
-      if (selectedTaskId) {
+      if (selectedTaskId && (!deliveryTaskId || deliveryTaskId === selectedTaskId)) {
         void queryClient.invalidateQueries({ queryKey: ["dashboard", "tasks", "artifacts", dataMode, selectedTaskId] });
       }
     }
 
-    const clearDeliverySubscription = subscribeDeliveryReady(() => {
-      invalidateTaskQueries();
+    const clearDeliverySubscription = subscribeDeliveryReady((payload) => {
+      invalidateTaskQueries(payload.task_id);
     });
 
     const clearTaskSubscription = selectedTaskId
       ? subscribeTask(selectedTaskId, () => {
-          invalidateTaskQueries();
+          invalidateTaskQueries(selectedTaskId);
         })
       : () => {};
 

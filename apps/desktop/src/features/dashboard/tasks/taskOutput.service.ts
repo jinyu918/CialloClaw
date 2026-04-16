@@ -9,7 +9,6 @@ import type {
   DeliveryPayload,
   RequestMeta,
 } from "@cialloclaw/protocol";
-import { isRpcChannelUnavailable, logRpcMockFallback } from "@/rpc/fallback";
 import { listTaskArtifacts, openDelivery, openTaskArtifact } from "@/rpc/methods";
 import { getMockTaskDetail } from "./taskPage.mock";
 
@@ -30,6 +29,15 @@ function createRequestMeta(scope: string): RequestMeta {
     client_time: new Date().toISOString(),
     trace_id: `trace_${scope}_${Date.now()}`,
   };
+}
+
+export function isAllowedTaskOpenUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
@@ -134,6 +142,10 @@ export function resolveTaskOpenExecutionPlan(result: AgentTaskArtifactOpenResult
 
 export async function performTaskOpenExecution(plan: TaskOpenExecutionPlan): Promise<string> {
   if (plan.mode === "open_url" && plan.url) {
+    if (!isAllowedTaskOpenUrl(plan.url)) {
+      return "已拦截不受支持的结果链接。";
+    }
+
     window.open(plan.url, "_blank", "noopener,noreferrer");
     return plan.feedback;
   }
@@ -170,16 +182,7 @@ export async function loadTaskArtifactPage(taskId: string, source: TaskOutputDat
     task_id: taskId,
   };
 
-  try {
-    return await withTimeout(listTaskArtifacts(params), `task artifacts ${taskId}`);
-  } catch (error) {
-    if (isRpcChannelUnavailable(error)) {
-      logRpcMockFallback(`task artifacts ${taskId}`, error);
-      return buildMockArtifactPage(taskId);
-    }
-
-    throw error;
-  }
+  return withTimeout(listTaskArtifacts(params), `task artifacts ${taskId}`);
 }
 
 export async function openTaskArtifactForTask(taskId: string, artifactId: string, source: TaskOutputDataMode = "rpc"): Promise<AgentTaskArtifactOpenResult> {
@@ -197,20 +200,7 @@ export async function openTaskArtifactForTask(taskId: string, artifactId: string
     task_id: taskId,
   };
 
-  try {
-    return await withTimeout(openTaskArtifact(params), `task artifact open ${artifactId}`);
-  } catch (error) {
-    if (isRpcChannelUnavailable(error)) {
-      logRpcMockFallback(`task artifact open ${artifactId}`, error);
-      const artifact = getMockTaskDetail(taskId).detail.artifacts.find((item) => item.artifact_id === artifactId);
-      if (!artifact) {
-        throw new Error(`mock artifact not found: ${artifactId}`);
-      }
-      return buildMockOpenResult(taskId, artifact) as AgentTaskArtifactOpenResult;
-    }
-
-    throw error;
-  }
+  return withTimeout(openTaskArtifact(params), `task artifact open ${artifactId}`);
 }
 
 export async function openTaskDeliveryForTask(taskId: string, artifactId: string | undefined, source: TaskOutputDataMode = "rpc"): Promise<AgentDeliveryOpenResult> {
@@ -225,14 +215,5 @@ export async function openTaskDeliveryForTask(taskId: string, artifactId: string
     task_id: taskId,
   };
 
-  try {
-    return await withTimeout(openDelivery(params), `task delivery open ${taskId}`);
-  } catch (error) {
-    if (isRpcChannelUnavailable(error)) {
-      logRpcMockFallback(`task delivery open ${taskId}`, error);
-      return buildMockOpenResult(taskId, artifactId ? getMockTaskDetail(taskId).detail.artifacts.find((item) => item.artifact_id === artifactId) ?? null : null) as AgentDeliveryOpenResult;
-    }
-
-    throw error;
-  }
+  return withTimeout(openDelivery(params), `task delivery open ${taskId}`);
 }

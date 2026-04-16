@@ -85,6 +85,7 @@ function loadTaskOutputServiceModule() {
   return withDesktopAliasRuntime((requireFn) =>
     requireFn(resolve(desktopRoot, ".cache/dashboard-tests/features/dashboard/tasks/taskOutput.service.js")) as {
       describeTaskOpenResultForCurrentTask: (plan: { mode: string; taskId: string | null }, currentTaskId: string | null) => string | null;
+      isAllowedTaskOpenUrl: (url: string) => boolean;
       loadTaskArtifactPage: (taskId: string, source: "rpc" | "mock") => Promise<AgentTaskArtifactListResult>;
       openTaskArtifactForTask: (taskId: string, artifactId: string, source: "rpc" | "mock") => Promise<AgentTaskArtifactOpenResult>;
       openTaskDeliveryForTask: (taskId: string, artifactId: string | undefined, source: "rpc" | "mock") => Promise<AgentDeliveryOpenResult>;
@@ -933,15 +934,23 @@ test("task output service exposes artifact list and open flows in mock mode", as
     ),
     "当前任务没有独立可打开结果，请先查看成果区。",
   );
+
+  assert.equal(outputService.isAllowedTaskOpenUrl("https://example.test/result"), true);
+  assert.equal(outputService.isAllowedTaskOpenUrl("http://example.test/result"), true);
+  assert.equal(outputService.isAllowedTaskOpenUrl("javascript:alert(1)"), false);
+  assert.equal(outputService.isAllowedTaskOpenUrl("file:///tmp/out.txt"), false);
 });
 
 test("task page adopts rpc output helpers directly in the task detail panel", () => {
   const taskPageSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/TaskPage.tsx"), "utf8");
   const taskDetailSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/components/TaskDetailPanel.tsx"), "utf8");
+  const taskOutputSource = readFileSync(resolve(desktopRoot, "src/features/dashboard/tasks/taskOutput.service.ts"), "utf8");
 
   assert.match(taskPageSource, /loadTaskArtifactPage/);
   assert.match(taskPageSource, /openTaskArtifactForTask/);
   assert.match(taskPageSource, /openTaskDeliveryForTask/);
+  assert.match(taskPageSource, /subscribeDeliveryReady\(\(payload\) =>/);
+  assert.match(taskPageSource, /payload\.task_id/);
   assert.doesNotMatch(taskPageSource, /TaskFilesSheet/);
 
   assert.doesNotMatch(taskDetailSource, /当前协议尚未提供稳定的 artifact\.open 能力/);
@@ -949,6 +958,10 @@ test("task page adopts rpc output helpers directly in the task detail panel", ()
   assert.match(taskDetailSource, /onOpenLatestDelivery/);
   assert.doesNotMatch(taskDetailSource, /文件舱门/);
   assert.match(taskDetailSource, /artifactItems/);
+
+  assert.doesNotMatch(taskOutputSource, /isRpcChannelUnavailable/);
+  assert.doesNotMatch(taskOutputSource, /logRpcMockFallback/);
+  assert.match(taskOutputSource, /isAllowedTaskOpenUrl/);
 });
 
 test("task fallback copy no longer claims backend output actions are missing", () => {
