@@ -3215,7 +3215,7 @@ test("shell-ball selected-text prompt stays below an existing intent bubble even
   let refCallCount = 0;
 
   class FakeDate extends Date {
-    constructor(...args: ConstructorParameters<typeof Date>) {
+    constructor(...args: any[]) {
       super(args.length === 0 ? "2026-04-11T10:00:00.000Z" : args[0]);
     }
 
