@@ -51,7 +51,9 @@ export function ShellBallInputWindow({
   const compositionActiveRef = useRef(false);
   const pendingWindowBlurRef = useRef(false);
   const windowFocusedRef = useRef(false);
-  const pendingBlurTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  // Browser helper windows always use the DOM timer API here, so the timeout id
+  // should stay typed as a numeric handle instead of the Node.js Timeout object.
+  const pendingBlurTimeoutRef = useRef<number | null>(null);
   const imeBlurGuardUntilRef = useRef(0);
 
   const clearPendingBlurTimeout = () => {

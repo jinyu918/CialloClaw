@@ -3,6 +3,7 @@ import type {
   AgentMirrorOverviewGetResult,
   ApprovalRequest,
   MirrorReference,
+  RecoveryPoint,
   RequestMeta,
   Task,
   TokenCostSummary,
@@ -13,6 +14,11 @@ import { getMirrorOverviewDetailed as requestMirrorOverview } from "@/rpc/method
 import { loadMirrorConversationRecords, type MirrorConversationRecord } from "@/services/mirrorMemoryService";
 import { loadSecurityModuleData } from "@/features/dashboard/safety/securityService";
 import { loadTaskBuckets } from "@/features/dashboard/tasks/taskPage.service";
+import {
+  getInitialDashboardSettingsSnapshot,
+  loadDashboardSettingsSnapshot,
+  type DashboardSettingsSnapshotData,
+} from "@/features/dashboard/shared/dashboardSettingsSnapshot";
 import {
   buildMirrorConversationSummary,
   buildMirrorDailyDigest,
@@ -35,10 +41,12 @@ export type MirrorInsightPreview = {
 export type MirrorOverviewData = {
   overview: AgentMirrorOverviewGetResult;
   insight: MirrorInsightPreview;
+  latestRestorePoint: RecoveryPoint | null;
   rpcContext: {
     serverTime: string | null;
     warnings: string[];
   };
+  settingsSnapshot: DashboardSettingsSnapshotData;
   source: MirrorOverviewSource;
   conversations: MirrorConversationRecord[];
   conversationSummary: MirrorConversationSummary;
@@ -49,6 +57,7 @@ export type MirrorOverviewData = {
 type MirrorSupportContext = {
   finishedTasks: Task[];
   unfinishedTasks: Task[];
+  latestRestorePoint: RecoveryPoint | null;
   pendingApprovals: ApprovalRequest[];
   latestRestorePointSummary: string | null;
   securityStatus: string | null;
@@ -96,6 +105,7 @@ function getEmptyMirrorSupportContext(): MirrorSupportContext {
   return {
     finishedTasks: [],
     unfinishedTasks: [],
+    latestRestorePoint: null,
     pendingApprovals: [],
     latestRestorePointSummary: null,
     securityStatus: null,
@@ -124,6 +134,10 @@ async function loadMirrorSupportContext(source: MirrorOverviewSource): Promise<M
   return {
     finishedTasks: taskBuckets?.finished.items.map((item) => item.task) ?? [],
     unfinishedTasks: taskBuckets?.unfinished.items.map((item) => item.task) ?? [],
+    latestRestorePoint:
+      securityModule?.summary.latest_restore_point && typeof securityModule.summary.latest_restore_point !== "string"
+        ? securityModule.summary.latest_restore_point
+        : null,
     pendingApprovals: securityModule?.pending ?? [],
     latestRestorePointSummary:
       securityModule?.summary.latest_restore_point && typeof securityModule.summary.latest_restore_point !== "string"
@@ -159,7 +173,10 @@ function buildMirrorOverviewData(
   source: MirrorOverviewSource,
   rpcContext: MirrorOverviewData["rpcContext"],
   supportContext: MirrorSupportContext,
+  settingsSnapshot: DashboardSettingsSnapshotData,
 ): MirrorOverviewData {
+  // Mirror detail cards mix protocol-backed overview data with frontend support
+  // context so the page can explain related tasks, safety state, and settings policy.
   const conversations = loadMirrorConversationRecords(source);
   const conversationSummary = buildMirrorConversationSummary(conversations);
   const dailyDigest = buildMirrorDailyDigest({
@@ -180,10 +197,12 @@ function buildMirrorOverviewData(
   return {
     overview,
     insight: buildMirrorInsightPreview(overview, dailyDigest, conversationSummary),
+    latestRestorePoint: supportContext.latestRestorePoint,
     rpcContext: {
       ...rpcContext,
       warnings: [...rpcContext.warnings, ...supportContext.warnings],
     },
+    settingsSnapshot,
     source,
     conversations,
     conversationSummary,
@@ -203,13 +222,17 @@ export function getInitialMirrorOverviewData(): MirrorOverviewData {
       warnings: [],
     },
     getEmptyMirrorSupportContext(),
+    getInitialDashboardSettingsSnapshot(),
   );
 }
 
 export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc"): Promise<MirrorOverviewData> {
   if (source === "mock") {
     const overview = buildFallbackOverview();
-    const supportContext = await loadMirrorSupportContext("mock");
+    const [supportContext, settingsSnapshot] = await Promise.all([
+      loadMirrorSupportContext("mock"),
+      loadDashboardSettingsSnapshot("mock"),
+    ]);
 
     return buildMirrorOverviewData(
       overview,
@@ -219,6 +242,7 @@ export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc
         warnings: [],
       },
       supportContext,
+      settingsSnapshot,
     );
   }
 
@@ -228,9 +252,12 @@ export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc
       include: ["history_summary", "daily_summary", "profile", "memory_references"],
     };
 
-    const [response, supportContext] = await Promise.all([
+    // Support context and settings are independent read paths, so load them in
+    // parallel with the main mirror overview request to keep refreshes responsive.
+    const [response, supportContext, settingsSnapshot] = await Promise.all([
       requestMirrorOverview(params),
       loadMirrorSupportContext("rpc"),
+      loadDashboardSettingsSnapshot("rpc"),
     ]);
     const overview = response.data;
 
@@ -242,12 +269,16 @@ export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc
         warnings: response.warnings,
       },
       supportContext,
+      settingsSnapshot,
     );
   } catch (error) {
     if (isRpcChannelUnavailable(error)) {
       logRpcMockFallback("mirror overview", error);
       const overview = buildFallbackOverview();
-      const supportContext = await loadMirrorSupportContext("mock");
+      const [supportContext, settingsSnapshot] = await Promise.all([
+        loadMirrorSupportContext("mock"),
+        loadDashboardSettingsSnapshot("mock"),
+      ]);
 
       return buildMirrorOverviewData(
         overview,
@@ -257,6 +288,7 @@ export async function loadMirrorOverviewData(source: MirrorOverviewSource = "rpc
           warnings: [],
         },
         supportContext,
+        settingsSnapshot,
       );
     }
 

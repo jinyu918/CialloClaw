@@ -4,6 +4,8 @@
 
 目标不是让 Agent 自由发挥，而是让 Agent **先理解项目、再遵守边界、再按主链路工作**。
 
+`AGENTS.md` 只保留跨任务共享的最小执行规则；具体设计、真源和产品细节按任务去 `docs/` 中对应文档查询。
+
 ------
 
 ## 1. 你正在参与什么项目
@@ -30,42 +32,57 @@
 
 ------
 
-## 2. 开始工作前必须先读的文档
+## 2. 开始工作前的最小阅读规则
 
-在你第一次参与任何实现、改动、重构、补丁、联调、测试、文档回写之前，**必须先读取 `docs/` 下列文档**。
+`AGENTS.md` 只承载所有任务都必须遵守的最小执行规则，不再要求 Agent 每次开始工作前机械性重读整套 `/docs`。
 
-### 必读顺序
+### 默认必做
 
-1. `docs/architecture-overview.md`
-2. `docs/development-guidelines.md`
-3. `docs/protocol-design.md`
-4. `docs/data-design.md`
-5. `docs/module-design.md`
-6. `docs/work-priority-plan.md`
-7. `docs/atomic-features.md`
+- 先读当前 `AGENTS.md`
+- 先判断任务属于哪个功能域、会碰哪些正式对象、是否涉及高风险动作
+- 先结合 `docs/work-priority-plan.md` 判断当前任务属于哪个优先级分组，以及是否已命中文档中的现有任务项
+- 再按任务范围读取对应真源或设计文档；只读与当前任务直接相关的部分
+
+### 仅在以下情况补读通用文档
+
+- 第一次进入仓库，尚未建立主链路和边界认知
+- 任务跨多个功能域，或对象归属、优先级、职责边界不清
+- 任务会调整架构、主链路、统一规范，或你发现文档之间存在冲突
+
+此时优先补读：
+
+- `docs/architecture-overview.md`
+- `docs/development-guidelines.md`
+- `docs/work-priority-plan.md`
+
+### 文档索引 / 路由表
+
+| 任务类型 | 应读取的文档 |
+| --- | --- |
+| 新增 / 修改 JSON-RPC 方法、schema、事件、错误码、正式协议对象、正式状态枚举 | `docs/development-guidelines.md`、`docs/protocol-design.md`，必要时再核对 `packages/protocol` 真源 |
+| 新增 / 修改表结构、字段、索引、数据分层 | `docs/development-guidelines.md`、`docs/data-design.md` |
+| 调整模块职责、模块边界、状态机、时序、联调链路 | `docs/module-design.md` |
+| 常规后端 / service 实现变更（如 orchestrator、delivery、risk、memory、run engine），但不修改协议或数据真源 | `docs/module-design.md`；若触及主链路、统一边界或跨模块约束，再补读 `docs/architecture-overview.md`、`docs/development-guidelines.md` |
+| 调整系统分层、主链路、跨端边界、平台抽象 | `docs/architecture-overview.md` |
+| 调整前端交互、悬浮球、仪表盘、控制面板、设置体验 | `docs/product-interaction-design.md`、`docs/dashboard-design.md`、`docs/control-panel-settings.md` |
+| 判断任务属于 P0 / P1 / P2 / P3、负责人分工、任务是否已完成或需要补排期 | `docs/work-priority-plan.md` |
+| 判断需求是否已有原子功能登记、该归入哪个功能域 | `docs/atomic-features.md` |
 
 如果仓库中的设计文档进行了英文重命名或后续版本替换，以 **`docs/` 目录中的最新英文命名文件** 为准。
 
-### 阅读目标
+### 阅读要求
 
-你不是"打开过文档"就算完成，而是必须至少理解以下内容：
-
-- 项目的唯一主链路是什么
-- 前后端的正式边界是什么
-- 哪些对象是正式对象，哪些只是局部 UI 状态
-- 协议、状态枚举、错误码、表结构分别以什么为真源
-- 哪些功能是 P0，哪些不应该阻塞主链路
-- 当前改动属于哪个模块、哪个功能域、影响哪些对象
+- 读取目标是解决当前任务需要确认的真源问题，而不是为了形式把所有文档都"打开一遍"
+- 若当前任务答案仍不确定，再继续向上补读相关上位文档，不得直接凭猜测实现
+- 若当前任务会新增或修改正式协议、正式状态、错误码、核心表结构或统一约束，不得只读单一领域文档，必须同时补读对应上位规范文档
 
 ### 禁止行为
 
-未读完上述文档前，禁止：
-
-- 擅自新增正式对象名
-- 擅自新增 JSON-RPC 方法
-- 擅自新增状态枚举 / 错误码 / 表字段
+- 在未定位相关真源前，擅自新增正式对象名
+- 在未定位相关真源前，擅自新增 JSON-RPC 方法、状态枚举 / 错误码 / 表字段
 - 直接开始大段编码
-- 为了 demo 绕开主链路
+- 以"先做 demo / 先跑通再说"为理由绕开主链路
+- 以"之前读过一次"为理由忽略当前任务真正相关的文档
 
 ------
 
@@ -79,9 +96,11 @@
 4. `docs/protocol-design.md`
 5. `docs/data-design.md`
 6. `docs/module-design.md`
-7. `docs/work-priority-plan.md`
-8. 模块内 README / 注释 / 局部实现
-9. 你自己的推测
+7. 与当前任务直接相关的产品设计文档：`docs/product-interaction-design.md`、`docs/dashboard-design.md`、`docs/control-panel-settings.md`
+8. `docs/work-priority-plan.md`
+9. `docs/atomic-features.md`
+10. 模块内 README / 注释 / 局部实现
+11. 你自己的推测
 
 当发现冲突时：
 
@@ -373,8 +392,8 @@
 
 必须先做：
 
-- 阅读相关文档
-- 检查当前仓库代码进度与 `docs/work-priority-plan.md` 中任务、负责人、优先级是否一致
+- 按第 2 章路由阅读相关文档，不要机械性重读整套 `docs/`
+- 至少用 `docs/work-priority-plan.md` 判断当前任务属于哪个优先级分组，以及是否命中现有任务项；若任务会影响阶段优先级、负责人分工、验收勾选或当前排期，再进一步检查文档是否一致
 - 阅读相关目录现有实现
 - 找出现有真源位置
 - 给出最小改动方案
@@ -424,7 +443,8 @@
 
 此外，针对 `docs/work-priority-plan.md`，必须额外遵守以下规则：
 
-- 每次开始实现、联调、评审、提交前，都必须检查当前本地代码进度与文档中的任务清单、负责人分工、阶段优先级是否一致。
+- 开始实现、联调、评审、提交前，至少核对当前任务所属优先级分组，以及是否命中文档中的现有任务项。
+- 若当前工作会影响任务清单、负责人分工、阶段优先级或里程碑验收，则在开始实现、联调、评审、提交前进一步检查当前本地代码进度与文档是否一致。
 - 若代码已真实完成文档中某个任务，必须在同一次工作中把该任务勾选为已完成，不允许代码已完成但文档长期不更新。
 - 若当前优先级分组下的任务已全部完成，或某负责人的当前批次任务已全部完成，必须基于最新代码、上位文档和现有边界，继续补出下一批可执行任务，并同步更新负责人分工与优先级划分。
 - 更新下一批任务时，必须延续 `task-centric` 主链路、P0 优先规则和既有模块边界，不得擅自跳级、跳域或发明未登记任务体系。
@@ -489,7 +509,7 @@
 推荐你每次都按以下顺序工作：
 
 1. 先读 `AGENTS.md`
-2. 再读 `docs/` 对应文档
+2. 再按第 2 章路由读 `docs/` 对应文档，不机械性重读整套 `docs/`
 3. 再读相关目录当前实现
 4. 再写"理解摘要 + 改动计划"
 5. 再实施最小改动
@@ -504,9 +524,11 @@
 
 ### 15.1 检查现有文档
 
-- 首先检查 `/docs` 目录下的相关文档，确认是否已有类似功能或需求的设计说明
-- 对照 `docs/dashboard-design.md`、`docs/control-panel-settings.md`、`docs/product-interaction-design.md` 等产品设计文档
-- 对照架构、协议、数据、模块等技术文档
+- 先根据任务类型定位 `/docs` 下的对应文档，不默认通读整个 `/docs`
+- 若是新需求或新功能，先检查 `docs/atomic-features.md`，确认是否已登记以及应归入哪个功能域
+- 改协议、正式状态、错误码时对照 `docs/development-guidelines.md` 与 `docs/protocol-design.md`；改表结构时对照 `docs/development-guidelines.md` 与 `docs/data-design.md`；改模块边界时对照 `docs/module-design.md`
+- 改前端交互时对照 `docs/product-interaction-design.md`、`docs/dashboard-design.md`、`docs/control-panel-settings.md`
+- 任务跨域、涉及主链路或统一边界时，再补读 `docs/architecture-overview.md`、`docs/development-guidelines.md`、`docs/work-priority-plan.md`
 
 ### 15.2 判断冲突与补充
 
@@ -597,7 +619,7 @@ func FunctionName(parameter1 type1, parameter2 type2) (resultType, error) {
 
 - Git 操作必须遵循仓库规范与团队协作边界，避免为了省事把多个逻辑问题混入一次提交
 - 一个 commit 只解决一个明确、独立、可回退的逻辑边界问题
-- 如果一个功能由多个可独立验证的细节部分组成，必须拆成多个 commits，而不是在提 PR 时只保留一个大提交
+- 如果一个功能由多个可独立验证的细节部分组成，必须拆成多个 commits；协议补齐、后端编排、前端承接、文档回写这类可独立验收的部分，不允许为了提 PR 压成单个提交
 - 与某个实现细节强相关的文档回写、注释修正和测试补充，应与该细节一并提交或作为紧邻的原子提交
 - 提交前必须检查 `git diff`、`git status` 与 `git diff --staged`，确认提交范围与意图一致
 
@@ -610,6 +632,7 @@ func FunctionName(parameter1 type1, parameter2 type2) (resultType, error) {
 ### 17.3 历史与 PR 要求
 
 - 准备 PR 时应保留可读的分块提交历史，让评审者能按功能细节逐步审查
+- 不要把"一个功能开发完了"当成只保留一个 commit 的理由；具体功能中的每一块可独立验证细节，都应保留为对应提交
 - 不要无理由把整个功能开发过程压缩为单个 commit；除非开发者明确要求，否则不要擅自 squash
 - 未经明确要求，不得改写已经共享给他人的提交历史
 

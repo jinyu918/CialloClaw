@@ -9,6 +9,7 @@ type ShellBallSurfaceProps = {
   dashboardTransitionPhase?: "idle" | "opening" | "hidden" | "closing";
   fileDropActive?: boolean;
   textDropActive?: boolean;
+  selectionIndicatorVisible?: boolean;
   visualState: ShellBallVisualState;
   voicePreview: ShellBallVoicePreview;
   voiceHoldProgress?: number;
@@ -29,7 +30,7 @@ type ShellBallSurfaceProps = {
 
 type ShellBallDropDataTransfer = Pick<DataTransfer, "effectAllowed" | "files" | "getData">;
 
-export function shouldAcceptShellBallTextDrop(dataTransfer: Pick<DataTransfer, "files"> | null) {
+export function shouldAcceptShellBallTextDrop(dataTransfer: Pick<DataTransfer, "files"> | null): dataTransfer is ShellBallDropDataTransfer {
   return dataTransfer !== null && dataTransfer.files.length === 0;
 }
 
@@ -54,6 +55,12 @@ export function extractShellBallDroppedText(dataTransfer: ShellBallDropDataTrans
     return "";
   }
 
+  // The acceptability check is not a TypeScript type guard, so keep the null
+  // branch explicit before reading transfer payloads.
+  if (dataTransfer === null) {
+    return "";
+  }
+
   for (const type of ["text/plain", "text", "Text", "text/uri-list"]) {
     const value = dataTransfer.getData(type).replace(/\r\n/g, "\n").trim();
     if (value !== "") {
@@ -70,6 +77,7 @@ export function ShellBallSurface({
   dashboardTransitionPhase = "idle",
   fileDropActive = false,
   textDropActive = false,
+  selectionIndicatorVisible = false,
   visualState,
   voicePreview,
   voiceHoldProgress = 0,
@@ -156,6 +164,7 @@ export function ShellBallSurface({
                   <ShellBallMascot
                     visualState={visualState}
                     voicePreview={voicePreview}
+                    selectionIndicatorVisible={selectionIndicatorVisible}
                     voiceHoldProgress={voiceHoldProgress}
                     motionConfig={motionConfig}
                     onPrimaryClick={onPrimaryClick}
