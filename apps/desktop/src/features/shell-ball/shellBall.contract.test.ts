@@ -73,7 +73,7 @@ import {
   getShellBallVoiceAnchor,
   measureShellBallContentSize,
 } from "./useShellBallWindowMetrics";
-import { applyShellBallBubbleAction, createShellBallAgentBubbleItem } from "./useShellBallCoordinator";
+import { applyShellBallBubbleAction, createShellBallAgentBubbleItem, sortShellBallBubbleItemsByTimestamp } from "./useShellBallCoordinator";
 import {
   appendShellBallDroppedText,
   createShellBallInputSubmitParams,
@@ -3127,6 +3127,67 @@ test("shell-ball coordinator bubble actions restore unpinned bubbles by timestam
         createdAt: "2026-04-11T10:11:00.000Z",
       },
     ],
+  );
+});
+
+test("shell-ball bubble ordering keeps late agent replies attached to the originating user turn", () => {
+  const sortedItems = sortShellBallBubbleItemsByTimestamp([
+    {
+      bubble: {
+        bubble_id: "bubble-agent-1",
+        task_id: "task-turn-1",
+        type: "result",
+        text: "First reply arrives late.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:05:00.000Z",
+      },
+      role: "agent",
+      desktop: {
+        lifecycleState: "visible",
+        turnIndex: 1,
+        turnPhase: 1,
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "bubble-user-2",
+        task_id: "task-turn-2",
+        type: "result",
+        text: "Second user message.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:01:00.000Z",
+      },
+      role: "user",
+      desktop: {
+        lifecycleState: "visible",
+        turnIndex: 2,
+        turnPhase: 0,
+      },
+    },
+    {
+      bubble: {
+        bubble_id: "bubble-user-1",
+        task_id: "task-turn-1",
+        type: "result",
+        text: "First user message.",
+        pinned: false,
+        hidden: false,
+        created_at: "2026-04-11T10:00:00.000Z",
+      },
+      role: "user",
+      desktop: {
+        lifecycleState: "visible",
+        turnIndex: 1,
+        turnPhase: 0,
+      },
+    },
+  ]);
+
+  assert.deepEqual(
+    sortedItems.map((item) => item.bubble.bubble_id),
+    ["bubble-user-1", "bubble-agent-1", "bubble-user-2"],
   );
 });
 
