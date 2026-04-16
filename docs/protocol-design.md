@@ -330,6 +330,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `recommendation_scene`：`hover / selected_text / idle / error`
 - `recommendation_feedback`：`positive / negative / ignore`
 - `task_control_action`：`pause / resume / cancel / restart`
+- `notepad_action`：`complete / cancel / move_upcoming / toggle_recurring / cancel_recurring / restore / delete`
 - `time_unit`：`minute / hour / day / week`
 - `run_status`：`processing / completed`
 
@@ -486,6 +487,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `agent.task_inspector.config.update`
 - `agent.task_inspector.run`
 - `agent.notepad.list`
+- `agent.notepad.update`
 - `agent.notepad.convert_to_task`
 
 #### C. 仪表盘 / 镜子 / 安全卫士
@@ -1812,6 +1814,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | `data.items[].type`                   | 事项类型                 |
 | `data.items[].due_at`                 | 到期时间                 |
 | `data.items[].agent_suggestion`       | Agent 建议               |
+| `data.items[].recurring_enabled`      | 重复规则当前是否开启     |
 | `data.items[].note_text`              | 背景与说明               |
 | `data.items[].prerequisite`           | 前置条件                 |
 | `data.items[].repeat_rule`            | 重复规则文本             |
@@ -1840,6 +1843,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
           "type": "one_time",
           "due_at": "2026-04-07T18:00:00+08:00",
           "agent_suggestion": "先生成一个 3 点摘要",
+          "recurring_enabled": null,
           "note_text": "先把本周关键结论和风险项整理成一页摘要，再决定是否扩写为正式文档。",
           "prerequisite": "确认会议纪要和图表截图都已齐全。",
           "repeat_rule": null,
@@ -1881,7 +1885,85 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ---
 
-### 8.2.8 `agent.notepad.convert_to_task`
+### 8.2.8 `agent.notepad.update`
+
+- **请求方式**：JSON-RPC 2.0
+- **接口调用时机**：用户在 notes 详情页对事项执行状态变更动作时
+- **系统处理**：按动作更新事项状态或分组，并返回更新后的事项结果
+- **入参**：事项 ID、动作类型
+- **出参**：更新后的事项、建议刷新的分组、按需附带删除结果
+
+当前稳定支持的动作：
+
+- `complete`
+- `cancel`
+- `move_upcoming`
+- `toggle_recurring`
+- `cancel_recurring`
+- `restore`
+- `delete`
+
+### agent.notepad.update 入参说明
+
+| 字段      | 中文说明               |
+| --------- | ---------------------- |
+| `item_id` | 事项 ID                |
+| `action`  | 变更动作，取值来自 `notepad_action` |
+
+### agent.notepad.update 入参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_notepad_update_001",
+  "method": "agent.notepad.update",
+  "params": {
+    "request_meta": {
+      "trace_id": "trace_notepad_update_001",
+      "client_time": "2026-04-07T10:55:30+08:00"
+    },
+    "item_id": "todo_001",
+    "action": "complete"
+  }
+}
+```
+
+### agent.notepad.update 出参说明
+
+| 字段                     | 中文说明                    |
+| ------------------------ | --------------------------- |
+| `data.notepad_item`      | 更新后的事项；若删除则为 `null` |
+| `data.refresh_groups`    | 建议前端重新拉取的分组列表  |
+| `data.deleted_item_id`   | 若执行删除动作，返回被删除的事项 ID |
+
+### agent.notepad.update 出参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_notepad_update_001",
+  "result": {
+    "data": {
+      "notepad_item": {
+        "item_id": "todo_001",
+        "bucket": "closed",
+        "status": "completed",
+        "ended_at": "2026-04-07T10:55:31+08:00"
+      },
+      "refresh_groups": ["upcoming", "closed"],
+      "deleted_item_id": null
+    },
+    "meta": {
+      "server_time": "2026-04-07T10:55:31+08:00"
+    },
+    "warnings": []
+  }
+}
+```
+
+---
+
+### 8.2.9 `agent.notepad.convert_to_task`
 
 - **请求方式**：JSON-RPC 2.0
 - **接口调用时机**：用户点击“交给 Agent 处理”时

@@ -99,6 +99,10 @@ export const POSITION_MODES = ["fixed", "draggable"] as const;
 // TODO_STATUSES 定义共享常量。
 export const TODO_STATUSES = ["normal", "due_today", "overdue", "completed", "cancelled"] as const;
 
+// NOTEPAD_ACTIONS defines the stable note-state mutation actions supported by
+// the RPC boundary.
+export const NOTEPAD_ACTIONS = ["complete", "cancel", "move_upcoming", "toggle_recurring", "cancel_recurring", "restore", "delete"] as const;
+
 // RECOMMENDATION_SCENES 定义共享常量。
 export const RECOMMENDATION_SCENES = ["hover", "selected_text", "idle", "error"] as const;
 
@@ -160,6 +164,8 @@ export type ThemeMode = (typeof THEME_MODES)[number];
 export type PositionMode = (typeof POSITION_MODES)[number];
 // TodoStatus 定义当前模块的数据结构。
 export type TodoStatus = (typeof TODO_STATUSES)[number];
+// NotepadAction 定义当前模块的数据结构。
+export type NotepadAction = (typeof NOTEPAD_ACTIONS)[number];
 // RecommendationScene 定义当前模块的数据结构。
 export type RecommendationScene = (typeof RECOMMENDATION_SCENES)[number];
 // RecommendationFeedback 定义当前模块的数据结构。
@@ -263,6 +269,7 @@ export interface TodoItem {
   type: string;
   due_at: string | null;
   agent_suggestion: string | null;
+  recurring_enabled?: boolean;
   note_text?: string | null;
   prerequisite?: string | null;
   repeat_rule?: string | null;
