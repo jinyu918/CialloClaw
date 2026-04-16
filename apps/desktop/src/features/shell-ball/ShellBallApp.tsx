@@ -181,7 +181,7 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
     handleForceState,
   } = useShellBallInteraction();
   const motionConfig = getShellBallMotionConfig(visualState);
-  const { rootRef, windowFrame } = useShellBallWindowMetrics({ role: "ball" });
+  const { armBallWindowBoundsSnapOnRelease, rootRef, windowFrame } = useShellBallWindowMetrics({ role: "ball" });
   const [dashboardTransitionPhase, setDashboardTransitionPhase] = useState<ShellBallDashboardTransitionPhase>("idle");
   const [fileDropActive, setFileDropActive] = useState(false);
   const [textDragActive, setTextDragActive] = useState(false);
@@ -496,6 +496,7 @@ export function ShellBallApp({ isDev = false }: ShellBallAppProps) {
       voiceHoldProgress={voiceHoldProgress}
       motionConfig={motionConfig}
       onDragStart={() => {
+        armBallWindowBoundsSnapOnRelease();
         void startShellBallWindowDragging();
       }}
       onPrimaryClick={handleMascotPrimaryAction}

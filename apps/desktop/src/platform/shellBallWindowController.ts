@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, type Position, type Size } from "@tauri-apps/api/dpi";
 import { Window, getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -64,6 +65,10 @@ export function getShellBallCurrentWindow() {
   return getCurrentWindow();
 }
 
+function isShellBallWindowEnvironment() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 async function getShellBallWindowByLabel(label: string) {
   const currentWindow = getCurrentWindow();
 
@@ -118,6 +123,14 @@ export async function setShellBallWindowIgnoreCursorEvents(role: ShellBallWindow
 
 export async function startShellBallWindowDragging() {
   await getCurrentWindow().startDragging();
+}
+
+export async function isShellBallPrimaryMouseButtonPressed() {
+  if (!isShellBallWindowEnvironment()) {
+    return false;
+  }
+
+  return invoke<boolean>("shell_ball_is_primary_mouse_button_pressed");
 }
 
 export async function openShellBallPinnedBubbleWindow(input: {

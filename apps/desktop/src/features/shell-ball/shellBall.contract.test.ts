@@ -66,6 +66,7 @@ import {
   SHELL_BALL_INPUT_GAP_PX,
   SHELL_BALL_WINDOW_SAFE_MARGIN_PX,
   clampShellBallFrameToBounds,
+  createShellBallWindowGeometry,
   createShellBallWindowFrame,
   getShellBallHelperWindowInteractionMode,
   getShellBallBubbleAnchor,
@@ -1625,6 +1626,71 @@ test("shell-ball window metrics compute safe frames and helper anchors", () => {
       height: 104,
     },
   );
+
+  assert.deepEqual(
+    createShellBallWindowGeometry({
+      position: {
+        x: 292,
+        y: -16,
+      },
+      size: {
+        width: 124,
+        height: 104,
+      },
+      bounds: {
+        minX: 0,
+        minY: 0,
+        maxX: 320,
+        maxY: 520,
+      },
+      scaleFactor: 1,
+    }),
+    {
+      ballFrame: {
+        x: 196,
+        y: 0,
+        width: 124,
+        height: 104,
+      },
+      bounds: {
+        minX: 0,
+        minY: 0,
+        maxX: 320,
+        maxY: 520,
+      },
+      scaleFactor: 1,
+    },
+  );
+
+  const metricsSource = readFileSync(
+    resolve(desktopRoot, "src/features/shell-ball/useShellBallWindowMetrics.ts"),
+    "utf8",
+  );
+  const appSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallApp.tsx"), "utf8");
+  const controllerSource = readFileSync(
+    resolve(desktopRoot, "src/platform/shellBallWindowController.ts"),
+    "utf8",
+  );
+  const tauriSource = readFileSync(resolve(desktopRoot, "src-tauri/src/main.rs"), "utf8");
+  const cargoSource = readFileSync(resolve(desktopRoot, "src-tauri/Cargo.toml"), "utf8");
+
+  assert.match(metricsSource, /SHELL_BALL_DRAG_RELEASE_POLL_MS = 24/);
+  assert.match(metricsSource, /ballDragReleasePollTimerRef = useRef<number \| null>\(null\)/);
+  assert.match(metricsSource, /const clearBallWindowDragReleasePoll = useCallback\(\(\) => \{/);
+  assert.match(metricsSource, /const armBallWindowBoundsSnapOnRelease = useCallback\(\(\) => \{/);
+  assert.match(metricsSource, /const primaryMouseButtonPressed = await isShellBallPrimaryMouseButtonPressed\(\);/);
+  assert.match(metricsSource, /window\.setTimeout\(\(\) => \{\s*void poll\(\);\s*\}, SHELL_BALL_DRAG_RELEASE_POLL_MS\)/);
+  assert.match(metricsSource, /await publishBallGeometry\(\{ snapToBounds: true \}\);/);
+  assert.doesNotMatch(metricsSource, /SHELL_BALL_EDGE_SNAP_AFTER_DRAG_MS/);
+  assert.doesNotMatch(metricsSource, /ballBoundsSnapDeadlineRef/);
+  assert.match(appSource, /armBallWindowBoundsSnapOnRelease\(\);\s*void startShellBallWindowDragging\(\);/);
+  assert.doesNotMatch(appSource, /await startShellBallWindowDragging\(\);/);
+  assert.doesNotMatch(appSource, /await snapBallWindowToBounds\(\);/);
+  assert.match(controllerSource, /shell_ball_is_primary_mouse_button_pressed/);
+  assert.match(tauriSource, /fn shell_ball_is_primary_mouse_button_pressed\(\) -> bool/);
+  assert.match(tauriSource, /GetAsyncKeyState/);
+  assert.match(tauriSource, /SM_SWAPBUTTON/);
+  assert.match(cargoSource, /"Win32_UI_Input_KeyboardAndMouse"/);
 });
 
 test("shell-ball interaction contract auto-advances text submission into processing", () => {

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, monitorFromPoint, type Monitor } from "@tauri-apps/api/window";
 import {
   createShellBallLogicalPosition,
   createShellBallLogicalSize,
   hideShellBallWindow,
+  isShellBallPrimaryMouseButtonPressed,
   setShellBallWindowFocusable,
   setShellBallWindowIgnoreCursorEvents,
   setShellBallWindowPosition,
@@ -21,6 +22,7 @@ export const SHELL_BALL_BUBBLE_DRAG_CLEARANCE_PX = 24;
 export const SHELL_BALL_BUBBLE_REPOSITION_DURATION_MS = 180;
 export const SHELL_BALL_INPUT_GAP_PX = 4;
 export const SHELL_BALL_COMPACT_WINDOW_SAFE_MARGIN_PX = 6;
+export const SHELL_BALL_DRAG_RELEASE_POLL_MS = 24;
 
 type ShellBallContentSize = {
   width: number;
@@ -69,6 +71,38 @@ type ShellBallHelperWindowInteractionMode = {
 type ShellBallResolvedHelperFrame = ShellBallWindowFrame & {
   placement?: ShellBallBubblePlacement;
 };
+
+export function createShellBallWindowGeometry(input: {
+  position: {
+    x: number;
+    y: number;
+  };
+  size: {
+    width: number;
+    height: number;
+  };
+  bounds: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  scaleFactor: number;
+}): ShellBallWindowGeometry {
+  return {
+    ballFrame: clampShellBallFrameToBounds(
+      {
+        x: Math.round(input.position.x),
+        y: Math.round(input.position.y),
+        width: input.size.width,
+        height: input.size.height,
+      },
+      input.bounds,
+    ),
+    bounds: input.bounds,
+    scaleFactor: input.scaleFactor,
+  };
+}
 
 export function createShellBallWindowFrame(
   contentSize: ShellBallContentSize,
@@ -329,6 +363,8 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
   const rootRef = useRef<HTMLDivElement>(null);
   const [windowFrame, setWindowFrame] = useState<ShellBallWindowSize | null>(null);
   const geometryRef = useRef<ShellBallWindowGeometry | null>(null);
+  const ballDragReleasePollTimerRef = useRef<number | null>(null);
+  const ballDragReleasePollTokenRef = useRef(0);
   const helperWindowVisibleRef = useRef(false);
   const helperWindowShouldBeVisibleRef = useRef(visible);
   const helperWindowFrameRef = useRef<ShellBallResolvedHelperFrame | null>(null);
@@ -349,11 +385,98 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
     resolveAnimation?.();
   }
 
+  const clearBallWindowDragReleasePoll = useCallback(() => {
+    ballDragReleasePollTokenRef.current += 1;
+
+    if (ballDragReleasePollTimerRef.current !== null) {
+      window.clearTimeout(ballDragReleasePollTimerRef.current);
+      ballDragReleasePollTimerRef.current = null;
+    }
+  }, []);
+
   async function snapHelperWindowToFrame(nextFrame: ShellBallResolvedHelperFrame) {
     cancelHelperWindowMoveAnimation();
     await setShellBallWindowPosition(role, createShellBallLogicalPosition(nextFrame.x, nextFrame.y));
     helperWindowFrameRef.current = nextFrame;
   }
+
+  const publishBallGeometry = useCallback(async (input?: { snapToBounds?: boolean }) => {
+    if (role !== "ball" || windowFrame === null) {
+      return;
+    }
+
+    const currentWindow = getCurrentWindow();
+
+    if (currentWindow.label !== shellBallWindowLabels.ball) {
+      return;
+    }
+
+    const physicalPosition = await currentWindow.outerPosition();
+    const physicalSize = await currentWindow.outerSize();
+    const scaleFactor = await currentWindow.scaleFactor();
+    const monitor = await monitorFromPoint(
+      Math.round(physicalPosition.x + physicalSize.width / 2),
+      Math.round(physicalPosition.y + physicalSize.height / 2),
+    );
+    const logicalPosition = physicalPosition.toLogical(scaleFactor);
+    const geometry = createShellBallWindowGeometry({
+      position: {
+        x: logicalPosition.x,
+        y: logicalPosition.y,
+      },
+      size: {
+        width: windowFrame.width,
+        height: windowFrame.height,
+      },
+      bounds: getShellBallBoundsFromMonitor(monitor, geometryRef.current),
+      scaleFactor,
+    });
+
+    geometryRef.current = geometry;
+
+    if (input?.snapToBounds && (geometry.ballFrame.x !== logicalPosition.x || geometry.ballFrame.y !== logicalPosition.y)) {
+      await currentWindow.setPosition(createShellBallLogicalPosition(geometry.ballFrame.x, geometry.ballFrame.y));
+    }
+
+    await Promise.all([
+      currentWindow.emitTo(shellBallWindowLabels.bubble, shellBallWindowSyncEvents.geometry, geometry),
+      currentWindow.emitTo(shellBallWindowLabels.input, shellBallWindowSyncEvents.geometry, geometry),
+      currentWindow.emitTo(shellBallWindowLabels.voice, shellBallWindowSyncEvents.geometry, geometry),
+    ]);
+  }, [role, windowFrame]);
+
+  const snapBallWindowToBounds = useCallback(async () => {
+    await publishBallGeometry({ snapToBounds: true });
+  }, [publishBallGeometry]);
+
+  const armBallWindowBoundsSnapOnRelease = useCallback(() => {
+    if (role !== "ball") {
+      return;
+    }
+
+    clearBallWindowDragReleasePoll();
+    const pollToken = ballDragReleasePollTokenRef.current;
+
+    const poll = async () => {
+      const primaryMouseButtonPressed = await isShellBallPrimaryMouseButtonPressed();
+
+      if (ballDragReleasePollTokenRef.current !== pollToken) {
+        return;
+      }
+
+      if (!primaryMouseButtonPressed) {
+        ballDragReleasePollTimerRef.current = null;
+        await snapBallWindowToBounds();
+        return;
+      }
+
+      ballDragReleasePollTimerRef.current = window.setTimeout(() => {
+        void poll();
+      }, SHELL_BALL_DRAG_RELEASE_POLL_MS);
+    };
+
+    void poll();
+  }, [clearBallWindowDragReleasePoll, role, snapBallWindowToBounds]);
 
   async function animateBubbleWindowToFrame(nextFrame: ShellBallResolvedHelperFrame) {
     const previousFrame = helperWindowFrameRef.current;
@@ -477,47 +600,20 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
     if (currentWindow.label !== shellBallWindowLabels.ball) {
       return;
     }
-    const ballFrame = windowFrame;
-
     let disposed = false;
     let cleanupFns: Array<() => void> = [];
 
-    async function publishGeometry() {
-      const physicalPosition = await currentWindow.outerPosition();
-      const scaleFactor = await currentWindow.scaleFactor();
-      const monitor = await monitorFromPoint(physicalPosition.x, physicalPosition.y);
-      const logicalPosition = physicalPosition.toLogical(scaleFactor);
-      const geometry: ShellBallWindowGeometry = {
-        ballFrame: {
-          x: logicalPosition.x,
-          y: logicalPosition.y,
-          width: ballFrame.width,
-          height: ballFrame.height,
-        },
-        bounds: getShellBallBoundsFromMonitor(monitor, geometryRef.current),
-        scaleFactor,
-      };
-
-      geometryRef.current = geometry;
-
-      await Promise.all([
-        currentWindow.emitTo(shellBallWindowLabels.bubble, shellBallWindowSyncEvents.geometry, geometry),
-        currentWindow.emitTo(shellBallWindowLabels.input, shellBallWindowSyncEvents.geometry, geometry),
-        currentWindow.emitTo(shellBallWindowLabels.voice, shellBallWindowSyncEvents.geometry, geometry),
-      ]);
-    }
-
-    void publishGeometry();
+    void publishBallGeometry({ snapToBounds: true });
 
     void Promise.all([
       currentWindow.onMoved(() => {
-        void publishGeometry();
+        void publishBallGeometry();
       }),
       currentWindow.onResized(() => {
-        void publishGeometry();
+        void publishBallGeometry();
       }),
       currentWindow.listen(shellBallWindowSyncEvents.helperReady, () => {
-        void publishGeometry();
+        void publishBallGeometry();
       }),
     ]).then((unlisteners) => {
       if (disposed) {
@@ -536,7 +632,13 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
         cleanup();
       }
     };
-  }, [role, windowFrame]);
+  }, [publishBallGeometry, role, windowFrame]);
+
+  useEffect(() => {
+    return () => {
+      clearBallWindowDragReleasePoll();
+    };
+  }, [clearBallWindowDragReleasePoll]);
 
   useEffect(() => {
     if (role === "ball" || windowFrame === null) {
@@ -661,5 +763,5 @@ export function useShellBallWindowMetrics({ role, visible = true, clickThrough =
     })();
   }, [role, visible, windowFrame]);
 
-  return { rootRef, windowFrame };
+  return { armBallWindowBoundsSnapOnRelease, rootRef, snapBallWindowToBounds, windowFrame };
 }
