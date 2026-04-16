@@ -9,12 +9,18 @@ import {
 } from "react";
 import type { MirrorOverviewUpdatedNotification } from "@cialloclaw/protocol";
 import { X } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { PanelSurface, StatusBadge } from "@cialloclaw/ui";
 import { subscribeMirrorOverviewUpdated } from "@/rpc/subscriptions";
 import { loadDashboardDataMode, saveDashboardDataMode } from "@/features/dashboard/shared/dashboardDataMode";
 import { DashboardMockToggle } from "@/features/dashboard/shared/DashboardMockToggle";
+import {
+  formatDashboardSettingsMutationFeedback,
+  updateDashboardSettings,
+  type DashboardSettingsPatch,
+} from "@/features/dashboard/shared/dashboardSettingsMutation";
 import { loadMirrorOverviewData, type MirrorOverviewData, type MirrorOverviewSource } from "./mirrorService";
-import { MirrorDetailContent } from "./MirrorDetailContent";
+import { MirrorDetailContent, type MirrorHistoryDetailView } from "./MirrorDetailContent";
 import { loadMirrorFloatingPositions, saveMirrorFloatingPositions } from "./mirrorLayoutStorage";
 import { MirrorDecorativeBirds } from "./MirrorDecorativeBirds";
 import {
@@ -69,6 +75,11 @@ type DragState = {
   originY: number;
   moved: boolean;
 };
+type MirrorRouteState = {
+  activeDetailKey?: MirrorDirectionKey;
+  focusMemoryId?: string;
+  historyDetailView?: MirrorHistoryDetailView;
+};
 
 const INITIAL_MODULE_STACK: MirrorDirectionKey[] = DEFAULT_MIRROR_DIRECTION_STACK;
 const DRAG_THRESHOLD = 8;
@@ -94,6 +105,39 @@ const DEFAULT_MODULE_POSITIONS: ModulePositions = {
   memory: { x: 0, y: 0 },
   history: { x: 0, y: 0 },
 };
+
+function isMirrorDirectionKey(value: string): value is MirrorDirectionKey {
+  return INITIAL_MODULE_STACK.includes(value as MirrorDirectionKey);
+}
+
+function readMirrorRouteState(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const state = value as MirrorRouteState;
+  const focusMemoryId = typeof state.focusMemoryId === "string" && state.focusMemoryId.trim().length > 0 ? state.focusMemoryId : null;
+  const activeDetailKey =
+    typeof state.activeDetailKey === "string" && isMirrorDirectionKey(state.activeDetailKey)
+      ? state.activeDetailKey
+      : focusMemoryId
+        ? "memory"
+        : null;
+
+  if (!activeDetailKey) {
+    return null;
+  }
+
+  return {
+    activeDetailKey,
+    focusMemoryId,
+    historyDetailView:
+      activeDetailKey === "history" &&
+      (state.historyDetailView === "summary" || state.historyDetailView === "conversation")
+        ? state.historyDetailView
+        : null,
+  };
+}
 
 function formatMirrorDate(value: string) {
   return new Date(value).toLocaleDateString("zh-CN", {
@@ -520,6 +564,8 @@ function pickFloatingModulePositions(positions: ModulePositions): Record<Floatin
 }
 
 export function MirrorApp() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const storedFloatingPositionsRef = useRef(loadMirrorFloatingPositions());
   const hasStoredFloatingPositionsRef = useRef(storedFloatingPositionsRef.current !== null);
   const [mirrorData, setMirrorData] = useState<MirrorOverviewData | null>(null);
@@ -534,6 +580,8 @@ export function MirrorApp() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("default");
   const [draggingKey, setDraggingKey] = useState<FloatingMirrorDirectionKey | null>(null);
   const [activeDetailKey, setActiveDetailKey] = useState<MirrorDirectionKey | null>(null);
+  const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
+  const [historyDetailView, setHistoryDetailView] = useState<MirrorHistoryDetailView>("conversation");
   const [boardReady, setBoardReady] = useState(false);
   const [lastMirrorUpdate, setLastMirrorUpdate] = useState<MirrorOverviewUpdatedNotification | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -549,11 +597,46 @@ export function MirrorApp() {
 
   dataModeRef.current = dataMode;
 
+  const openDetail = useCallback((key: MirrorDirectionKey, options?: { focusMemoryId?: string | null; historyDetailView?: MirrorHistoryDetailView | null }) => {
+    setActiveDetailKey(key);
+    setFocusedMemoryId(key === "memory" ? options?.focusMemoryId ?? null : null);
+    if (key === "history" && options?.historyDetailView) {
+      setHistoryDetailView(options.historyDetailView);
+    }
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setActiveDetailKey(null);
+    setFocusedMemoryId(null);
+  }, []);
+
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    const routeState = readMirrorRouteState(location.state);
+
+    if (!routeState) {
+      return;
+    }
+
+    openDetail(routeState.activeDetailKey, {
+      focusMemoryId: routeState.focusMemoryId,
+      historyDetailView: routeState.historyDetailView,
+    });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, openDetail]);
+
+  useEffect(() => {
+    if (!mirrorData || mirrorData.conversations.length > 0 || historyDetailView === "summary") {
+      return;
+    }
+
+    setHistoryDetailView("summary");
+  }, [historyDetailView, mirrorData]);
 
   const refreshMirrorData = useCallback(() => {
     if (dataMode === "mock") {
@@ -756,7 +839,7 @@ export function MirrorApp() {
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        setActiveDetailKey(null);
+        closeDetail();
       }
     };
 
@@ -765,7 +848,21 @@ export function MirrorApp() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activeDetailKey]);
+  }, [activeDetailKey, closeDetail]);
+  const handleSettingsUpdate = useCallback(
+    async (subject: string, patch: DashboardSettingsPatch) => {
+      const result = await updateDashboardSettings(patch, dataMode);
+      const nextData = await loadMirrorOverviewData(dataMode);
+
+      if (isMountedRef.current) {
+        setLoadError(null);
+        setMirrorData(nextData);
+      }
+
+      return formatDashboardSettingsMutationFeedback(result, subject);
+    },
+    [dataMode],
+  );
 
   if (!mirrorData) {
     return (
@@ -813,10 +910,6 @@ export function MirrorApp() {
       : { label: "MOCK", tone: "processing" as const, copy: dataSourceDetails.join(" · ") };
   const latestMemoryReference = overview.memory_references[0] ?? null;
   const latestConversation = mirrorData.conversations[0] ?? null;
-
-  const closeDetail = () => {
-    setActiveDetailKey(null);
-  };
 
   const releaseDrag = () => {
     dragStateRef.current = null;
@@ -896,7 +989,7 @@ export function MirrorApp() {
     }
 
     if (!dragState.moved && travelled < DRAG_THRESHOLD) {
-      setActiveDetailKey(key);
+      openDetail(key);
     }
   };
 
@@ -912,7 +1005,7 @@ export function MirrorApp() {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       bringModuleToFront(key);
-      setActiveDetailKey(key);
+      openDetail(key);
     }
   };
 
@@ -950,6 +1043,31 @@ export function MirrorApp() {
     }
 
     const detailBadge = getDetailBadge(activeDetailKey);
+    const detailTitleAccessory =
+      activeDetailKey === "history" ? (
+        <div className="mirror-page__detail-tab-list mirror-page__detail-tab-list--title" role="tablist" aria-label="历史详情视图" data-testid="mirror-history-tabs">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={historyDetailView === "summary"}
+            className="mirror-page__detail-tab-trigger"
+            data-active={historyDetailView === "summary" ? "" : undefined}
+            onClick={() => setHistoryDetailView("summary")}
+          >
+            历史概要
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={historyDetailView === "conversation"}
+            className="mirror-page__detail-tab-trigger"
+            data-active={historyDetailView === "conversation" ? "" : undefined}
+            onClick={() => setHistoryDetailView("conversation")}
+          >
+            最近 100 条本地对话
+          </button>
+        </div>
+      ) : null;
 
     return (
       <div className="mirror-page__detail-layer" onClick={closeDetail}>
@@ -961,7 +1079,11 @@ export function MirrorApp() {
           data-testid={`mirror-detail-${activeDetailKey}`}
           onClick={(event) => event.stopPropagation()}
         >
-          <PanelSurface title={getDirectionTitle(activeDetailKey)} eyebrow={getDirectionEyebrow(activeDetailKey)}>
+          <PanelSurface
+            title={getDirectionTitle(activeDetailKey)}
+            eyebrow={getDirectionEyebrow(activeDetailKey)}
+            titleAccessory={detailTitleAccessory}
+          >
             <div className="mirror-page__detail-topbar">
               <div className="mirror-page__detail-meta">
                 <StatusBadge tone={detailBadge.tone}>{detailBadge.label}</StatusBadge>
@@ -976,9 +1098,14 @@ export function MirrorApp() {
                 conversationSummary={mirrorData.conversationSummary}
                 conversations={mirrorData.conversations}
                 dailyDigest={mirrorData.dailyDigest}
+                focusMemoryId={focusedMemoryId}
+                historyDetailView={historyDetailView}
+                latestRestorePoint={mirrorData.latestRestorePoint}
                 overview={overview}
+                onUpdateSettings={handleSettingsUpdate}
                 profileView={profileView}
                 rpcContext={mirrorData.rpcContext}
+                settingsSnapshot={mirrorData.settingsSnapshot}
               />
             </div>
           </PanelSurface>
@@ -1054,7 +1181,7 @@ export function MirrorApp() {
       ? {
           onClick: () => {
             bringModuleToFront(key);
-            setActiveDetailKey(key);
+            openDetail(key);
           },
         }
       : {

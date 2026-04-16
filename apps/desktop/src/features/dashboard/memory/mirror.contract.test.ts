@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentInputSubmitParams, AgentMirrorOverviewGetResult, ApprovalRequest, Task, TokenCostSummary } from "@cialloclaw/protocol";
 import {
+  buildMirrorConversationDateOptions,
   buildMirrorConversationSummary,
+  buildMirrorConversationTaskMoments,
   buildMirrorDailyDigest,
   buildMirrorProfileBaseItems,
   buildMirrorProfileView,
+  filterMirrorConversationRecords,
 } from "./mirrorViewModel";
 import {
   loadMirrorConversationRecords,
@@ -280,4 +283,88 @@ test("buildMirrorProfileView keeps backend fields and local recent statistics se
   assert.equal(backendItem?.source_label, "后端画像字段");
   assert.equal(localStatItem?.source_label, "最近本地统计");
   assert.match(localStatItem?.hint ?? "", /本地记录机械统计/);
+});
+
+test("filterMirrorConversationRecords combines scope, source, input mode, and date filters", () => {
+  const failedRecord = {
+    ...createConversationRecord(4),
+    status: "failed" as const,
+    task_id: "task-special",
+    source: "dashboard" as const,
+    input_mode: "text" as const,
+  };
+  const earlierDayRecord = {
+    ...createConversationRecord(5),
+    source: "dashboard" as const,
+    input_mode: "text" as const,
+    updated_at: "2026-04-12T09:10:00+08:00",
+  };
+  const records = [
+    createConversationRecord(1),
+    createConversationRecord(2),
+    {
+      ...createConversationRecord(3),
+      task_id: null,
+      source: "tray_panel" as const,
+      input_mode: "text" as const,
+    },
+    failedRecord,
+    earlierDayRecord,
+  ];
+
+  assert.deepEqual(
+    filterMirrorConversationRecords(records, {
+      scope: "with_task",
+      source: "dashboard",
+      input_mode: "text",
+      date_key: "2026-04-13",
+    }).map((record) => record.record_id),
+    [failedRecord.record_id],
+  );
+
+  assert.deepEqual(
+    filterMirrorConversationRecords(records, {
+      scope: "failed",
+      source: "all",
+      input_mode: "all",
+      date_key: "all",
+    }).map((record) => record.record_id),
+    [failedRecord.record_id],
+  );
+});
+
+test("buildMirrorConversationDateOptions keeps recent date filters ordered by newest activity day", () => {
+  const records = [
+    createConversationRecord(1),
+    createConversationRecord(2),
+    {
+      ...createConversationRecord(3),
+      updated_at: "2026-04-12T10:09:00+08:00",
+    },
+  ];
+
+  const dateOptions = buildMirrorConversationDateOptions(records);
+
+  assert.deepEqual(dateOptions.map((option) => option.date_key), ["2026-04-13", "2026-04-12"]);
+  assert.equal(dateOptions[0]?.count, 2);
+  assert.match(dateOptions[0]?.label ?? "", /4月13日/);
+});
+
+test("buildMirrorConversationTaskMoments keeps linked tasks ordered by time within the selected day", () => {
+  const firstTaskRecord = createConversationRecord(1);
+  const secondTaskRecord = createConversationRecord(2);
+  const latestTaskRecord = {
+    ...createConversationRecord(3),
+    task_id: "task-1",
+    updated_at: "2026-04-13T10:09:00+08:00",
+  };
+  const records = [firstTaskRecord, secondTaskRecord, latestTaskRecord];
+
+  const taskMoments = buildMirrorConversationTaskMoments(records);
+
+  assert.deepEqual(taskMoments.map((option) => option.task_id), ["task-2", "task-1"]);
+  assert.equal(taskMoments[0]?.count, 1);
+  assert.equal(taskMoments[0]?.latest_at, secondTaskRecord.updated_at);
+  assert.equal(taskMoments[1]?.count, 2);
+  assert.equal(taskMoments[1]?.latest_at, latestTaskRecord.updated_at);
 });

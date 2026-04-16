@@ -107,7 +107,7 @@ export type TaskStateVoice = {
 };
 
 export type TaskPrimaryAction = {
-  action: TaskControlAction | "open-safety" | "open-shell-ball";
+  action: TaskControlAction | "open-safety";
   label: string;
   tooltip: string;
 };

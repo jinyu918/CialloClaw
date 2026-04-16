@@ -512,6 +512,20 @@ export interface AgentSecurityPendingListResult {
   page: JsonRpcPage;
 }
 
+// AgentSecurityAuditListParams 定义当前模块的接口约束。
+export interface AgentSecurityAuditListParams {
+  request_meta: RequestMeta;
+  task_id: string;
+  limit: number;
+  offset: number;
+}
+
+// AgentSecurityAuditListResult 定义当前模块的接口约束。
+export interface AgentSecurityAuditListResult {
+  items: AuditRecord[];
+  page: JsonRpcPage;
+}
+
 // AgentSecurityRestorePointsListParams 定义当前模块的接口约束。
 export interface AgentSecurityRestorePointsListParams {
   request_meta: RequestMeta;

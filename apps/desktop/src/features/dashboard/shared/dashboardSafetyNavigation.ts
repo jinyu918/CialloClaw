@@ -2,16 +2,19 @@ import type { AgentTaskDetailGetResult, ApprovalRequest, RecoveryPoint } from "@
 import { isApprovalRequest, isRecoveryPoint } from "./dashboardContractValidators";
 
 const dashboardSafetySnapshotFeedback = "实时安全数据已变化，当前展示的是路由携带的快照。";
+type DashboardSafetyNavigationSource = "task-detail" | "mirror-detail";
+export type DashboardSafetyCardDetailKey = "status" | "budget" | "governance";
 
 export type DashboardSafetyNavigationState = {
-  source: "task-detail";
-  taskId: string;
+  source: DashboardSafetyNavigationSource;
+  taskId?: string;
   approvalRequest?: ApprovalRequest;
+  focusCard?: DashboardSafetyCardDetailKey;
   restorePoint?: RecoveryPoint;
 };
 
 export type DashboardSafetyFocusTarget = {
-  activeDetailKey: `approval:${string}` | "restore" | null;
+  activeDetailKey: `approval:${string}` | "restore" | DashboardSafetyCardDetailKey | null;
   approvalSnapshot: ApprovalRequest | null;
   restorePointSnapshot: RecoveryPoint | null;
   feedback: string | null;
@@ -48,6 +51,29 @@ export function buildDashboardSafetyNavigationState(detail: AgentTaskDetailGetRe
   };
 }
 
+// Mirror restore cards only need to open the existing safety restore detail.
+// Reusing the same route contract keeps restore-point deep links consistent.
+export function buildDashboardSafetyRestorePointNavigationState(restorePoint: RecoveryPoint): DashboardSafetyNavigationState {
+  return {
+    restorePoint,
+    source: "mirror-detail",
+    taskId: restorePoint.task_id,
+  };
+}
+
+// Mirror summary cards can target existing static safety details without
+// inventing a new page-level route contract for each card.
+export function buildDashboardSafetyCardNavigationState(focusCard: DashboardSafetyCardDetailKey): DashboardSafetyNavigationState {
+  return {
+    focusCard,
+    source: "mirror-detail",
+  };
+}
+
+function isDashboardSafetyCardDetailKey(value: unknown): value is DashboardSafetyCardDetailKey {
+  return value === "status" || value === "budget" || value === "governance";
+}
+
 export function readDashboardSafetyNavigationState(value: unknown): DashboardSafetyNavigationState | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -55,19 +81,20 @@ export function readDashboardSafetyNavigationState(value: unknown): DashboardSaf
 
   const candidate = value as Partial<DashboardSafetyNavigationState>;
   const approvalRequest = candidate.approvalRequest;
+  const focusCard = candidate.focusCard;
   const restorePoint = candidate.restorePoint;
 
   for (const key of Object.keys(candidate)) {
-    if (key !== "approvalRequest" && key !== "restorePoint" && key !== "source" && key !== "taskId") {
+    if (key !== "approvalRequest" && key !== "focusCard" && key !== "restorePoint" && key !== "source" && key !== "taskId") {
       return null;
     }
   }
 
-  if (candidate.source !== "task-detail") {
+  if (candidate.source !== "task-detail" && candidate.source !== "mirror-detail") {
     return null;
   }
 
-  if (typeof candidate.taskId !== "string") {
+  if (candidate.taskId !== undefined && typeof candidate.taskId !== "string") {
     return null;
   }
 
@@ -75,11 +102,23 @@ export function readDashboardSafetyNavigationState(value: unknown): DashboardSaf
     return null;
   }
 
-  if (approvalRequest !== undefined && approvalRequest.task_id !== candidate.taskId) {
+  if (restorePoint !== undefined && !isRecoveryPoint(restorePoint)) {
     return null;
   }
 
-  if (restorePoint !== undefined && !isRecoveryPoint(restorePoint)) {
+  if (focusCard !== undefined && !isDashboardSafetyCardDetailKey(focusCard)) {
+    return null;
+  }
+
+  if (approvalRequest !== undefined && typeof candidate.taskId !== "string") {
+    return null;
+  }
+
+  if (restorePoint !== undefined && typeof candidate.taskId !== "string") {
+    return null;
+  }
+
+  if (approvalRequest !== undefined && approvalRequest.task_id !== candidate.taskId) {
     return null;
   }
 
@@ -87,15 +126,16 @@ export function readDashboardSafetyNavigationState(value: unknown): DashboardSaf
     return null;
   }
 
-  if (approvalRequest !== undefined && restorePoint !== undefined) {
+  if ((approvalRequest !== undefined && restorePoint !== undefined) || (focusCard !== undefined && (approvalRequest !== undefined || restorePoint !== undefined))) {
     return null;
   }
 
   return {
     ...(approvalRequest ? { approvalRequest } : {}),
+    ...(focusCard ? { focusCard } : {}),
     ...(restorePoint ? { restorePoint } : {}),
     source: candidate.source,
-    taskId: candidate.taskId,
+    ...(candidate.taskId ? { taskId: candidate.taskId } : {}),
   };
 }
 
@@ -108,9 +148,18 @@ export function resolveDashboardSafetyFocusTarget({
   livePending: ApprovalRequest[];
   liveRestorePoint: RecoveryPoint | null;
 }): DashboardSafetyFocusTarget {
-  if (!state || !state.approvalRequest && !state.restorePoint) {
+  if (!state || !state.approvalRequest && !state.restorePoint && !state.focusCard) {
     return {
       activeDetailKey: null,
+      approvalSnapshot: null,
+      feedback: null,
+      restorePointSnapshot: null,
+    };
+  }
+
+  if (state.focusCard) {
+    return {
+      activeDetailKey: state.focusCard,
       approvalSnapshot: null,
       feedback: null,
       restorePointSnapshot: null,

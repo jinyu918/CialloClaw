@@ -10,7 +10,6 @@ import { DashboardMockToggle } from "@/features/dashboard/shared/DashboardMockTo
 import { buildDashboardSafetyNavigationState } from "@/features/dashboard/shared/dashboardSafetyNavigation";
 import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { dashboardModules } from "@/features/dashboard/shared/dashboardRoutes";
-import { showShellBallWindow } from "@/platform/shellBallWindowController";
 import { cn } from "@/utils/cn";
 import { describeCurrentStep, getFinishedTaskGroups, isTaskEnded, sortTasksByLatest } from "./taskPage.mapper";
 import {
@@ -144,17 +143,19 @@ export function TaskPage() {
       return;
     }
 
-    const clearDeliverySubscription = subscribeDeliveryReady((payload) => {
+    function invalidateTaskQueries() {
       for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
         void queryClient.invalidateQueries({ queryKey });
       }
+    }
+
+    const clearDeliverySubscription = subscribeDeliveryReady(() => {
+      invalidateTaskQueries();
     });
 
     const clearTaskSubscription = selectedTaskId
       ? subscribeTask(selectedTaskId, () => {
-          for (const queryKey of securityRefreshPlan.invalidatePrefixes) {
-            void queryClient.invalidateQueries({ queryKey });
-          }
+          invalidateTaskQueries();
         })
       : () => {};
 
@@ -221,15 +222,8 @@ export function TaskPage() {
     navigate(resolveDashboardRoutePath("safety"), { state: buildDashboardSafetyNavigationState(resolvedDetailData.detail) });
   }
 
-  function handlePrimaryAction(action: "pause" | "resume" | "cancel" | "restart" | "open-safety" | "open-shell-ball") {
+  function handlePrimaryAction(action: "pause" | "resume" | "cancel" | "restart" | "open-safety") {
     if (!detailData) {
-      return;
-    }
-
-    if (action === "open-shell-ball") {
-      void showShellBallWindow("input")
-        .then(() => showFeedback("已打开悬浮球输入窗口，继续补充这条任务。"))
-        .catch(() => showFeedback("悬浮球输入窗口暂时不可用，请稍后再试。"));
       return;
     }
 
@@ -399,6 +393,7 @@ export function TaskPage() {
             <li>未完成任务会直接展示当前执行步骤，方便判断是否需要立即介入。</li>
             <li>等待授权、暂停、失败等任务会保留停住原因，避免只有一个“失败”状态。</li>
             <li>更多的上下文、成果区与操作按钮，都放在点击任务后的详情弹窗中。</li>
+            <li>如需修改或补充当前任务，请到悬浮球继续处理。</li>
           </ul>
         </article>
       </section>

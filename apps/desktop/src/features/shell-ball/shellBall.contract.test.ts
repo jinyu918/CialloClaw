@@ -27,7 +27,7 @@ import {
 } from "./shellBall.interaction";
 import { getShellBallMotionConfig } from "./shellBall.motion";
 import { collectShellBallSpeechTranscript, composeShellBallSpeechDraft } from "./shellBall.speech";
-import { ShellBallApp } from "./ShellBallApp";
+import { ShellBallApp, shouldArmShellBallTextDropTarget, shouldShowShellBallFileDropOverlay } from "./ShellBallApp";
 import { ShellBallBubbleWindow } from "./ShellBallBubbleWindow";
 import { ShellBallDevLayer } from "./ShellBallDevLayer";
 import { ShellBallInputWindow } from "./ShellBallInputWindow";
@@ -36,7 +36,7 @@ import { ShellBallBubbleZone } from "./components/ShellBallBubbleZone";
 import { getShellBallMascotHotspotGestureAction } from "./components/ShellBallMascot";
 import { getShellBallMascotPointerPhaseAction } from "./components/ShellBallMascot";
 import { shouldStartShellBallMascotWindowDrag } from "./components/ShellBallMascot";
-import { ShellBallSurface } from "./ShellBallSurface";
+import { extractShellBallDroppedText, resolveShellBallTextDropEffect, ShellBallSurface, shouldAcceptShellBallTextDrop } from "./ShellBallSurface";
 import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { shellBallWindowLabels, shellBallWindowPermissions } from "../../platform/shellBallWindowController";
 import { ShellBallInputBar } from "./components/ShellBallInputBar";
@@ -71,13 +71,17 @@ import {
 } from "./useShellBallWindowMetrics";
 import { applyShellBallBubbleAction, createShellBallAgentBubbleItem } from "./useShellBallCoordinator";
 import {
+  appendShellBallDroppedText,
   createShellBallInputSubmitParams,
   getShellBallPostSubmitInputReset,
   getShellBallDashboardOpenGesturePolicy,
+  getShellBallVoiceRecognitionUnexpectedEndFallbackState,
   getShellBallPressCancelEvent,
   resolveShellBallVoiceRecognitionFinalState,
   getShellBallVoicePreviewFromEvent,
   mapShellBallInteractionConsumedEventToFlag,
+  shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd,
+  shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd,
   shouldKeepShellBallVoicePreviewOnRegionLeave,
   syncShellBallInteractionController,
   useShellBallInteraction,
@@ -1141,6 +1145,22 @@ test("dashboard and control-panel entrypoints install hide-on-close handling", (
   assert.match(controlPanelMainSource, /void installHideOnCloseRequest\(\)/);
 });
 
+test("control-panel entrypoint and view keep frameless window close and drag controls wired", () => {
+  const controlPanelMainSource = readFileSync(resolve(desktopRoot, "src/app/control-panel/main.tsx"), "utf8");
+  const controlPanelAppSource = readFileSync(resolve(desktopRoot, "src/features/control-panel/ControlPanelApp.tsx"), "utf8");
+  const desktopWindowFrameSource = readFileSync(resolve(desktopRoot, "src/platform/desktopWindowFrame.ts"), "utf8");
+
+  assert.match(controlPanelMainSource, /installDesktopEscapeClose/);
+  assert.match(controlPanelMainSource, /installDesktopEscapeClose\(\)/);
+  assert.match(controlPanelAppSource, /startCurrentDesktopWindowDragging/);
+  assert.match(controlPanelAppSource, /requestCurrentDesktopWindowClose/);
+  assert.match(desktopWindowFrameSource, /export function installDesktopEscapeClose\(windowHandle\?: DesktopCloseHandle \| null\)/);
+  assert.match(desktopWindowFrameSource, /const currentWindow = windowHandle \?\? getDesktopFrameWindow\(\)/);
+  assert.match(controlPanelAppSource, /control-panel-page__topbar/);
+  assert.match(controlPanelAppSource, /拖动控制面板窗口/);
+  assert.match(controlPanelAppSource, /关闭控制面板/);
+});
+
 test("tray controller opens the control panel through the desktop window API", async () => {
   await withTrayControllerRuntime(async () => "control-panel", async ({ openControlPanelFromTray, calls }) => {
     await openControlPanelFromTray();
@@ -1638,7 +1658,7 @@ test("shell-ball interaction contract leaves the region only from hoverable rest
   );
 });
 
-test("shell-ball interaction contract retains hover input while focus or draft is active", () => {
+test("shell-ball interaction contract retains hover input only while focus is active", () => {
   assert.equal(
     shouldRetainShellBallHoverInput({
       regionActive: false,
@@ -1654,7 +1674,7 @@ test("shell-ball interaction contract retains hover input while focus or draft i
       inputFocused: false,
       hasDraft: true,
     }),
-    true,
+    false,
   );
 
   assert.deepEqual(
@@ -1822,6 +1842,82 @@ test("shell-ball submit params route text and voice through the formal input con
   assert.equal(voiceParams.trigger, "voice_commit");
   assert.equal(voiceParams.input.input_mode, "voice");
   assert.equal(createShellBallInputSubmitParams({ text: "   ", trigger: "hover_text_input", inputMode: "text" }), null);
+});
+
+test("shell-ball text drop helpers only accept non-file drags and extract plain text", () => {
+  assert.equal(
+    shouldAcceptShellBallTextDrop({
+      files: { length: 0 } as FileList,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAcceptShellBallTextDrop({
+      files: { length: 1 } as FileList,
+    }),
+    false,
+  );
+  assert.equal(
+    extractShellBallDroppedText({
+      files: { length: 0 } as FileList,
+      effectAllowed: "copyMove",
+      getData: (type: string) => (type === "text/plain" ? "  dragged summary text  " : ""),
+    }),
+    "dragged summary text",
+  );
+  assert.equal(resolveShellBallTextDropEffect("copyMove"), "copy");
+  assert.equal(resolveShellBallTextDropEffect("move"), "move");
+});
+
+test("shell-ball dropped text appends into the input draft instead of submitting immediately", () => {
+  assert.equal(
+    appendShellBallDroppedText({
+      currentValue: "",
+      droppedText: "  dragged summary text  ",
+    }),
+    "dragged summary text",
+  );
+  assert.equal(
+    appendShellBallDroppedText({
+      currentValue: "Current note",
+      droppedText: "Dragged text",
+    }),
+    "Current note\nDragged text",
+  );
+  assert.equal(
+    appendShellBallDroppedText({
+      currentValue: "Current note\n",
+      droppedText: "Dragged text",
+    }),
+    "Current note\nDragged text",
+  );
+});
+
+test("shell-ball text drop target only arms during eligible text drags", () => {
+  assert.equal(
+    shouldArmShellBallTextDropTarget({
+      fileDropActive: false,
+      textDragActive: true,
+      visualState: "hover_input",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldArmShellBallTextDropTarget({
+      fileDropActive: true,
+      textDragActive: true,
+      visualState: "hover_input",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldArmShellBallTextDropTarget({
+      fileDropActive: false,
+      textDragActive: true,
+      visualState: "voice_locked",
+    }),
+    false,
+  );
 });
 
 test("shell-ball interaction contract auto-advances waiting auth and processing states", () => {
@@ -2185,6 +2281,32 @@ test("shell-ball keeps voice preview alive on leave while voice listening is act
   assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("voice_listening"), true);
   assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("hover_input"), false);
   assert.equal(shouldKeepShellBallVoicePreviewOnRegionLeave("voice_locked"), false);
+});
+
+test("shell-ball voice recognition resumes after unexpected end while listening or locked", () => {
+  assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("voice_listening"), true);
+  assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("voice_locked"), true);
+  assert.equal(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd("hover_input"), false);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd(null), true);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd("network"), true);
+  assert.equal(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd("not-allowed"), false);
+
+  assert.equal(
+    getShellBallVoiceRecognitionUnexpectedEndFallbackState({
+      currentState: "voice_locked",
+      startState: "idle",
+      committedDraft: "",
+    }),
+    "hover_input",
+  );
+  assert.equal(
+    getShellBallVoiceRecognitionUnexpectedEndFallbackState({
+      currentState: "idle",
+      startState: "idle",
+      committedDraft: "",
+    }),
+    "idle",
+  );
 });
 
 test("shell-ball dashboard gesture policy stays task-2 explicit", () => {
@@ -3485,6 +3607,12 @@ test("shell-ball cancel callback path is wired from mascot through app interacti
   assert.match(interactionSource, /dispatch\(cancelEvent\);/);
 });
 
+test("shell-ball region leave keeps hover input visible while the text field is focused", () => {
+  const interactionSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/useShellBallInteraction.ts"), "utf8");
+
+  assert.match(interactionSource, /function handleRegionLeave\(\) \{[\s\S]*hoverRetained: getHoverRetained\(\),[\s\S]*\}/);
+});
+
 test("shell-ball surface passes mascot double-click and drag wiring through the mascot only", () => {
   const surfaceSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallSurface.tsx"), "utf8");
 
@@ -3493,6 +3621,54 @@ test("shell-ball surface passes mascot double-click and drag wiring through the 
   assert.match(surfaceSource, /<ShellBallMascot[\s\S]*onHotspotDragStart=\{onDragStart\}/);
   assert.doesNotMatch(surfaceSource, /data-shell-ball-zone="host-drag"/);
   assert.match(surfaceSource, /data-shell-ball-zone="interaction"/);
+});
+
+test("shell-ball file overlay only follows real file drags", () => {
+  assert.equal(
+    shouldShowShellBallFileDropOverlay({
+      fileDropActive: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowShellBallFileDropOverlay({
+      fileDropActive: true,
+    }),
+    true,
+  );
+});
+
+test("shell-ball voice recognition source keeps locked sessions from auto-cancelling on unexpected end", () => {
+  const interactionSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/useShellBallInteraction.ts"), "utf8");
+
+  assert.match(interactionSource, /if \(recognitionStopReasonRef\.current !== "none"\) \{/);
+  assert.match(interactionSource, /recognitionErrorRef\.current = event\.error;/);
+  assert.match(interactionSource, /shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd\(recognitionError\)/);
+  assert.match(interactionSource, /if \(shouldResumeShellBallVoiceRecognitionAfterUnexpectedEnd\(currentState\)\) \{/);
+  assert.match(interactionSource, /const committedDraft = preserveUnexpectedVoiceTranscriptDraft\(\);/);
+  assert.match(interactionSource, /if \(shouldRetryShellBallVoiceRecognitionAfterUnexpectedEnd\(recognitionError\) && startVoiceRecognition\(\)\) \{\s*return;\s*\}/);
+});
+
+test("shell-ball text drop populates and focuses the input instead of starting a task", () => {
+  const interactionSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/useShellBallInteraction.ts"), "utf8");
+  const appSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallApp.tsx"), "utf8");
+  const surfaceSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallSurface.tsx"), "utf8");
+
+  assert.match(interactionSource, /function handleDroppedText\(text: string\) \{/);
+  assert.match(interactionSource, /setInputValue\(nextInputValue\);\s*handleInputFocusRequest\(\);/);
+  assert.doesNotMatch(interactionSource, /startTaskFromSelectedText/);
+  assert.match(appSource, /const handleSurfaceTextDrop = useCallback\(\(text: string\) => \{/);
+  assert.match(appSource, /handleDroppedText\(text\);\s*window\.requestAnimationFrame\(\(\) => \{\s*void emitShellBallInputRequestFocus\(Date\.now\(\)\);\s*\}\);/);
+  assert.match(appSource, /window\.addEventListener\("dragenter", handleWindowTextDrag\);/);
+  assert.match(appSource, /window\.addEventListener\("dragover", handleWindowTextDrag\);/);
+  assert.match(appSource, /window\.addEventListener\("dragleave", clearTextDragState\);/);
+  assert.match(appSource, /window\.addEventListener\("drop", clearTextDragState\);/);
+  assert.match(appSource, /onTextDrop=\{handleSurfaceTextDrop\}/);
+  assert.match(appSource, /textDropActive=\{shouldArmShellBallTextDropTarget\(/);
+  assert.match(surfaceSource, /onDragEnterCapture=\{handleDragOver\}/);
+  assert.match(surfaceSource, /onDropCapture=\{handleDrop\}/);
+  assert.doesNotMatch(surfaceSource, /onDrop=\{handleDrop\}/);
+  assert.match(surfaceSource, /className="shell-ball-surface__text-drop-target"/);
 });
 
 test("shell-ball app dashboard-open gate stays blocked for consumed or non-resting double clicks", () => {

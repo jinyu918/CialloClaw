@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { Badge, Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
+import { Badge, Box, Button, Flex, Heading, Switch, Text } from "@radix-ui/themes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type {
+  AuditRecord,
   AgentSecurityRespondResult,
   ApprovalDecision,
   ApprovalPendingNotification,
@@ -42,16 +43,34 @@ import {
   shouldRetainDashboardSafetyActiveDetail,
 } from "@/features/dashboard/shared/dashboardSafetyNavigation";
 import {
+  getInitialDashboardSettingsSnapshot,
+  loadDashboardSettingsSnapshot,
+} from "@/features/dashboard/shared/dashboardSettingsSnapshot";
+import {
+  formatDashboardSettingsMutationFeedback,
+  updateDashboardSettings,
+  type DashboardSettingsPatch,
+} from "@/features/dashboard/shared/dashboardSettingsMutation";
+import {
   getInitialSecurityModuleData,
+  loadSecurityPendingApprovals,
+  applySecurityRestorePoint,
+  loadSecurityAuditRecords,
   loadSecurityModuleData,
   loadSecurityModuleRpcData,
+  loadSecurityRestorePoints,
   respondToApproval,
+  type SecurityAuditRecordListData,
   type SecurityModuleData,
+  type SecurityPendingListData,
+  type SecurityRestoreApplyOutcome,
+  type SecurityRestorePointListData,
   type SecurityRespondOutcome,
 } from "./securityService";
-import { resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
+import { resolveDashboardModuleRoutePath, resolveDashboardRoutePath } from "@/features/dashboard/shared/dashboardRouteTargets";
 import { getDashboardTaskSecurityRefreshPlan } from "../tasks/taskPage.query";
 import "./securityPage.css";
+import "./securityBoard.css";
 
 type SecurityCardKey = "status" | "restore" | "budget" | "governance" | `approval:${string}`;
 type CardPosition = { x: number; y: number };
@@ -80,6 +99,7 @@ type SecurityCardPreview = {
   emphasis?: "number";
   icon: LucideIcon;
 };
+type SecurityRestoreScope = "focused_task" | "all";
 
 type ImpactScopeDetails = NonNullable<AgentSecurityRespondResult["impact_scope"]>;
 
@@ -92,6 +112,8 @@ const BOARD_INSET_TOP = 140;
 const BOARD_INSET_BOTTOM = 24;
 const DEFAULT_CARD_SIZE: CardSize = { width: 248, height: 176 };
 const FALLBACK_POSITION: CardPosition = { x: BOARD_INSET_X, y: BOARD_INSET_TOP };
+const SECURITY_DETAIL_PAGE_SIZE = 8;
+const ALL_AUDIT_TYPES = "__all__";
 
 function getRiskColor(risk: RiskLevel) {
   if (risk === "red") return "red" as const;
@@ -237,6 +259,59 @@ function renderDetailEntryList(items: string[], emptyCopy: string, keyPrefix: st
       ))}
     </ul>
   );
+}
+
+function getAuditTypeKey(record: AuditRecord) {
+  return record.type.trim() || "unknown";
+}
+
+function groupAuditRecordsByType(records: AuditRecord[]) {
+  return records.reduce<Record<string, AuditRecord[]>>((groups, record) => {
+    const key = getAuditTypeKey(record);
+    const nextItems = groups[key] ?? [];
+    groups[key] = [...nextItems, record];
+    return groups;
+  }, {});
+}
+
+function filterAuditRecordsByType(records: AuditRecord[], typeFilter: string) {
+  if (typeFilter === ALL_AUDIT_TYPES) {
+    return records;
+  }
+
+  return records.filter((record) => getAuditTypeKey(record) === typeFilter);
+}
+
+function formatPageWindow(page: { offset: number; total: number }, itemCount: number) {
+  if (page.total <= 0 || itemCount <= 0) {
+    return "0 / 0";
+  }
+
+  const start = page.offset + 1;
+  const end = Math.min(page.offset + itemCount, page.total);
+  return `${start}-${end} / ${page.total}`;
+}
+
+function resolveSecurityDetailTaskId(args: {
+  activeDetailKey: SecurityCardKey | null;
+  approvalLookup: Map<string, ApprovalRequest>;
+  approvalSnapshot: ApprovalRequest | null;
+  lastResolvedApproval: SecurityRespondOutcome | null;
+  latestRestorePoint: RecoveryPoint | null;
+  restorePointSnapshot: RecoveryPoint | null;
+  subscribedTaskId: string | null;
+}) {
+  const { activeDetailKey, approvalLookup, approvalSnapshot, lastResolvedApproval, latestRestorePoint, restorePointSnapshot, subscribedTaskId } = args;
+
+  if (activeDetailKey === "restore") {
+    return restorePointSnapshot?.task_id ?? latestRestorePoint?.task_id ?? lastResolvedApproval?.response.task.task_id ?? subscribedTaskId ?? null;
+  }
+
+  if (activeDetailKey?.startsWith("approval:")) {
+    return approvalLookup.get(activeDetailKey)?.task_id ?? approvalSnapshot?.task_id ?? subscribedTaskId ?? null;
+  }
+
+  return subscribedTaskId ?? lastResolvedApproval?.response.task.task_id ?? latestRestorePoint?.task_id ?? null;
 }
 
 function mergePendingApproval(current: SecurityModuleData, payload: ApprovalPendingNotification): SecurityModuleData {
@@ -567,15 +642,36 @@ export function SecurityApp() {
   const queryClient = useQueryClient();
   const [dataMode, setDataMode] = useState<"rpc" | "mock">(() => loadDashboardDataMode("safety"));
   const [moduleData, setModuleData] = useState<SecurityModuleData | null>(null);
+  const [settingsSnapshot, setSettingsSnapshot] = useState(() => getInitialDashboardSettingsSnapshot());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeApprovalId, setActiveApprovalId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [settingsActionKey, setSettingsActionKey] = useState<string | null>(null);
   const [approvalSnapshot, setApprovalSnapshot] = useState<ApprovalRequest | null>(null);
   const [restorePointSnapshot, setRestorePointSnapshot] = useState<RecoveryPoint | null>(null);
   const [routeDrivenDetailKey, setRouteDrivenDetailKey] = useState<SecurityCardKey | null>(null);
   const [subscribedTaskId, setSubscribedTaskId] = useState<string | null>(null);
   const [lastResolvedApproval, setLastResolvedApproval] = useState<SecurityRespondOutcome | null>(null);
+  const [lastRestoreApply, setLastRestoreApply] = useState<SecurityRestoreApplyOutcome | null>(null);
   const [rememberRuleByApprovalId, setRememberRuleByApprovalId] = useState<Record<string, boolean>>({});
+  const [pendingListData, setPendingListData] = useState<SecurityPendingListData | null>(null);
+  const [pendingListError, setPendingListError] = useState<string | null>(null);
+  const [pendingListLoading, setPendingListLoading] = useState(false);
+  const [pendingOffset, setPendingOffset] = useState(0);
+  const [restorePointsData, setRestorePointsData] = useState<SecurityRestorePointListData | null>(null);
+  const [restorePointsError, setRestorePointsError] = useState<string | null>(null);
+  const [restorePointsLoading, setRestorePointsLoading] = useState(false);
+  const [restoreScope, setRestoreScope] = useState<SecurityRestoreScope>("focused_task");
+  const [restoreOffset, setRestoreOffset] = useState(0);
+  const [auditRecordsData, setAuditRecordsData] = useState<SecurityAuditRecordListData | null>(null);
+  const [auditRecordsError, setAuditRecordsError] = useState<string | null>(null);
+  const [auditRecordsLoading, setAuditRecordsLoading] = useState(false);
+  const [auditOffset, setAuditOffset] = useState(0);
+  const [auditTypeFilter, setAuditTypeFilter] = useState<string>(ALL_AUDIT_TYPES);
+  const [activeRestorePointId, setActiveRestorePointId] = useState<string | null>(null);
+  const [activeRestoreRequestId, setActiveRestoreRequestId] = useState<string | null>(null);
+  const [decisionHistory, setDecisionHistory] = useState<SecurityRespondOutcome[]>([]);
+  const [activeDecisionRecordId, setActiveDecisionRecordId] = useState<string | null>(null);
   const [titleMotionTick, setTitleMotionTick] = useState(0);
   const [cardPositions, setCardPositions] = useState<Record<string, CardPosition>>({});
   const [cardStack, setCardStack] = useState<SecurityCardKey[]>([]);
@@ -608,6 +704,68 @@ export function SecurityApp() {
       }),
     [activeDetailKey, approvalSnapshot, restorePointSnapshot, routeDrivenDetailKey, subscribedTaskId],
   );
+  const focusedTaskId = useMemo(
+    () =>
+      resolveSecurityDetailTaskId({
+        activeDetailKey,
+        approvalLookup,
+        approvalSnapshot: activeSnapshotState.approvalSnapshot,
+        lastResolvedApproval,
+        latestRestorePoint: moduleData?.summary.latest_restore_point ?? null,
+        restorePointSnapshot: activeSnapshotState.restorePointSnapshot,
+        subscribedTaskId: activeSnapshotState.subscribedTaskId,
+      }),
+    [
+      activeDetailKey,
+      activeSnapshotState.approvalSnapshot,
+      activeSnapshotState.restorePointSnapshot,
+      activeSnapshotState.subscribedTaskId,
+      approvalLookup,
+      lastResolvedApproval,
+      moduleData?.summary.latest_restore_point,
+    ],
+  );
+  const restoreFilterTaskId = restoreScope === "focused_task" ? focusedTaskId : null;
+  const activeAuditRecordsData = useMemo(
+    () => (focusedTaskId && auditRecordsData?.taskId === focusedTaskId ? auditRecordsData : null),
+    [auditRecordsData, focusedTaskId],
+  );
+  const auditFilterOptions = useMemo(
+    () => Array.from(new Set((activeAuditRecordsData?.items ?? []).map((record) => getAuditTypeKey(record)))),
+    [activeAuditRecordsData?.items],
+  );
+  const filteredAuditRecords = useMemo(
+    () => filterAuditRecordsByType(activeAuditRecordsData?.items ?? [], auditTypeFilter),
+    [activeAuditRecordsData?.items, auditTypeFilter],
+  );
+  const governanceRecords = useMemo(() => {
+    const nextRecords = [...decisionHistory];
+
+    if (lastResolvedApproval) {
+      const nextRecordId = lastResolvedApproval.response.authorization_record.authorization_record_id;
+
+      if (!nextRecords.some((item) => item.response.authorization_record.authorization_record_id === nextRecordId)) {
+        nextRecords.unshift(lastResolvedApproval);
+      }
+    }
+
+    return nextRecords;
+  }, [decisionHistory, lastResolvedApproval]);
+  const activeGovernanceOutcome = useMemo(() => {
+    if (!governanceRecords.length) {
+      return null;
+    }
+
+    if (!activeDecisionRecordId) {
+      return governanceRecords[0] ?? null;
+    }
+
+    return (
+      governanceRecords.find((item) => item.response.authorization_record.authorization_record_id === activeDecisionRecordId) ??
+      governanceRecords[0] ??
+      null
+    );
+  }, [activeDecisionRecordId, governanceRecords]);
 
   const queueRpcRefresh = useCallback(() => {
     if (dataMode !== "rpc") {
@@ -632,6 +790,52 @@ export function SecurityApp() {
 
   useEffect(() => {
     saveDashboardDataMode("safety", dataMode);
+  }, [dataMode]);
+
+  const handleSettingsUpdate = useCallback(
+    async (actionKey: string, subject: string, patch: DashboardSettingsPatch) => {
+      // Safety detail controls only write through stable settings keys and then
+      // reload the board so summary cards stay aligned with the latest snapshot.
+      setSettingsActionKey(actionKey);
+
+      try {
+        const result = await updateDashboardSettings(patch, dataMode);
+        const nextModuleData = await loadSecurityModuleData(dataMode);
+
+        setSettingsSnapshot(result.snapshot);
+        setModuleData(nextModuleData);
+        setLoadError(null);
+        setFeedback(formatDashboardSettingsMutationFeedback(result, subject));
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : `${subject}更新失败。`);
+      } finally {
+        setSettingsActionKey(null);
+      }
+    },
+    [dataMode],
+  );
+
+  useEffect(() => {
+    // The safety board needs a stable settings snapshot even before the detailed
+    // governance panel opens, so load the same shared snapshot used by mirror.
+    let disposed = false;
+
+    if (dataMode === "mock") {
+      setSettingsSnapshot(getInitialDashboardSettingsSnapshot());
+      return () => {
+        disposed = true;
+      };
+    }
+
+    void loadDashboardSettingsSnapshot("rpc").then((nextSnapshot) => {
+      if (!disposed) {
+        setSettingsSnapshot(nextSnapshot);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
   }, [dataMode]);
 
   useEffect(() => {
@@ -715,6 +919,55 @@ export function SecurityApp() {
     }
   }, [activeDetailKey, activeSnapshotState.approvalSnapshot, cardKeys]);
 
+  useEffect(() => {
+    if (activeDetailKey === "status") {
+      setPendingOffset(0);
+    }
+  }, [activeDetailKey]);
+
+  useEffect(() => {
+    if (!focusedTaskId && restoreScope === "focused_task") {
+      setRestoreScope("all");
+    }
+  }, [focusedTaskId, restoreScope]);
+
+  useEffect(() => {
+    if (activeDetailKey === "restore") {
+      setRestoreOffset(0);
+    }
+  }, [activeDetailKey, restoreScope, focusedTaskId]);
+
+  useEffect(() => {
+    if (activeDetailKey === "governance") {
+      setAuditOffset(0);
+      setAuditTypeFilter(ALL_AUDIT_TYPES);
+    }
+  }, [activeDetailKey, focusedTaskId]);
+
+  useEffect(() => {
+    if (!auditFilterOptions.length && auditTypeFilter !== ALL_AUDIT_TYPES) {
+      setAuditTypeFilter(ALL_AUDIT_TYPES);
+      return;
+    }
+
+    if (auditTypeFilter !== ALL_AUDIT_TYPES && !auditFilterOptions.includes(auditTypeFilter)) {
+      setAuditTypeFilter(ALL_AUDIT_TYPES);
+    }
+  }, [auditFilterOptions, auditTypeFilter]);
+
+  useEffect(() => {
+    if (!governanceRecords.length) {
+      if (activeDecisionRecordId !== null) {
+        setActiveDecisionRecordId(null);
+      }
+      return;
+    }
+
+    if (!activeDecisionRecordId || !governanceRecords.some((item) => item.response.authorization_record.authorization_record_id === activeDecisionRecordId)) {
+      setActiveDecisionRecordId(governanceRecords[0]?.response.authorization_record.authorization_record_id ?? null);
+    }
+  }, [activeDecisionRecordId, governanceRecords]);
+
   const bringCardToFront = useCallback((key: SecurityCardKey) => {
     setCardStack((currentStack) => [...currentStack.filter((item) => item !== key), key]);
   }, []);
@@ -762,6 +1015,126 @@ export function SecurityApp() {
       queueRpcRefresh();
     });
   }, [dataMode, queueRpcRefresh, subscribedTaskId]);
+
+  useEffect(() => {
+    if (!moduleData || activeDetailKey !== "status") {
+      return;
+    }
+
+    let disposed = false;
+    setPendingListLoading(true);
+    setPendingListError(null);
+
+    void loadSecurityPendingApprovals(moduleData.source, {
+      limit: SECURITY_DETAIL_PAGE_SIZE,
+      offset: pendingOffset,
+    })
+      .then((nextData) => {
+        if (!disposed) {
+          setPendingListData(nextData);
+          setPendingListError(null);
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setPendingListError(formatRpcError(error));
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setPendingListLoading(false);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeDetailKey, moduleData, pendingOffset]);
+
+  useEffect(() => {
+    if (!moduleData || (activeDetailKey !== "restore" && activeDetailKey !== "governance")) {
+      return;
+    }
+
+    let disposed = false;
+    setRestorePointsLoading(true);
+    setRestorePointsError(null);
+
+    void loadSecurityRestorePoints(moduleData.source, {
+      limit: SECURITY_DETAIL_PAGE_SIZE,
+      offset: restoreOffset,
+      taskId: restoreFilterTaskId,
+    })
+      .then((nextData) => {
+        if (disposed) {
+          return;
+        }
+
+        setRestorePointsData(nextData);
+        setRestorePointsError(null);
+        setActiveRestorePointId((current) => {
+          if (current && nextData.items.some((item) => item.recovery_point_id === current)) {
+            return current;
+          }
+
+          const preferredId =
+            activeSnapshotState.restorePointSnapshot?.recovery_point_id ??
+            moduleData.summary.latest_restore_point?.recovery_point_id ??
+            nextData.items[0]?.recovery_point_id ??
+            null;
+          return preferredId;
+        });
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setRestorePointsError(formatRpcError(error));
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setRestorePointsLoading(false);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeDetailKey, activeSnapshotState.restorePointSnapshot, moduleData, restoreFilterTaskId, restoreOffset]);
+
+  useEffect(() => {
+    if (!moduleData || activeDetailKey !== "governance" || !focusedTaskId) {
+      return;
+    }
+
+    let disposed = false;
+    setAuditRecordsLoading(true);
+    setAuditRecordsError(null);
+
+    void loadSecurityAuditRecords(moduleData.source, focusedTaskId, {
+      limit: SECURITY_DETAIL_PAGE_SIZE,
+      offset: auditOffset,
+    })
+      .then((nextData) => {
+        if (!disposed) {
+          setAuditRecordsData(nextData);
+          setAuditRecordsError(null);
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setAuditRecordsError(formatRpcError(error));
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setAuditRecordsLoading(false);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeDetailKey, auditOffset, focusedTaskId, moduleData]);
 
   const handleTitleClick = useCallback(() => {
     setTitleMotionTick((currentTick) => currentTick + 1);
@@ -846,6 +1219,35 @@ export function SecurityApp() {
     };
   }, [activeDetailKey]);
 
+  const openTaskDetail = useCallback(
+    (taskId: string) => {
+      navigate(resolveDashboardModuleRoutePath("tasks"), {
+        state: {
+          focusTaskId: taskId,
+          openDetail: true,
+        },
+      });
+    },
+    [navigate],
+  );
+
+  const openPendingApprovalDetail = useCallback(
+    (approval: ApprovalRequest) => {
+      const approvalKey = `approval:${approval.approval_id}` as SecurityCardKey;
+
+      setApprovalSnapshot(approval);
+      setRestorePointSnapshot(null);
+      setRouteDrivenDetailKey(approvalKey);
+      setSubscribedTaskId(approval.task_id);
+      setActiveDetailKey(approvalKey);
+
+      if (cardKeys.includes(approvalKey)) {
+        bringCardToFront(approvalKey);
+      }
+    },
+    [bringCardToFront, cardKeys],
+  );
+
   if (!moduleData) {
     return (
       <main className="app-shell security-page">
@@ -906,6 +1308,12 @@ export function SecurityApp() {
         setRouteDrivenDetailKey(null);
       }
       setLastResolvedApproval(result);
+      setDecisionHistory((current) => {
+        const nextRecordId = result.response.authorization_record.authorization_record_id;
+        const deduped = current.filter((item) => item.response.authorization_record.authorization_record_id !== nextRecordId);
+        return [result, ...deduped].slice(0, 10);
+      });
+      setActiveDecisionRecordId(result.response.authorization_record.authorization_record_id);
       setFeedback(
         `${result.response.bubble_message?.text ?? "已更新安全审批状态。"} · ${result.response.authorization_record.decision} · remember_rule ${result.response.authorization_record.remember_rule ? "on" : "off"} · task ${result.response.task.task_id} / ${result.response.task.status} · ${formatImpactScopeSummary(result.response.impact_scope)}`,
       );
@@ -920,6 +1328,31 @@ export function SecurityApp() {
       setFeedback(formatRpcError(error));
     } finally {
       setActiveApprovalId(null);
+    }
+  };
+
+  const handleApplyRestore = async (restorePoint: RecoveryPoint) => {
+    setActiveRestoreRequestId(restorePoint.recovery_point_id);
+
+    try {
+      const result = await applySecurityRestorePoint(restorePoint, moduleData.source);
+      setLastRestoreApply(result);
+      setRestorePointSnapshot(result.response.recovery_point);
+      setSubscribedTaskId(result.response.task.task_id);
+      setFeedback(
+        `${result.response.bubble_message?.text ?? "恢复点操作已提交。"} · task ${result.response.task.task_id} / ${result.response.task.status} · restore ${result.response.recovery_point.recovery_point_id}`,
+      );
+      for (const queryKey of taskRefreshPlan.invalidatePrefixes) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+
+      if (moduleData.source === "rpc") {
+        queueRpcRefresh();
+      }
+    } catch (error) {
+      setFeedback(formatRpcError(error));
+    } finally {
+      setActiveRestoreRequestId(null);
     }
   };
 
@@ -1050,46 +1483,255 @@ export function SecurityApp() {
         approval.pending 推送仍先合并到前端状态，再走顺序保护的 RPC 刷新，避免旧响应覆盖较新的安全视图。
       </div>
 
+      <div className="security-page__detail-section">
+        <div className="security-page__detail-toolbar">
+          <div>
+            <p className="security-page__detail-label">待确认授权列表</p>
+            <p className="security-page__detail-copy">点击任一授权可进入该条审批详情，再继续执行允许/拒绝或打开关联 task。</p>
+          </div>
+          {pendingListData ? (
+            <p className="security-page__detail-copy">当前页 {formatPageWindow(pendingListData.page, pendingListData.items.length)}</p>
+          ) : null}
+        </div>
+
+        {pendingListLoading ? <div className="security-page__detail-note">正在同步待确认授权列表…</div> : null}
+        {pendingListError ? <div className="security-page__detail-callout">待确认授权同步失败：{pendingListError}</div> : null}
+        {!pendingListLoading && !pendingListError && (pendingListData?.items.length ?? 0) === 0 ? (
+          <p className="security-page__empty-state">当前没有待确认授权。</p>
+        ) : null}
+
+        {(pendingListData?.items.length ?? 0) > 0 ? (
+          <div className="security-page__detail-selection-list">
+            {pendingListData!.items.map((approval) => (
+              <button
+                key={approval.approval_id}
+                type="button"
+                className="security-page__detail-selection-item"
+                onClick={() => openPendingApprovalDetail(approval)}
+              >
+                <span className="security-page__detail-label">{formatDateTime(approval.created_at)}</span>
+                <strong className="security-page__detail-selection-title">{approval.operation_name}</strong>
+                <span className="security-page__detail-copy">
+                  risk {approval.risk_level} · task {approval.task_id} · {approval.target_object}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {pendingListData ? (
+          <div className="security-page__detail-pagination">
+            <p className="security-page__detail-copy">当前页用于独立浏览待确认授权，不依赖画布里已经铺开的卡片数量。</p>
+            <div className="security-page__detail-pagination-actions">
+              <Button
+                variant="soft"
+                color="gray"
+                disabled={pendingListLoading || pendingListData.page.offset <= 0}
+                onClick={() => setPendingOffset((current) => Math.max(0, current - pendingListData.page.limit))}
+              >
+                上一页
+              </Button>
+              <Button
+                variant="soft"
+                color="gray"
+                disabled={pendingListLoading || !pendingListData.page.has_more}
+                onClick={() => setPendingOffset((current) => current + pendingListData.page.limit)}
+              >
+                下一页
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       <div className="security-page__detail-note">
-        当前分页：limit {moduleData.pendingPage.limit} · offset {moduleData.pendingPage.offset} · total {moduleData.pendingPage.total} · has_more {String(moduleData.pendingPage.has_more)}
+        当前摘要分页：limit {moduleData.pendingPage.limit} · offset {moduleData.pendingPage.offset} · total {moduleData.pendingPage.total} · has_more {String(moduleData.pendingPage.has_more)}
       </div>
     </div>
   );
 
   const renderRestoreDetail = (restorePoint: RecoveryPoint | null) => {
-    if (!restorePoint) {
-      return <p className="security-page__empty-state">当前没有可展示的恢复点。</p>;
-    }
+    const restorePoints = restorePointsData?.items ?? (restorePoint ? [restorePoint] : []);
+    const restorePageWindow = restorePointsData ? formatPageWindow(restorePointsData.page, restorePoints.length) : null;
+    const canFilterRestoreByTask = Boolean(focusedTaskId);
+    const restorePageStep = restorePointsData?.page.limit ?? SECURITY_DETAIL_PAGE_SIZE;
+    const restoreScopeDescription =
+      restoreScope === "focused_task" && focusedTaskId
+        ? `当前仅显示 task ${focusedTaskId} 的恢复点；切到“全部恢复点”后会跨 task 浏览。`
+        : "当前显示全局可见恢复点；如有 task 上下文，可切回当前 task 视图。";
+    const selectedRestorePoint =
+      restorePoints.find((item) => item.recovery_point_id === activeRestorePointId) ??
+      restorePoint ??
+      restorePoints[0] ??
+      null;
 
     return (
       <div className="security-page__detail-stack">
-        <div className="security-page__detail-grid">
-          <article className="security-page__detail-card">
-            <p className="security-page__detail-label">恢复点 ID</p>
-            <p className="security-page__detail-value security-page__detail-value--mono">{restorePoint.recovery_point_id}</p>
-            <p className="security-page__detail-copy">关联 task：{restorePoint.task_id}</p>
-          </article>
-          <article className="security-page__detail-card">
-            <p className="security-page__detail-label">创建时间</p>
-            <p className="security-page__detail-value">{formatDateTime(restorePoint.created_at)}</p>
-            <p className="security-page__detail-copy">{restorePoint.summary}</p>
-          </article>
+        <div className="security-page__detail-note">
+          {focusedTaskId
+            ? `当前安全上下文已挂到 task ${focusedTaskId}。恢复操作会先进入授权，再继续执行回滚。`
+            : "当前安全上下文没有绑定到具体 task，因此恢复点默认按全局范围查看。"}
         </div>
 
-        <div className="security-page__detail-list">
-          {restorePoint.objects.map((item) => (
-            <article key={item} className="security-page__detail-list-item">
-              <p className="security-page__detail-label">影响对象</p>
-              <p className="security-page__detail-copy">{item}</p>
-            </article>
-          ))}
+        <div className="security-page__detail-section">
+          <div className="security-page__detail-toolbar">
+            <div>
+              <p className="security-page__detail-label">恢复点范围</p>
+              <p className="security-page__detail-copy">{restoreScopeDescription}</p>
+            </div>
+          </div>
+
+          <div className="security-page__detail-filter-row">
+            <div className="security-page__detail-filter-group">
+              {canFilterRestoreByTask ? (
+                <button
+                  type="button"
+                  className={`security-page__detail-filter-chip${restoreScope === "focused_task" ? " is-active" : ""}`}
+                  onClick={() => setRestoreScope("focused_task")}
+                >
+                  当前 task
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`security-page__detail-filter-chip${restoreScope === "all" ? " is-active" : ""}`}
+                onClick={() => setRestoreScope("all")}
+              >
+                全部恢复点
+              </button>
+            </div>
+            {restorePageWindow ? <p className="security-page__detail-copy">当前页 {restorePageWindow}</p> : null}
+          </div>
+
+          {restorePointsLoading ? <div className="security-page__detail-note">正在同步恢复点列表…</div> : null}
+          {restorePointsError ? <div className="security-page__detail-callout">恢复点列表同步失败：{restorePointsError}</div> : null}
+          {!restorePointsLoading && !restorePointsError && restorePoints.length === 0 ? (
+            <p className="security-page__empty-state">
+              {restoreScope === "focused_task" && focusedTaskId
+                ? `当前 task ${focusedTaskId} 还没有可展示的恢复点。`
+                : "当前还没有可展示的恢复点。"}
+            </p>
+          ) : null}
         </div>
+
+        {selectedRestorePoint ? (
+          <>
+            <div className="security-page__detail-grid">
+              <article className="security-page__detail-card">
+                <p className="security-page__detail-label">恢复点 ID</p>
+                <p className="security-page__detail-value security-page__detail-value--mono">{selectedRestorePoint.recovery_point_id}</p>
+                <p className="security-page__detail-copy">关联 task：{selectedRestorePoint.task_id}</p>
+              </article>
+              <article className="security-page__detail-card">
+                <p className="security-page__detail-label">创建时间</p>
+                <p className="security-page__detail-value">{formatDateTime(selectedRestorePoint.created_at)}</p>
+                <p className="security-page__detail-copy">{selectedRestorePoint.summary}</p>
+              </article>
+              <article className="security-page__detail-card">
+                <p className="security-page__detail-label">对象数量</p>
+                <p className="security-page__detail-value">{selectedRestorePoint.objects.length}</p>
+                <p className="security-page__detail-copy">
+                  当前页已加载 {restorePoints.length} 条
+                  {restorePointsData ? ` · total ${restorePointsData.page.total}` : ""}
+                </p>
+              </article>
+            </div>
+
+            <div className="security-page__detail-list">
+              <article className="security-page__detail-list-item">
+                <p className="security-page__detail-label">影响对象</p>
+                {renderDetailEntryList(selectedRestorePoint.objects, "该恢复点当前没有对象清单。", "restore-objects")}
+              </article>
+            </div>
+
+            <Flex align="center" gap="3" wrap="wrap">
+              <Button variant="soft" color="gray" onClick={() => openTaskDetail(selectedRestorePoint.task_id)}>
+                查看关联任务
+                <ArrowUpRight className="h-4 w-4" />
+              </Button>
+              <Button
+                color="amber"
+                variant="solid"
+                disabled={activeRestoreRequestId === selectedRestorePoint.recovery_point_id}
+                onClick={() => void handleApplyRestore(selectedRestorePoint)}
+              >
+                {activeRestoreRequestId === selectedRestorePoint.recovery_point_id ? "提交中..." : "申请恢复"}
+              </Button>
+            </Flex>
+          </>
+        ) : null}
+
+        {lastRestoreApply ? (
+          <div className="security-page__detail-callout">
+            最近一次恢复申请：task {lastRestoreApply.response.task.task_id} / {lastRestoreApply.response.task.status} · restore{" "}
+            {lastRestoreApply.response.recovery_point.recovery_point_id}
+          </div>
+        ) : null}
+
+        {restorePointsData ? (
+          <div className="security-page__detail-pagination">
+            <p className="security-page__detail-copy">
+              {restoreScope === "focused_task" && focusedTaskId
+                ? `当前页仅统计 task ${focusedTaskId} 下的恢复点。`
+                : "当前页统计的是全局可见恢复点。"}
+            </p>
+            <div className="security-page__detail-pagination-actions">
+              <Button
+                variant="soft"
+                color="gray"
+                disabled={restorePointsLoading || restorePointsData.page.offset <= 0}
+                onClick={() => setRestoreOffset((current) => Math.max(0, current - restorePageStep))}
+              >
+                上一页
+              </Button>
+              <Button
+                variant="soft"
+                color="gray"
+                disabled={restorePointsLoading || !restorePointsData.page.has_more}
+                onClick={() => setRestoreOffset((current) => current + restorePageStep)}
+              >
+                下一页
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {restorePoints.length > 1 ? (
+          <div className="security-page__detail-section">
+            <div className="security-page__detail-toolbar">
+              <div>
+                <p className="security-page__detail-label">恢复点列表</p>
+                <p className="security-page__detail-copy">
+                  选择要查看或回滚的恢复点；当前列表
+                  {restoreScope === "focused_task" && focusedTaskId ? `按 task ${focusedTaskId} 过滤。` : "按全局范围展示。"}
+                </p>
+              </div>
+            </div>
+            <div className="security-page__detail-selection-list">
+              {restorePoints.map((item) => (
+                <button
+                  key={item.recovery_point_id}
+                  type="button"
+                  className={`security-page__detail-selection-item${item.recovery_point_id === selectedRestorePoint.recovery_point_id ? " is-active" : ""}`}
+                  onClick={() => setActiveRestorePointId(item.recovery_point_id)}
+                >
+                  <span className="security-page__detail-label">{formatDateTime(item.created_at)}</span>
+                  <strong className="security-page__detail-selection-title">{item.summary}</strong>
+                  <span className="security-page__detail-copy">
+                    {item.recovery_point_id} · {item.objects.length} 个对象 · task {item.task_id}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   };
 
   const renderBudgetDetail = () => {
     const tokenCost = moduleData.summary.token_cost_summary;
+    const budgetAutoDowngradeEnabled = settingsSnapshot.settings.data_log.budget_auto_downgrade;
 
     return (
       <div className="security-page__detail-stack">
@@ -1112,7 +1754,28 @@ export function SecurityApp() {
           <article className="security-page__detail-card">
             <p className="security-page__detail-label">当日上限</p>
             <p className="security-page__detail-value">{formatTokenCount(tokenCost.daily_limit)} tokens</p>
-            <p className="security-page__detail-copy">自动降级：{tokenCost.budget_auto_downgrade ? "开启" : "关闭"}</p>
+            <p className="security-page__detail-copy">自动降级：{budgetAutoDowngradeEnabled ? "开启" : "关闭"}</p>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">预算自动降级</p>
+            <p className="security-page__detail-value">{formatBooleanLabel(budgetAutoDowngradeEnabled)}</p>
+            <p className="security-page__detail-copy">该开关写回 `settings.data_log.budget_auto_downgrade`，用于承接正式预算熔断策略。</p>
+            <div className="security-page__detail-setting-row">
+              <Switch
+                checked={budgetAutoDowngradeEnabled}
+                disabled={settingsActionKey !== null}
+                onCheckedChange={(checked) => {
+                  void handleSettingsUpdate("budget-auto-downgrade", "预算自动降级", {
+                    data_log: {
+                      budget_auto_downgrade: checked,
+                    },
+                  });
+                }}
+              />
+              <span className="security-page__detail-copy">
+                {settingsActionKey === "budget-auto-downgrade" ? "正在写入 settings.update…" : "直接更新预算降级策略。"}
+              </span>
+            </div>
           </article>
         </div>
       </div>
@@ -1120,27 +1783,142 @@ export function SecurityApp() {
   };
 
   const renderGovernanceDetail = () => {
-    const response = lastResolvedApproval?.response;
+    const response = activeGovernanceOutcome?.response;
     const authorizationRecord = response?.authorization_record;
     const task = response?.task;
     const bubbleMessage = response?.bubble_message;
     const impactScope = response?.impact_scope as ImpactScopeDetails | undefined;
+    const auditGroups = groupAuditRecordsByType(filteredAuditRecords);
+    const auditPageWindow = activeAuditRecordsData ? formatPageWindow(activeAuditRecordsData.page, activeAuditRecordsData.items.length) : null;
+    const auditPageStep = activeAuditRecordsData?.page.limit ?? SECURITY_DETAIL_PAGE_SIZE;
+    const downloadSettings = settingsSnapshot.settings.general.download;
+    const dataLogSettings = settingsSnapshot.settings.data_log;
+    const settingsWarnings = settingsSnapshot.rpcContext.warnings;
 
     return (
       <div className="security-page__detail-stack">
         <div className="security-page__detail-note">
-          工作区边界、影响范围展示、恢复点与预算治理会继续统一承接在这个模块里，但前端当前只稳定使用 summary / pending / respond 三条 RPC 通道。
+          这里把当前前端会话内的授权结果、当前 task 的审计记录和恢复入口放在一起浏览；不是后端完整历史归档。
         </div>
 
         <div className="security-page__detail-note">
           approval.pending 的实时行为没有移除：新授权会先进入画布，再以顺序保护的方式拉取最新 summary 与 pending，避免界面回退到旧状态。
         </div>
 
+        <div className="security-page__detail-note">
+          这里只展示已经登记到设置快照里的治理信号，例如工作区下载路径、逐文件确认和预算降级；不会伪造尚未进入真源的命令白名单或工作区外写入开关。
+        </div>
+
+        <div className="security-page__detail-grid">
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">工作区下载路径</p>
+            <p className="security-page__detail-value security-page__detail-value--mono">{downloadSettings.workspace_path}</p>
+            <p className="security-page__detail-copy">当前展示的是 `settings.general.download.workspace_path`，用于说明下载类产物默认落盘到哪里。</p>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">逐文件保存确认</p>
+            <p className="security-page__detail-value">{formatBooleanLabel(downloadSettings.ask_before_save_each_file)}</p>
+            <p className="security-page__detail-copy">该开关来自 `settings.general.download.ask_before_save_each_file`，用于说明保存文件前是否逐个确认。</p>
+            <div className="security-page__detail-setting-row">
+              <Switch
+                checked={downloadSettings.ask_before_save_each_file}
+                disabled={settingsActionKey !== null}
+                onCheckedChange={(checked) => {
+                  void handleSettingsUpdate("download-ask-before-save", "逐文件保存确认", {
+                    general: {
+                      download: {
+                        workspace_path: downloadSettings.workspace_path,
+                        ask_before_save_each_file: checked,
+                      },
+                    },
+                  });
+                }}
+              />
+              <span className="security-page__detail-copy">
+                {settingsActionKey === "download-ask-before-save" ? "正在写入 settings.update…" : "直接更新保存前逐文件确认设置。"}
+              </span>
+            </div>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">数据日志提供商</p>
+            <p className="security-page__detail-value">{dataLogSettings.provider}</p>
+            <p className="security-page__detail-copy">这里只展示 `settings.data_log.provider`，不额外扩展未登记的提供商策略对象。</p>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">预算自动降级</p>
+            <p className="security-page__detail-value">{formatBooleanLabel(dataLogSettings.budget_auto_downgrade)}</p>
+            <p className="security-page__detail-copy">该卡片只说明 `settings.data_log.budget_auto_downgrade` 的当前状态，不伪装成已经完成的后端执行策略。</p>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">提供商密钥状态</p>
+            <p className="security-page__detail-value">{formatBooleanLabel(dataLogSettings.provider_api_key_configured)}</p>
+            <p className="security-page__detail-copy">设置真源只回传是否已配置，不会在这里泄露任何真实 secret。</p>
+          </article>
+          <article className="security-page__detail-card">
+            <p className="security-page__detail-label">设置快照来源</p>
+            <p className="security-page__detail-value">{settingsSnapshot.source === "rpc" ? "settings.get" : "local fallback"}</p>
+            <p className="security-page__detail-copy">
+              {settingsSnapshot.rpcContext.serverTime
+                ? `服务端快照时间：${settingsSnapshot.rpcContext.serverTime}`
+                : "当前展示的是本地设置回退快照。"}
+            </p>
+            {settingsWarnings.length > 0 ? (
+              <p className="security-page__detail-copy">warnings：{settingsWarnings.join("；")}</p>
+            ) : null}
+          </article>
+        </div>
+
+        <div className="security-page__detail-section">
+          <div className="security-page__detail-toolbar">
+            <div>
+              <p className="security-page__detail-label">当前会话授权结果</p>
+              <p className="security-page__detail-copy">
+                这里只保留当前前端会话内最近 10 条已提交决策，用于快速回看，不代替正式授权历史接口。
+              </p>
+            </div>
+            {task?.task_id ? (
+              <Button variant="soft" color="gray" onClick={() => openTaskDetail(task.task_id)}>
+                查看当前决策任务
+                <ArrowUpRight className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+
+          {governanceRecords.length > 0 ? (
+            <div className="security-page__detail-selection-list">
+              {governanceRecords.map((outcome) => {
+                const outcomeRecord = outcome.response.authorization_record;
+                const outcomeTask = outcome.response.task;
+                const recordId = outcomeRecord.authorization_record_id;
+
+                return (
+                  <button
+                    key={recordId}
+                    type="button"
+                    className={`security-page__detail-selection-item${recordId === activeDecisionRecordId ? " is-active" : ""}`}
+                    onClick={() => setActiveDecisionRecordId(recordId)}
+                  >
+                    <span className="security-page__detail-label">{formatDateTime(outcomeRecord.created_at)}</span>
+                    <strong className="security-page__detail-selection-title">
+                      {outcomeRecord.decision} · {outcomeTask.status}
+                    </strong>
+                    <span className="security-page__detail-copy">
+                      task {outcomeTask.task_id} · {formatImpactScopeSummary(outcome.response.impact_scope)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="security-page__empty-state">当前会话还没有已提交的授权决策。</p>
+          )}
+        </div>
+
         {response && authorizationRecord && task ? (
           <>
             <div className="security-page__detail-grid">
               <article className="security-page__detail-card">
-                <p className="security-page__detail-label">最近授权记录</p>
+                <p className="security-page__detail-label">当前授权记录</p>
                 <p className="security-page__detail-value">{authorizationRecord.decision}</p>
                 <p className="security-page__detail-copy">
                   remember_rule：{formatBooleanLabel(authorizationRecord.remember_rule)} · operator：{authorizationRecord.operator}
@@ -1242,6 +2020,122 @@ export function SecurityApp() {
           </>
         ) : null}
 
+        <div className="security-page__detail-section">
+          <div className="security-page__detail-toolbar">
+            <div>
+              <p className="security-page__detail-label">审计记录</p>
+              <p className="security-page__detail-copy">
+                {focusedTaskId ? `当前聚焦 task ${focusedTaskId}。` : "当前没有绑定到具体 task，审计记录将等待任务上下文。"}
+              </p>
+            </div>
+            {focusedTaskId ? (
+              <Button variant="soft" color="gray" onClick={() => openTaskDetail(focusedTaskId)}>
+                查看关联任务
+                <ArrowUpRight className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="security-page__detail-filter-row">
+            <div className="security-page__detail-filter-group">
+              <button
+                type="button"
+                className={`security-page__detail-filter-chip${auditTypeFilter === ALL_AUDIT_TYPES ? " is-active" : ""}`}
+                onClick={() => setAuditTypeFilter(ALL_AUDIT_TYPES)}
+              >
+                全部类型
+              </button>
+              {auditFilterOptions.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={`security-page__detail-filter-chip${auditTypeFilter === type ? " is-active" : ""}`}
+                  onClick={() => setAuditTypeFilter(type)}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+            {auditPageWindow ? <p className="security-page__detail-copy">当前页 {auditPageWindow}</p> : null}
+          </div>
+
+          {auditRecordsLoading ? <div className="security-page__detail-note">正在同步审计记录…</div> : null}
+          {auditRecordsError ? <div className="security-page__detail-callout">审计记录同步失败：{auditRecordsError}</div> : null}
+          {!auditRecordsLoading && !auditRecordsError && focusedTaskId && (activeAuditRecordsData?.items.length ?? 0) === 0 ? (
+            <p className="security-page__empty-state">当前 task 还没有可展示的审计记录。</p>
+          ) : null}
+          {!auditRecordsLoading &&
+          !auditRecordsError &&
+          focusedTaskId &&
+          (activeAuditRecordsData?.items.length ?? 0) > 0 &&
+          filteredAuditRecords.length === 0 ? (
+            <p className="security-page__empty-state">当前筛选条件下没有命中的审计记录。</p>
+          ) : null}
+
+          {Object.entries(auditGroups).length > 0 ? (
+            Object.entries(auditGroups).map(([groupKey, records]) => (
+              <div key={groupKey} className="security-page__detail-section">
+                <div className="security-page__detail-toolbar">
+                  <div>
+                    <p className="security-page__detail-label">审计分组</p>
+                    <p className="security-page__detail-copy">
+                      {groupKey} · {records.length} 条
+                    </p>
+                  </div>
+                </div>
+                <div className="security-page__detail-list">
+                  {records.map((record) => (
+                    <article key={record.audit_id} className="security-page__detail-list-item">
+                      <p className="security-page__detail-label">
+                        {formatDateTime(record.created_at)} · {record.action}
+                      </p>
+                      <p className="security-page__detail-value security-page__detail-value--mono">{record.target}</p>
+                      <p className="security-page__detail-copy">{record.summary}</p>
+                      <p className="security-page__detail-copy">
+                        result：{record.result} · audit_id：{record.audit_id}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : null}
+
+          {activeAuditRecordsData ? (
+            <div className="security-page__detail-pagination">
+              <p className="security-page__detail-copy">
+                {auditTypeFilter === ALL_AUDIT_TYPES
+                  ? `当前页共 ${activeAuditRecordsData.items.length} 条审计记录。`
+                  : `筛选后命中 ${filteredAuditRecords.length} / 当前页 ${activeAuditRecordsData.items.length} 条。`}
+              </p>
+              <div className="security-page__detail-pagination-actions">
+                <Button
+                  variant="soft"
+                  color="gray"
+                  disabled={auditRecordsLoading || activeAuditRecordsData.page.offset <= 0}
+                  onClick={() => setAuditOffset((current) => Math.max(0, current - auditPageStep))}
+                >
+                  上一页
+                </Button>
+                <Button
+                  variant="soft"
+                  color="gray"
+                  disabled={auditRecordsLoading || !activeAuditRecordsData.page.has_more}
+                  onClick={() => setAuditOffset((current) => current + auditPageStep)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {restorePointsData?.items.length ? (
+            <div className="security-page__detail-callout">
+              当前任务可见恢复点 {restorePointsData.items.length} 条；最近一条为 {restorePointsData.items[0].recovery_point_id}。
+            </div>
+          ) : null}
+        </div>
+
         {moduleData.rpcContext.warnings.length ? (
           <div className="security-page__detail-callout">warnings：{moduleData.rpcContext.warnings.join("；")}</div>
         ) : null}
@@ -1321,6 +2215,9 @@ export function SecurityApp() {
         </div>
 
         <div className="security-page__approval-actions">
+          <Button color="gray" variant="soft" onClick={() => openTaskDetail(approval.task_id)}>
+            查看关联任务
+          </Button>
           <Button
             color="gray"
             variant="soft"

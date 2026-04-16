@@ -25,10 +25,16 @@ import type {
   AgentTaskInspectorRunResult,
   AgentSecurityPendingListParams,
   AgentSecurityPendingListResult,
+  AgentSecurityRestoreApplyParams,
+  AgentSecurityRestoreApplyResult,
+  AgentSecurityRestorePointsListParams,
+  AgentSecurityRestorePointsListResult,
   AgentSecurityRespondParams,
   AgentSecurityRespondResult,
   AgentSecuritySummaryGetParams,
   AgentSecuritySummaryGetResult,
+  AgentSecurityAuditListParams,
+  AgentSecurityAuditListResult,
   AgentMirrorOverviewGetParams,
   AgentMirrorOverviewGetResult,
   AgentTaskConfirmParams,
@@ -49,12 +55,12 @@ export function submitInput(params: AgentInputSubmitParams) {
   return rpcClient.request<AgentInputSubmitResult>(RPC_METHODS.AGENT_INPUT_SUBMIT, params);
 }
 
-// startTask 处理当前模块的相关逻辑。
+// startTask creates a formal task from a confirmed desktop input payload.
 export function startTask(params: AgentTaskStartParams) {
   return rpcClient.request<AgentTaskStartResult>(RPC_METHODS.AGENT_TASK_START, params);
 }
 
-// confirmTask 处理当前模块的相关逻辑。
+// confirmTask sends the user-reviewed intent back into the task pipeline.
 export function confirmTask(params: AgentTaskConfirmParams) {
   return rpcClient.request<AgentTaskConfirmResult>(RPC_METHODS.AGENT_TASK_CONFIRM, params);
 }
@@ -67,12 +73,12 @@ export function submitRecommendationFeedback(params: AgentRecommendationFeedback
   return rpcClient.request<AgentRecommendationFeedbackSubmitResult>(RPC_METHODS.AGENT_RECOMMENDATION_FEEDBACK_SUBMIT, params);
 }
 
-// listTasks 处理当前模块的相关逻辑。
+// listTasks reads the task-centric dashboard list view from the RPC boundary.
 export function listTasks(params: AgentTaskListParams) {
   return rpcClient.request<AgentTaskListResult>(RPC_METHODS.AGENT_TASK_LIST, params);
 }
 
-// getTaskDetail 处理当前模块的相关逻辑。
+// getTaskDetail loads the task detail view without exposing run-centric internals.
 export function getTaskDetail(params: AgentTaskDetailGetParams) {
   return rpcClient.request<AgentTaskDetailGetResult>(RPC_METHODS.AGENT_TASK_DETAIL_GET, params);
 }
@@ -121,6 +127,22 @@ export function listSecurityPendingDetailed(params: AgentSecurityPendingListPara
   return rpcClient.requestDetailed<AgentSecurityPendingListResult>(RPC_METHODS.AGENT_SECURITY_PENDING_LIST, params);
 }
 
+export function listSecurityRestorePoints(params: AgentSecurityRestorePointsListParams) {
+  return rpcClient.request<AgentSecurityRestorePointsListResult>(RPC_METHODS.AGENT_SECURITY_RESTORE_POINTS_LIST, params);
+}
+
+export function listSecurityRestorePointsDetailed(params: AgentSecurityRestorePointsListParams): Promise<JsonRpcResponsePayload<AgentSecurityRestorePointsListResult>> {
+  return rpcClient.requestDetailed<AgentSecurityRestorePointsListResult>(RPC_METHODS.AGENT_SECURITY_RESTORE_POINTS_LIST, params);
+}
+
+export function applySecurityRestore(params: AgentSecurityRestoreApplyParams) {
+  return rpcClient.request<AgentSecurityRestoreApplyResult>(RPC_METHODS.AGENT_SECURITY_RESTORE_APPLY, params);
+}
+
+export function applySecurityRestoreDetailed(params: AgentSecurityRestoreApplyParams): Promise<JsonRpcResponsePayload<AgentSecurityRestoreApplyResult>> {
+  return rpcClient.requestDetailed<AgentSecurityRestoreApplyResult>(RPC_METHODS.AGENT_SECURITY_RESTORE_APPLY, params);
+}
+
 export function respondSecurity(params: AgentSecurityRespondParams) {
   return rpcClient.request<AgentSecurityRespondResult>(RPC_METHODS.AGENT_SECURITY_RESPOND, params);
 }
@@ -129,8 +151,20 @@ export function respondSecurityDetailed(params: AgentSecurityRespondParams): Pro
   return rpcClient.requestDetailed<AgentSecurityRespondResult>(RPC_METHODS.AGENT_SECURITY_RESPOND, params);
 }
 
+export function listSecurityAudit(params: AgentSecurityAuditListParams) {
+  return rpcClient.request<AgentSecurityAuditListResult>(RPC_METHODS.AGENT_SECURITY_AUDIT_LIST, params);
+}
+
+export function listSecurityAuditDetailed(params: AgentSecurityAuditListParams): Promise<JsonRpcResponsePayload<AgentSecurityAuditListResult>> {
+  return rpcClient.requestDetailed<AgentSecurityAuditListResult>(RPC_METHODS.AGENT_SECURITY_AUDIT_LIST, params);
+}
+
 export function getSettings(params: AgentSettingsGetParams) {
   return rpcClient.request<AgentSettingsGetResult>(RPC_METHODS.AGENT_SETTINGS_GET, params);
+}
+
+export function getSettingsDetailed(params: AgentSettingsGetParams): Promise<JsonRpcResponsePayload<AgentSettingsGetResult>> {
+  return rpcClient.requestDetailed<AgentSettingsGetResult>(RPC_METHODS.AGENT_SETTINGS_GET, params);
 }
 
 export function updateSettings(params: AgentSettingsUpdateParams) {
