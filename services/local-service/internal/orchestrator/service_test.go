@@ -576,16 +576,49 @@ func TestTaskInspectorRunAggregatesRuntimeState(t *testing.T) {
 	if summary["parsed_files"] != 1 {
 		t.Fatalf("expected parsed_files to reflect workspace scan, got %+v", summary)
 	}
-	if summary["identified_items"] == nil || summary["identified_items"].(int) < 3 {
-		t.Fatalf("expected identified_items to include file and notepad items, got %+v", summary)
+	if summary["identified_items"] != 1 {
+		t.Fatalf("expected identified_items to reflect source-backed open notes, got %+v", summary)
 	}
-	if summary["due_today"] != 1 {
-		t.Fatalf("expected due_today to reflect runtime notepad state, got %+v", summary)
+	if summary["due_today"] != 0 {
+		t.Fatalf("expected source-backed notes to replace runtime due buckets after scan, got %+v", summary)
 	}
 
 	suggestions, ok := result["suggestions"].([]string)
 	if !ok || len(suggestions) == 0 {
 		t.Fatalf("expected runtime suggestions, got %+v", result["suggestions"])
+	}
+
+	items, total := service.runEngine.NotepadItems("", 10, 0)
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("expected inspector run to sync parsed notes into runtime, total=%d len=%d", total, len(items))
+	}
+	if items[0]["item_id"] == "todo_today" && items[1]["item_id"] == "todo_today" {
+		t.Fatalf("expected source-backed notes to replace prior runtime sample, got %+v", items)
+	}
+}
+
+func TestTaskInspectorRunClearsStaleSourceBackedNotesWhenFilesEmpty(t *testing.T) {
+	service, workspaceRoot := newTestServiceWithExecution(t, "inspector clear")
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_stale_source",
+		"title":   "stale source note",
+		"bucket":  "upcoming",
+		"status":  "normal",
+		"type":    "one_time",
+	}})
+	todosDir := filepath.Join(workspaceRoot, "todos")
+	if err := os.MkdirAll(todosDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(todosDir, "empty.md"), []byte("# no checklist items here\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	if _, err := service.TaskInspectorRun(map[string]any{"target_sources": []any{"workspace/todos"}}); err != nil {
+		t.Fatalf("TaskInspectorRun returned error: %v", err)
+	}
+	items, total := service.runEngine.NotepadItems("", 10, 0)
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("expected source-backed sync to clear stale runtime notes when source is empty, total=%d len=%d items=%+v", total, len(items), items)
 	}
 }
 

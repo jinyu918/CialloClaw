@@ -605,6 +605,14 @@ flowchart TB
 - 前端工作台负责呈现事项桶与转任务入口；
 - 后端巡检服务、规则引擎和 `agent.notepad.convert_to_task` 负责正式升级。
 
+当前 owner-5 底座约束：
+
+- `notes` 详情补强优先复用现有 `TodoItem / RecurringRule` 数据来源，不新增独立底座对象名；
+- 详情补强字段（如 `note_text`、`prerequisite`、`planned_at`、`ended_at`、`related_resources`）先在后端运行态与后续存储扩展层准备，不直接绕过协议暴露；
+- 重复事项补强字段（如 `repeat_rule_text`、`next_occurrence_at`、`recent_instance_status`、`effective_scope`、`recurring_enabled`）属于规则引擎与巡检底座职责；
+- complete / cancel / restore / toggle-recurring / delete 等事项动作，先由 owner-5 提供真实状态变更底座，再由 4 号冻结正式 RPC 面；
+- “打开相关资料”先由 owner-5 提供资源归一化与目标类型判断底座，是否进入稳定 open RPC 由 4 号统一收口。
+
 ### 3.7.4 镜子记忆与长期协作域
 
 镜子不是聊天记录页，而是长期协作的认知层，用于沉淀短期记忆、长期记忆和镜子总结。该功能域与运行态状态机严格分层，长期记忆支持本地 RAG 检索，但写入与检索都必须通过 Memory 内核统一接入。
