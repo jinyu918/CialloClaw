@@ -95,12 +95,16 @@ type TodoItemRecord struct {
 	Status               string
 	SourcePath           string
 	SourceLine           int
+	SourceBucket         string
 	DueAt                string
 	TagsJSON             string
 	AgentSuggestion      string
 	NoteText             string
 	Prerequisite         string
 	PlannedAt            string
+	PreviousBucket       string
+	PreviousDueAt        string
+	PreviousStatus       string
 	EndedAt              string
 	RelatedResourcesJSON string
 	LinkedTaskID         string

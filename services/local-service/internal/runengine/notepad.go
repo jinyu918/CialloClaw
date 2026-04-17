@@ -718,6 +718,18 @@ func restoreNotepadItemsFromStore(items []storage.TodoItemRecord, rules []storag
 			"created_at":       record.CreatedAt,
 			"updated_at":       record.UpdatedAt,
 		}
+		if record.SourceBucket != "" {
+			item["source_bucket"] = record.SourceBucket
+		}
+		if record.PreviousBucket != "" {
+			item["previous_bucket"] = record.PreviousBucket
+		}
+		if record.PreviousDueAt != "" {
+			item["previous_due_at"] = record.PreviousDueAt
+		}
+		if record.PreviousStatus != "" {
+			item["previous_status"] = record.PreviousStatus
+		}
 		if record.LinkedTaskID != "" {
 			item["linked_task_id"] = record.LinkedTaskID
 		}
@@ -769,12 +781,16 @@ func todoItemRecordFromMap(item map[string]any, now time.Time) (storage.TodoItem
 		Status:               stringValue(item, "status", ""),
 		SourcePath:           stringValue(item, "source_path", ""),
 		SourceLine:           itemIntValue(item, "source_line", 0),
+		SourceBucket:         stringValue(item, "source_bucket", ""),
 		DueAt:                stringValue(item, "due_at", ""),
 		TagsJSON:             tagsJSON,
 		AgentSuggestion:      stringValue(item, "agent_suggestion", ""),
 		NoteText:             stringValue(item, "note_text", ""),
 		Prerequisite:         stringValue(item, "prerequisite", ""),
 		PlannedAt:            stringValue(item, "planned_at", ""),
+		PreviousBucket:       stringValue(item, "previous_bucket", ""),
+		PreviousDueAt:        stringValue(item, "previous_due_at", ""),
+		PreviousStatus:       stringValue(item, "previous_status", ""),
 		EndedAt:              stringValue(item, "ended_at", ""),
 		RelatedResourcesJSON: relatedResourcesJSON,
 		LinkedTaskID:         stringValue(item, "linked_task_id", ""),
