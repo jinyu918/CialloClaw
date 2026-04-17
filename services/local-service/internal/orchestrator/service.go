@@ -27,6 +27,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/storage"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/taskinspector"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/traceeval"
 )
 
 // ErrTaskNotFound 定义当前模块的基础变量。
@@ -58,6 +59,7 @@ type Service struct {
 	plugin         *plugin.Service
 	audit          *audit.Service
 	recommendation *recommendation.Service
+	traceEval      *traceeval.Service
 	executor       *execution.Service
 	inspector      *taskinspector.Service
 	storage        *storage.Service
@@ -89,6 +91,7 @@ func NewService(
 		plugin:         plugin,
 		audit:          audit.NewService(),
 		recommendation: recommendation.NewService(),
+		traceEval:      traceeval.NewService(nil, nil),
 		inspector:      taskinspector.NewService(nil),
 	}
 }
@@ -119,6 +122,14 @@ func (s *Service) WithTaskInspector(inspectorService *taskinspector.Service) *Se
 func (s *Service) WithStorage(storageService *storage.Service) *Service {
 	if storageService != nil {
 		s.storage = storageService
+	}
+	return s
+}
+
+// WithTraceEval attaches the owner-5 trace/eval recording service.
+func (s *Service) WithTraceEval(traceEvalService *traceeval.Service) *Service {
+	if traceEvalService != nil {
+		s.traceEval = traceEvalService
 	}
 	return s
 }
@@ -741,6 +752,21 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	if !isSupportedTaskControlAction(action) {
 		return nil, fmt.Errorf("unsupported task control action: %s", action)
 	}
+	wasHumanLoop := false
+	var reviewDecision map[string]any
+	arguments := mapValue(params, "arguments")
+	if action == "resume" {
+		if existingTask, ok := s.runEngine.GetTask(taskID); ok {
+			wasHumanLoop = taskIsBlockedHumanLoop(existingTask)
+		}
+		if wasHumanLoop {
+			decision, decisionErr := humanReviewDecisionFromParams(arguments)
+			if decisionErr != nil {
+				return nil, decisionErr
+			}
+			reviewDecision = decision
+		}
+	}
 	bubble := s.delivery.BuildBubbleMessage(taskID, "status", controlBubbleText(action), currentTimeFromTask(s.runEngine, taskID))
 	updatedTask, err := s.runEngine.ControlTask(taskID, action, bubble)
 	if err != nil {
@@ -753,6 +779,14 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 			return nil, ErrTaskAlreadyFinished
 		default:
 			return nil, err
+		}
+	}
+	if action == "resume" && wasHumanLoop {
+		if traceResumedTask, traceBubble, _, resumed, resumeErr := s.resumeHumanLoopTask(updatedTask, reviewDecision); resumeErr != nil {
+			return nil, resumeErr
+		} else if resumed {
+			updatedTask = traceResumedTask
+			bubble = traceBubble
 		}
 	}
 	if taskIsTerminal(updatedTask.Status) {
@@ -4043,6 +4077,18 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 		artifacts := delivery.EnsureArtifactIdentifiers(processingTask.TaskID, s.delivery.BuildArtifact(processingTask.TaskID, resultTitle, deliveryResult))
 		resultBubble := s.delivery.BuildBubbleMessage(processingTask.TaskID, "result", resultBubbleText, processingTask.UpdatedAt.Format(dateTimeLayout))
 		processingTask = s.appendAuditData(processingTask, compactAuditRecords(s.audit.BuildDeliveryAudit(processingTask.TaskID, processingTask.RunID, deliveryResult)), nil)
+		traceCapture, traceErr := s.captureExecutionTrace(processingTask, snapshot, taskIntent, execution.Result{
+			Content:        previewTextForDeliveryType(deliveryType),
+			DeliveryResult: deliveryResult,
+			Artifacts:      artifacts,
+		}, nil)
+		if traceErr != nil {
+			failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, execution.Result{}, traceErr)
+			return failedTask, failureBubble, nil, nil, nil
+		}
+		if escalatedTask, escalatedBubble, ok := s.maybeEscalateHumanLoop(processingTask, traceCapture); ok {
+			return escalatedTask, escalatedBubble, nil, nil, nil
+		}
 		updatedTask, ok := s.runEngine.CompleteTask(processingTask.TaskID, deliveryResult, resultBubble, artifacts)
 		if !ok {
 			return runengine.TaskRecord{}, nil, nil, nil, ErrTaskNotFound
@@ -4071,6 +4117,14 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 	}
 	executionAuditRecords, executionTokenUsage := s.buildExecutionAudit(processingTask, executionResult.ToolCalls, auditDeliveryResult)
 	processingTask = s.appendAuditData(processingTask, executionAuditRecords, executionTokenUsage)
+	traceCapture, traceErr := s.captureExecutionTrace(processingTask, snapshot, taskIntent, executionResult, err)
+	if traceErr != nil {
+		failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, executionResult, traceErr)
+		return failedTask, failureBubble, nil, nil, nil
+	}
+	if escalatedTask, escalatedBubble, ok := s.maybeEscalateHumanLoop(processingTask, traceCapture, executionResult); ok {
+		return escalatedTask, escalatedBubble, nil, nil, nil
+	}
 	if err != nil {
 		failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, executionResult, err)
 		return failedTask, failureBubble, nil, nil, nil
@@ -4089,6 +4143,174 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 	}
 	s.attachPostDeliveryHandoffs(updatedTask.TaskID, updatedTask.RunID, snapshot, taskIntent, executionResult.DeliveryResult, executionArtifacts)
 	return updatedTask, resultBubble, executionResult.DeliveryResult, executionArtifacts, nil
+}
+
+func (s *Service) captureExecutionTrace(task runengine.TaskRecord, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any, result execution.Result, executionErr error) (traceeval.CaptureResult, error) {
+	if s.traceEval == nil {
+		return traceeval.CaptureResult{}, nil
+	}
+	capture, err := s.traceEval.Capture(traceeval.CaptureInput{
+		TaskID:          task.TaskID,
+		RunID:           task.RunID,
+		IntentName:      stringValue(taskIntent, "name", ""),
+		Snapshot:        snapshot,
+		OutputText:      result.Content,
+		DeliveryResult:  cloneMap(result.DeliveryResult),
+		Artifacts:       cloneMapSlice(result.Artifacts),
+		ModelInvocation: cloneMap(result.ModelInvocation),
+		ToolCalls:       append([]tools.ToolCallRecord(nil), result.ToolCalls...),
+		TokenUsage:      cloneMap(task.TokenUsage),
+		DurationMS:      result.DurationMS,
+		ExecutionError:  executionErr,
+	})
+	if err != nil {
+		return traceeval.CaptureResult{}, err
+	}
+	if err := s.traceEval.Record(context.Background(), capture); err != nil {
+		return traceeval.CaptureResult{}, err
+	}
+	return capture, nil
+}
+
+func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord, reviewDecision map[string]any) (runengine.TaskRecord, map[string]any, map[string]any, bool, error) {
+	if !resumedFromHumanLoop(task) {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	pendingExecution, ok := s.runEngine.PendingExecutionPlan(task.TaskID)
+	if !ok {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	escalation := mapValue(pendingExecution, "escalation")
+	if len(escalation) == 0 {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	decision := strings.TrimSpace(stringValue(reviewDecision, "decision", ""))
+	if decision == "" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("review.decision is required for human review resume")
+	}
+	if decision != "approve" && decision != "replan" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("unsupported review decision: %s", decision)
+	}
+	escalation["review_result"] = decision
+	escalation["reviewed_at"] = currentTimeFromTask(s.runEngine, task.TaskID)
+	if reviewerID := strings.TrimSpace(stringValue(reviewDecision, "reviewer_id", "")); reviewerID != "" {
+		escalation["reviewer_id"] = reviewerID
+	}
+	if notes := strings.TrimSpace(stringValue(reviewDecision, "notes", "")); notes != "" {
+		escalation["review_notes"] = notes
+	}
+	if correctedIntent := mapValue(reviewDecision, "corrected_intent"); len(correctedIntent) > 0 {
+		escalation["corrected_intent"] = cloneMap(correctedIntent)
+	}
+	suggestedAction := firstNonEmptyString(stringValue(escalation, "suggested_action", ""), "review_and_replan")
+	if suggestedAction != "review_and_replan" {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	if decision == "replan" {
+		intentValue := cloneMap(task.Intent)
+		if correctedIntent := mapValue(escalation, "corrected_intent"); len(correctedIntent) > 0 {
+			intentValue = correctedIntent
+		}
+		updatedTitle := s.intent.Suggest(snapshotFromTask(task), intentValue, false).TaskTitle
+		replanBubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "人工复核要求重新规划，请确认新的处理意图。", task.UpdatedAt.Format(dateTimeLayout))
+		replannedTask, ok := s.runEngine.ReopenIntentConfirmation(task.TaskID, updatedTitle, intentValue, replanBubble)
+		if !ok {
+			return runengine.TaskRecord{}, nil, nil, false, ErrTaskNotFound
+		}
+		return replannedTask, replanBubble, nil, true, nil
+	}
+	resultBubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "人工复核完成，任务继续执行。", task.UpdatedAt.Format(dateTimeLayout))
+	updatedTask, bubble, deliveryResult, _, err := s.executeTask(task, snapshotFromTask(task), task.Intent)
+	if err != nil {
+		return runengine.TaskRecord{}, nil, nil, false, err
+	}
+	if bubble == nil {
+		bubble = resultBubble
+	}
+	return updatedTask, bubble, deliveryResult, true, nil
+}
+
+func humanReviewDecisionFromParams(arguments map[string]any) (map[string]any, error) {
+	decision := mapValue(arguments, "review")
+	if len(decision) == 0 {
+		decision = mapValue(arguments, "human_review")
+	}
+	if len(decision) == 0 {
+		return nil, fmt.Errorf("review decision is required to resume a human review task")
+	}
+	if strings.TrimSpace(stringValue(decision, "decision", "")) == "" {
+		return nil, fmt.Errorf("review.decision is required to resume a human review task")
+	}
+	decisionValue := strings.TrimSpace(stringValue(decision, "decision", ""))
+	if decisionValue != "approve" && decisionValue != "replan" {
+		return nil, fmt.Errorf("unsupported review decision: %s", decisionValue)
+	}
+	if decisionValue == "replan" {
+		if correctedIntent := mapValue(decision, "corrected_intent"); len(correctedIntent) == 0 {
+			return nil, fmt.Errorf("review.corrected_intent is required when decision is replan")
+		}
+	}
+	return cloneMap(decision), nil
+}
+
+func (s *Service) maybeEscalateHumanLoop(task runengine.TaskRecord, capture traceeval.CaptureResult, executionResult ...execution.Result) (runengine.TaskRecord, map[string]any, bool) {
+	if capture.HumanInLoop == nil {
+		return runengine.TaskRecord{}, nil, false
+	}
+	if len(executionResult) > 0 && executionAttemptHasSideEffects(executionResult[0]) {
+		return runengine.TaskRecord{}, nil, false
+	}
+	bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", capture.HumanInLoop.Summary, task.UpdatedAt.Format(dateTimeLayout))
+	escalation := map[string]any{
+		"escalation_id":    capture.HumanInLoop.EscalationID,
+		"reason":           capture.HumanInLoop.Reason,
+		"review_result":    capture.HumanInLoop.ReviewResult,
+		"status":           capture.HumanInLoop.Status,
+		"summary":          capture.HumanInLoop.Summary,
+		"suggested_action": capture.HumanInLoop.SuggestedAction,
+		"created_at":       capture.HumanInLoop.CreatedAt,
+	}
+	updatedTask, ok := s.runEngine.EscalateHumanLoop(task.TaskID, escalation, bubble)
+	if !ok {
+		return runengine.TaskRecord{}, nil, false
+	}
+	return updatedTask, bubble, true
+}
+
+func resumedFromHumanLoop(task runengine.TaskRecord) bool {
+	if task.Status != "processing" || task.CurrentStep != executionStepName(task.Intent) {
+		return false
+	}
+	return true
+}
+
+func taskIsBlockedHumanLoop(task runengine.TaskRecord) bool {
+	if task.Status != "blocked" || task.CurrentStep != "human_in_loop" {
+		return false
+	}
+	return stringValue(task.PendingExecution, "kind", "") == "human_in_loop"
+}
+
+func executionAttemptHasSideEffects(result execution.Result) bool {
+	if len(result.ToolCalls) == 0 {
+		return false
+	}
+	for _, toolCall := range result.ToolCalls {
+		if !isMutatingToolCall(toolCall.ToolName) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isMutatingToolCall(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "write_file", "exec_command", "page_interact", "transcode_media", "normalize_recording", "extract_frames":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) recordExecutionToolCalls(task runengine.TaskRecord, toolCalls []tools.ToolCallRecord) runengine.TaskRecord {
