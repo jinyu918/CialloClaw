@@ -873,7 +873,7 @@ func TestServiceConfirmTaskRejectsUnknownIntentWithoutCorrection(t *testing.T) {
 	}
 }
 
-func TestServiceConfirmTaskCancelsUnknownIntentWhenRejected(t *testing.T) {
+func TestServiceConfirmTaskKeepsUnknownIntentInConfirmationWhenRejected(t *testing.T) {
 	service := newTestService()
 
 	startResult, err := service.SubmitInput(map[string]any{
@@ -892,15 +892,21 @@ func TestServiceConfirmTaskCancelsUnknownIntentWhenRejected(t *testing.T) {
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	confirmResult, err := service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": false,
+		"confirmed": true,
 	})
 	if err != nil {
 		t.Fatalf("confirm task failed: %v", err)
 	}
 
 	task := confirmResult["task"].(map[string]any)
-	if task["status"] != "cancelled" {
-		t.Fatalf("expected rejected unknown intent task to be cancelled, got %v", task["status"])
+	if task["status"] != "confirming_intent" {
+		t.Fatalf("expected rejected unknown intent task to remain in confirming_intent, got %v", task["status"])
+	}
+	if task["intent"] != nil {
+		intentValue, ok := task["intent"].(map[string]any)
+		if !ok || len(intentValue) != 0 {
+			t.Fatalf("expected rejected unknown intent task to clear its current intent, got %+v", task["intent"])
+		}
 	}
 }
 
@@ -923,7 +929,7 @@ func TestServiceConfirmTaskRewritesPlaceholderTitleAfterCorrection(t *testing.T)
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	confirmResult, err := service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": true,
+		"confirmed": false,
 		"corrected_intent": map[string]any{
 			"name":      "translate",
 			"arguments": map[string]any{"target_language": "en"},
@@ -936,6 +942,48 @@ func TestServiceConfirmTaskRewritesPlaceholderTitleAfterCorrection(t *testing.T)
 	task := confirmResult["task"].(map[string]any)
 	if task["title"] != "翻译：你好" {
 		t.Fatalf("expected corrected intent to rewrite placeholder title, got %v", task["title"])
+	}
+}
+
+func TestServiceConfirmTaskIgnoresCorrectedIntentWhenConfirmedTrue(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "Explained content.")
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_confirm_ignore_correction",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "这里是一段需要解释的内容",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	startTask := startResult["task"].(map[string]any)
+
+	taskID := startTask["task_id"].(string)
+	confirmResult, err := service.ConfirmTask(map[string]any{
+		"task_id":   taskID,
+		"confirmed": true,
+		"corrected_intent": map[string]any{
+			"name": "translate",
+			"arguments": map[string]any{
+				"target_language": "en",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm task failed: %v", err)
+	}
+
+	task := confirmResult["task"].(map[string]any)
+	intentValue, ok := task["intent"].(map[string]any)
+	if !ok || !reflect.DeepEqual(intentValue, startTask["intent"]) {
+		t.Fatalf("expected confirm=true to keep the original task intent, got %+v", task["intent"])
+	}
+	if task["title"] != startTask["title"] {
+		t.Fatalf("expected confirm=true to keep the original title, got %v", task["title"])
 	}
 }
 
@@ -1907,7 +1955,7 @@ func TestServiceConfirmCanEnterWaitingAuth(t *testing.T) {
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	confirmResult, err := service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": true,
+		"confirmed": false,
 		"corrected_intent": map[string]any{
 			"name": "write_file",
 			"arguments": map[string]any{
@@ -1982,7 +2030,7 @@ func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	_, err = service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": true,
+		"confirmed": false,
 		"corrected_intent": map[string]any{
 			"name": "write_file",
 			"arguments": map[string]any{
@@ -2078,7 +2126,7 @@ func TestServiceSecurityRespondRespectsFallbackDelivery(t *testing.T) {
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	_, err = service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": true,
+		"confirmed": false,
 		"corrected_intent": map[string]any{
 			"name": "summarize",
 			"arguments": map[string]any{
@@ -2142,7 +2190,7 @@ func TestServiceSecurityRespondDenyOnceCancelsTask(t *testing.T) {
 	taskID := startResult["task"].(map[string]any)["task_id"].(string)
 	_, err = service.ConfirmTask(map[string]any{
 		"task_id":   taskID,
-		"confirmed": true,
+		"confirmed": false,
 		"corrected_intent": map[string]any{
 			"name": "write_file",
 			"arguments": map[string]any{

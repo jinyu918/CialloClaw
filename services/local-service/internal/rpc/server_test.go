@@ -62,7 +62,7 @@ func TestHandleStreamConnEmitsApprovalNotifications(t *testing.T) {
 		Method:  "agent.task.confirm",
 		Params: mustMarshal(t, map[string]any{
 			"task_id":   taskID,
-			"confirmed": true,
+			"confirmed": false,
 			"corrected_intent": map[string]any{
 				"name": "write_file",
 				"arguments": map[string]any{

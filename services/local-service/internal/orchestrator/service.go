@@ -322,31 +322,28 @@ func (s *Service) ConfirmTask(params map[string]any) (map[string]any, error) {
 	if !ok {
 		return nil, ErrTaskNotFound
 	}
-	if !boolValue(params, "confirmed", false) {
-		bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "已取消本次处理，请重新告诉我你的目标。", task.UpdatedAt.Format(dateTimeLayout))
-		updatedTask, err := s.runEngine.ControlTask(task.TaskID, "cancel", bubble)
+	confirmed := boolValue(params, "confirmed", false)
+	correctedIntent := mapValue(params, "corrected_intent")
+	intentValue := cloneMap(task.Intent)
+	if !confirmed && len(correctedIntent) > 0 {
+		intentValue = correctedIntent
+	}
+	if !confirmed && len(correctedIntent) == 0 {
+		updatedTask, err := s.revertTaskToIntentConfirmation(task)
 		if err != nil {
-			switch {
-			case errors.Is(err, runengine.ErrTaskNotFound):
-				return nil, ErrTaskNotFound
-			case errors.Is(err, runengine.ErrTaskStatusInvalid):
-				return nil, ErrTaskStatusInvalid
-			case errors.Is(err, runengine.ErrTaskAlreadyFinished):
-				return nil, ErrTaskAlreadyFinished
-			default:
-				return nil, err
-			}
+			return nil, err
+		}
+		bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "这不是我该做的处理方式。请重新说明你的目标，或给我一个更准确的处理意图。", updatedTask.UpdatedAt.Format(dateTimeLayout))
+		if presentedTask, ok := s.runEngine.SetPresentation(task.TaskID, bubble, nil, nil); ok {
+			updatedTask = presentedTask
+		} else {
+			return nil, ErrTaskNotFound
 		}
 		return map[string]any{
 			"task":            taskMap(updatedTask),
 			"bubble_message":  bubble,
 			"delivery_result": nil,
 		}, nil
-	}
-
-	intentValue := mapValue(params, "corrected_intent")
-	if len(intentValue) == 0 {
-		intentValue = cloneMap(task.Intent)
 	}
 	if strings.TrimSpace(stringValue(intentValue, "name", "")) == "" {
 		bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "请先明确告诉我你希望执行的处理方式。", task.UpdatedAt.Format(dateTimeLayout))
@@ -402,6 +399,14 @@ func (s *Service) ConfirmTask(params map[string]any) (map[string]any, error) {
 		"bubble_message":  resultBubble,
 		"delivery_result": deliveryResult,
 	}, nil
+}
+
+func (s *Service) revertTaskToIntentConfirmation(task runengine.TaskRecord) (runengine.TaskRecord, error) {
+	updatedTask, ok := s.runEngine.UpdateIntent(task.TaskID, confirmationTitleFromTask(task), nil)
+	if !ok {
+		return runengine.TaskRecord{}, ErrTaskNotFound
+	}
+	return updatedTask, nil
 }
 
 // RecommendationGet 处理当前模块的相关逻辑。
@@ -3294,6 +3299,14 @@ func originalTextFromTaskTitle(title string) string {
 		}
 	}
 	return trimmed
+}
+
+func confirmationTitleFromTask(task runengine.TaskRecord) string {
+	subject := strings.TrimSpace(originalTextFromTaskTitle(task.Title))
+	if subject == "" {
+		subject = "当前任务"
+	}
+	return "确认处理方式：" + subject
 }
 
 // memoryQueryFromSnapshot 处理当前模块的相关逻辑。
