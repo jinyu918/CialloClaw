@@ -41,6 +41,13 @@ func TestInMemoryTraceAndEvalStoresPersistAndList(t *testing.T) {
 	if err != nil || total != 1 || len(evals) != 1 {
 		t.Fatalf("expected one eval snapshot, total=%d len=%d err=%v", total, len(evals), err)
 	}
+	if err := traceStore.DeleteTraceRecord(context.Background(), "trace_001"); err != nil {
+		t.Fatalf("delete trace record failed: %v", err)
+	}
+	traces, total, err = traceStore.ListTraceRecords(context.Background(), "task_001", 10, 0)
+	if err != nil || total != 0 || len(traces) != 0 {
+		t.Fatalf("expected deleted in-memory trace record to disappear, total=%d len=%d err=%v", total, len(traces), err)
+	}
 }
 
 func TestSQLiteTraceAndEvalStoresPersistAndList(t *testing.T) {
@@ -86,6 +93,13 @@ func TestSQLiteTraceAndEvalStoresPersistAndList(t *testing.T) {
 	}
 	if traces[0].ReviewResult != "human_review_required" {
 		t.Fatalf("expected review result to round-trip, got %+v", traces[0])
+	}
+	if err := traceStore.DeleteTraceRecord(context.Background(), "trace_sql_001"); err != nil {
+		t.Fatalf("delete sqlite trace failed: %v", err)
+	}
+	traces, total, err = traceStore.ListTraceRecords(context.Background(), "task_sql_001", 10, 0)
+	if err != nil || total != 0 || len(traces) != 0 {
+		t.Fatalf("expected deleted sqlite trace record to disappear, total=%d len=%d err=%v", total, len(traces), err)
 	}
 	evals, total, err := evalStore.ListEvalSnapshots(context.Background(), "task_sql_001", 10, 0)
 	if err != nil || total != 1 || len(evals) != 1 {

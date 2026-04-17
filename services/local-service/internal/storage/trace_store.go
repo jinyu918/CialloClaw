@@ -26,6 +26,20 @@ func (s *inMemoryTraceStore) WriteTraceRecord(_ context.Context, record TraceRec
 	return nil
 }
 
+func (s *inMemoryTraceStore) DeleteTraceRecord(_ context.Context, traceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.records[:0]
+	for _, record := range s.records {
+		if record.TraceID == traceID {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	s.records = filtered
+	return nil
+}
+
 func (s *inMemoryTraceStore) ListTraceRecords(_ context.Context, taskID string, limit, offset int) ([]TraceRecord, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,6 +114,14 @@ func (s *SQLiteTraceStore) WriteTraceRecord(ctx context.Context, record TraceRec
 	`, record.TraceID, record.TaskID, nullableString(record.RunID), record.LoopRound, record.LLMInputSummary, record.LLMOutputSummary, record.LatencyMS, record.Cost, nullableString(record.RuleHitsJSON), nullableString(record.ReviewResult), record.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("write trace record: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteTraceStore) DeleteTraceRecord(ctx context.Context, traceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM trace_records WHERE trace_id = ?`, traceID)
+	if err != nil {
+		return fmt.Errorf("delete trace record: %w", err)
 	}
 	return nil
 }

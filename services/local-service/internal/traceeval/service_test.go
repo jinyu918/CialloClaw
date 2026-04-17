@@ -151,6 +151,14 @@ func TestTraceEvalHelpersCoverErrorAndFilePriorityBranches(t *testing.T) {
 	if buildOutputSummary(input) != "last tool: page_read" {
 		t.Fatalf("expected last tool summary fallback, got %q", buildOutputSummary(input))
 	}
+	outputSummary := buildOutputSummary(CaptureInput{OutputText: "secret generated output"})
+	if strings.Contains(outputSummary, "secret generated output") {
+		t.Fatalf("expected hashed output summary instead of raw output text, got %q", outputSummary)
+	}
+	errorSummary := buildOutputSummary(CaptureInput{ExecutionError: errors.New("sensitive failure payload")})
+	if strings.Contains(errorSummary, "sensitive failure payload") {
+		t.Fatalf("expected hashed output summary instead of raw error text, got %q", errorSummary)
+	}
 	metrics := map[string]any{}
 	mergeTokenMetrics(metrics, nil, input.ModelInvocation)
 	if metrics["total_tokens"] != 16 {
@@ -190,8 +198,22 @@ func TestServiceRecordReturnsEvalWriteErrorAfterTraceWrite(t *testing.T) {
 		t.Fatalf("expected eval write failure to surface, got %v", err)
 	}
 	items, total, err := traceStore.ListTraceRecords(context.Background(), "task_trace_eval_error", 10, 0)
-	if err != nil || total != 1 || len(items) != 1 {
-		t.Fatalf("expected trace record to be written before eval failure, total=%d len=%d err=%v", total, len(items), err)
+	if err != nil || total != 0 || len(items) != 0 {
+		t.Fatalf("expected trace record rollback after eval failure, total=%d len=%d err=%v", total, len(items), err)
+	}
+}
+
+func TestServiceRecordReturnsRollbackErrorWhenTraceCleanupFails(t *testing.T) {
+	service := NewService(failingTraceStore{deleteErr: fmt.Errorf("trace rollback failed")}, failingEvalStore{err: fmt.Errorf("eval write failed")})
+	service.now = func() time.Time { return time.Date(2026, 4, 17, 12, 30, 0, 0, time.UTC) }
+
+	result, err := service.Capture(CaptureInput{TaskID: "task_trace_rollback_error", RunID: "run_trace_rollback_error", IntentName: "summarize"})
+	if err != nil {
+		t.Fatalf("capture failed: %v", err)
+	}
+	err = service.Record(context.Background(), result)
+	if err == nil || !strings.Contains(err.Error(), "trace rollback failed") {
+		t.Fatalf("expected rollback failure to surface, got %v", err)
 	}
 }
 
@@ -205,6 +227,23 @@ func (s failingEvalStore) WriteEvalSnapshot(context.Context, storage.EvalSnapsho
 
 func (s failingEvalStore) ListEvalSnapshots(context.Context, string, int, int) ([]storage.EvalSnapshotRecord, int, error) {
 	return nil, 0, s.err
+}
+
+type failingTraceStore struct {
+	writeErr  error
+	deleteErr error
+}
+
+func (s failingTraceStore) WriteTraceRecord(context.Context, storage.TraceRecord) error {
+	return s.writeErr
+}
+
+func (s failingTraceStore) DeleteTraceRecord(context.Context, string) error {
+	return s.deleteErr
+}
+
+func (s failingTraceStore) ListTraceRecords(context.Context, string, int, int) ([]storage.TraceRecord, int, error) {
+	return nil, 0, nil
 }
 
 func intPtr(value int) *int {

@@ -164,6 +164,7 @@ type EvalSnapshotRecord struct {
 // TraceStore defines persistence for trace records.
 type TraceStore interface {
 	WriteTraceRecord(ctx context.Context, record TraceRecord) error
+	DeleteTraceRecord(ctx context.Context, traceID string) error
 	ListTraceRecords(ctx context.Context, taskID string, limit, offset int) ([]TraceRecord, int, error)
 }
 

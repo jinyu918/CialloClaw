@@ -173,6 +173,11 @@ func (s *Service) Record(ctx context.Context, result CaptureResult) error {
 	}
 	if s.evalStore != nil {
 		if err := s.evalStore.WriteEvalSnapshot(ctx, result.EvalSnapshot); err != nil {
+			if s.traceStore != nil {
+				if rollbackErr := s.traceStore.DeleteTraceRecord(ctx, result.TraceRecord.TraceID); rollbackErr != nil {
+					return fmt.Errorf("rollback trace record after eval write failure: %w", rollbackErr)
+				}
+			}
 			return err
 		}
 	}
@@ -321,7 +326,7 @@ func buildInputSummary(input CaptureInput) string {
 
 func buildOutputSummary(input CaptureInput) string {
 	if strings.TrimSpace(input.OutputText) != "" {
-		return truncateText(input.OutputText, 96)
+		return hashTextSummary("output_text", input.OutputText)
 	}
 	if len(input.ToolCalls) > 0 {
 		lastToolCall := input.ToolCalls[len(input.ToolCalls)-1]
@@ -330,7 +335,7 @@ func buildOutputSummary(input CaptureInput) string {
 		}
 	}
 	if input.ExecutionError != nil {
-		return truncateText(input.ExecutionError.Error(), 96)
+		return hashTextSummary("execution_error", input.ExecutionError.Error())
 	}
 	return "trace_output"
 }
