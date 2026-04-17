@@ -119,3 +119,15 @@ func TestSignalFingerprintHashesRawTextInsteadOfEmbeddingIt(t *testing.T) {
 		t.Fatal("expected bucket helpers to classify active signals")
 	}
 }
+
+func TestHasCopyBehaviorRequiresActualCopySignal(t *testing.T) {
+	if hasCopyBehavior(SignalSnapshot{ClipboardText: "stale clipboard"}) {
+		t.Fatal("expected stale clipboard text alone not to count as copy behavior")
+	}
+	if !hasCopyBehavior(SignalSnapshot{LastAction: "copy"}) {
+		t.Fatal("expected explicit copy action to count as copy behavior")
+	}
+	if !hasCopyBehavior(SignalSnapshot{CopyCount: 1}) {
+		t.Fatal("expected copy count to count as copy behavior")
+	}
+}

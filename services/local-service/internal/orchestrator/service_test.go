@@ -1483,6 +1483,18 @@ func TestMemoryQueryFromSnapshotKeepsExplicitTaskInputAheadOfClipboard(t *testin
 	}
 }
 
+func TestMemoryQueryFromSnapshotPrefersFilesBeforePerceptionText(t *testing.T) {
+	snapshot := contextsvc.TaskContextSnapshot{
+		Files:         []string{"workspace/specs/report.md"},
+		VisibleText:   "dashboard summary that should not replace file input",
+		ScreenSummary: "screen warning",
+		PageTitle:     "Release Dashboard",
+	}
+	if memoryQueryFromSnapshot(snapshot) != "workspace/specs/report.md" {
+		t.Fatalf("expected file input to outrank page/screen context, got %q", memoryQueryFromSnapshot(snapshot))
+	}
+}
+
 func TestServiceRecommendationFeedbackSubmitAppliesCooldown(t *testing.T) {
 	service := newTestService()
 	params := map[string]any{
