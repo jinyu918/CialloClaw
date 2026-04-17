@@ -1445,6 +1445,7 @@ func TestServiceRecommendationGetUsesRuntimeTaskState(t *testing.T) {
 
 func TestServiceRecommendationGetUsesPerceptionSignals(t *testing.T) {
 	service := newTestService()
+	service.runEngine.ReplaceNotepadItems(nil)
 	result, err := service.RecommendationGet(map[string]any{
 		"source": "floating_ball",
 		"scene":  "hover",
@@ -1468,6 +1469,17 @@ func TestServiceRecommendationGetUsesPerceptionSignals(t *testing.T) {
 	}
 	if items[0]["intent"].(map[string]any)["name"] != "translate" {
 		t.Fatalf("expected copy behavior to prioritize translate, got %+v", items[0])
+	}
+}
+
+func TestMemoryQueryFromSnapshotKeepsExplicitTaskInputAheadOfClipboard(t *testing.T) {
+	snapshot := contextsvc.TaskContextSnapshot{
+		Text:          "explicit task input",
+		ClipboardText: "stale copied content",
+		VisibleText:   "visible page context",
+	}
+	if memoryQueryFromSnapshot(snapshot) != "explicit task input" {
+		t.Fatalf("expected explicit task text to outrank clipboard, got %q", memoryQueryFromSnapshot(snapshot))
 	}
 }
 

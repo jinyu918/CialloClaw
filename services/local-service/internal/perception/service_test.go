@@ -1,6 +1,7 @@
 package perception
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/runengine"
@@ -77,6 +78,13 @@ func TestBehaviorSignalsAndOpportunitiesReflectPerceptionContext(t *testing.T) {
 	if SignalFingerprint(snapshot) == SignalFingerprint(SignalSnapshot{}) {
 		t.Fatal("expected fingerprint to change with richer signals")
 	}
+	shiftedCounters := snapshot
+	shiftedCounters.DwellMillis += 2000
+	shiftedCounters.CopyCount += 1
+	shiftedCounters.WindowSwitchCount += 1
+	if SignalFingerprint(snapshot) != SignalFingerprint(shiftedCounters) {
+		t.Fatal("expected fingerprint to stay stable when only volatile counters drift within active buckets")
+	}
 }
 
 func TestIdentifyOpportunitiesKeepsRuntimeContextDedupeStable(t *testing.T) {
@@ -92,5 +100,22 @@ func TestIdentifyOpportunitiesKeepsRuntimeContextDedupeStable(t *testing.T) {
 			t.Fatalf("expected opportunities to be deduped, got %+v", opportunities)
 		}
 		seen[key] = struct{}{}
+	}
+}
+
+func TestSignalFingerprintHashesRawTextInsteadOfEmbeddingIt(t *testing.T) {
+	snapshot := SignalSnapshot{
+		Source:        "floating_ball",
+		Scene:         "hover",
+		PageTitle:     "Sensitive Page",
+		ClipboardText: "secret copied token",
+		VisibleText:   "error details",
+	}
+	fingerprint := SignalFingerprint(snapshot)
+	if strings.Contains(fingerprint, "secret copied token") || strings.Contains(fingerprint, "error details") {
+		t.Fatalf("expected signal fingerprint to hash raw text instead of storing it, got %s", fingerprint)
+	}
+	if dwellBucket(13000) != "engaged" || activityBucket(1) != "active" || switchBucket(3) != "burst" {
+		t.Fatal("expected bucket helpers to classify active signals")
 	}
 }

@@ -201,7 +201,11 @@ func TestRecommendationFingerprintIncludesPerceptionSignals(t *testing.T) {
 	changed := base
 	changed.Signals.CopyCount = 2
 
+	if recommendationFingerprint(base) != recommendationFingerprint(changed) {
+		t.Fatal("expected volatile signal counters to stay in the same cooldown bucket")
+	}
+	changed.Signals.Scene = "selected_text"
 	if recommendationFingerprint(base) == recommendationFingerprint(changed) {
-		t.Fatal("expected perception signals to affect fingerprint")
+		t.Fatal("expected meaningful perception context changes to affect fingerprint")
 	}
 }

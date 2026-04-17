@@ -1,6 +1,7 @@
 package perception
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -84,24 +85,27 @@ func CaptureContextSignals(source, scene string, context map[string]any) SignalS
 // SignalFingerprint returns a stable string representation for perception
 // cooldown and dedupe logic.
 func SignalFingerprint(snapshot SignalSnapshot) string {
-	parts := []string{
-		strings.TrimSpace(snapshot.Source),
-		strings.TrimSpace(snapshot.Scene),
+	textHash := sha256.Sum256([]byte(strings.Join([]string{
 		strings.TrimSpace(snapshot.PageTitle),
 		strings.TrimSpace(snapshot.PageURL),
-		strings.TrimSpace(snapshot.AppName),
 		strings.TrimSpace(snapshot.WindowTitle),
 		strings.TrimSpace(snapshot.SelectionText),
 		strings.TrimSpace(snapshot.ClipboardText),
 		strings.TrimSpace(snapshot.VisibleText),
 		strings.TrimSpace(snapshot.ScreenSummary),
 		strings.TrimSpace(snapshot.HoverTarget),
-		strings.TrimSpace(snapshot.LastAction),
 		strings.TrimSpace(snapshot.ErrorText),
-		fmt.Sprintf("dwell=%d", snapshot.DwellMillis),
-		fmt.Sprintf("copy=%d", snapshot.CopyCount),
-		fmt.Sprintf("window=%d", snapshot.WindowSwitchCount),
-		fmt.Sprintf("page=%d", snapshot.PageSwitchCount),
+	}, "|")))
+	parts := []string{
+		strings.TrimSpace(snapshot.Source),
+		strings.TrimSpace(snapshot.Scene),
+		strings.TrimSpace(snapshot.AppName),
+		strings.TrimSpace(snapshot.LastAction),
+		fmt.Sprintf("text=%x", textHash[:8]),
+		"dwell=" + dwellBucket(snapshot.DwellMillis),
+		"copy=" + activityBucket(snapshot.CopyCount),
+		"window=" + switchBucket(snapshot.WindowSwitchCount),
+		"page=" + switchBucket(snapshot.PageSwitchCount),
 	}
 	return strings.ToLower(strings.Join(parts, "|"))
 }
@@ -179,6 +183,34 @@ func IdentifyOpportunities(snapshot SignalSnapshot, unfinishedTasks []runengine.
 		})
 	}
 	return rankOpportunities(opportunities)
+}
+
+func dwellBucket(dwellMillis int) string {
+	switch {
+	case dwellMillis >= activeDwellThresholdMillis:
+		return "engaged"
+	case dwellMillis > 0:
+		return "brief"
+	default:
+		return "idle"
+	}
+}
+
+func activityBucket(count int) string {
+	if count > 0 {
+		return "active"
+	}
+	return "idle"
+}
+
+func switchBucket(count int) string {
+	if count >= switchBurstThreshold {
+		return "burst"
+	}
+	if count > 0 {
+		return "some"
+	}
+	return "none"
 }
 
 func rankOpportunities(opportunities []Opportunity) []Opportunity {
