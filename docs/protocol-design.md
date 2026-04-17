@@ -787,7 +787,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 补充约束：
 
 - `confirmed = true` 时，表示用户确认系统当前猜测的意图正确，此时 `corrected_intent` 可省略；若传入也应被忽略，不得覆盖当前意图。
-- `confirmed = false` 时，调用方应传入完整的 `corrected_intent`，后端以该对象覆盖任务当前意图后再推进执行。
+- `confirmed = false` 时，若调用方传入完整的 `corrected_intent`，后端以该对象覆盖任务当前意图后再推进执行。
+- `confirmed = false` 且未传入 `corrected_intent` 时，后端不得直接取消任务；应保留任务在 `confirming_intent`，并返回要求用户重新说明目标或补充修正意图的状态气泡。
 - 本接口只处理“意图确认 / 纠偏”这一承接阶段，不替代 `agent.task.control` 的暂停、继续、取消、重启控制语义。
 
 ### agent.task.confirm 入参说明
