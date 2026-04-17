@@ -1699,10 +1699,12 @@ func TestServiceTaskControlResumeExecutesHumanLoopTask(t *testing.T) {
 	result, err := service.TaskControl(map[string]any{
 		"task_id": taskID,
 		"action":  "resume",
-		"review": map[string]any{
-			"decision":    "approve",
-			"reviewer_id": "reviewer_001",
-			"notes":       "looks safe to continue",
+		"arguments": map[string]any{
+			"review": map[string]any{
+				"decision":    "approve",
+				"reviewer_id": "reviewer_001",
+				"notes":       "looks safe to continue",
+			},
 		},
 	})
 	if err != nil {
@@ -1748,10 +1750,12 @@ func TestServiceTaskControlResumeConsumesHumanLoopPendingPayload(t *testing.T) {
 	result, err := service.TaskControl(map[string]any{
 		"task_id": task.TaskID,
 		"action":  "resume",
-		"review": map[string]any{
-			"decision":    "approve",
-			"reviewer_id": "reviewer_002",
-			"notes":       "approved to continue",
+		"arguments": map[string]any{
+			"review": map[string]any{
+				"decision":    "approve",
+				"reviewer_id": "reviewer_002",
+				"notes":       "approved to continue",
+			},
 		},
 	})
 	if err != nil {
@@ -1795,11 +1799,13 @@ func TestServiceTaskControlResumeHumanLoopReplanReturnsToIntentConfirmation(t *t
 	result, err := service.TaskControl(map[string]any{
 		"task_id": task.TaskID,
 		"action":  "resume",
-		"review": map[string]any{
-			"decision":         "replan",
-			"reviewer_id":      "reviewer_003",
-			"notes":            "change the intent before continuing",
-			"corrected_intent": map[string]any{"name": "translate", "arguments": map[string]any{"target_language": "en"}},
+		"arguments": map[string]any{
+			"review": map[string]any{
+				"decision":         "replan",
+				"reviewer_id":      "reviewer_003",
+				"notes":            "change the intent before continuing",
+				"corrected_intent": map[string]any{"name": "translate", "arguments": map[string]any{"target_language": "en"}},
+			},
 		},
 	})
 	if err != nil {
@@ -1874,13 +1880,46 @@ func TestServiceTaskControlResumeHumanLoopReplanRequiresCorrectedIntent(t *testi
 	_, err := service.TaskControl(map[string]any{
 		"task_id": task.TaskID,
 		"action":  "resume",
-		"review": map[string]any{
-			"decision":    "replan",
-			"reviewer_id": "reviewer_004",
+		"arguments": map[string]any{
+			"review": map[string]any{
+				"decision":    "replan",
+				"reviewer_id": "reviewer_004",
+			},
 		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "review.corrected_intent is required") {
 		t.Fatalf("expected missing corrected_intent to block replan resume, got %v", err)
+	}
+}
+
+func TestServiceTaskControlResumeHumanLoopIgnoresTopLevelReviewPayload(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "Recovered after review.")
+	task := service.runEngine.CreateTask(runengine.CreateTaskInput{
+		SessionID:   "sess_hitl_top_level_review",
+		Title:       "总结：Please summarize this after review",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "summarize", "arguments": map[string]any{}},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+	})
+	if _, ok := service.runEngine.EscalateHumanLoop(task.TaskID, map[string]any{
+		"reason":           "doom_loop",
+		"status":           "pending",
+		"suggested_action": "review_and_replan",
+	}, map[string]any{"task_id": task.TaskID, "type": "status", "text": "需要人工介入"}); !ok {
+		t.Fatal("expected human escalation to succeed")
+	}
+	_, err := service.TaskControl(map[string]any{
+		"task_id": task.TaskID,
+		"action":  "resume",
+		"review": map[string]any{
+			"decision":    "approve",
+			"reviewer_id": "reviewer_005",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "review decision is required") {
+		t.Fatalf("expected top-level review payload to be ignored by stable contract, got %v", err)
 	}
 }
 

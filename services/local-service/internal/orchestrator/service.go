@@ -754,12 +754,13 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	}
 	wasHumanLoop := false
 	var reviewDecision map[string]any
+	arguments := mapValue(params, "arguments")
 	if action == "resume" {
 		if existingTask, ok := s.runEngine.GetTask(taskID); ok {
 			wasHumanLoop = taskIsBlockedHumanLoop(existingTask)
 		}
 		if wasHumanLoop {
-			decision, decisionErr := humanReviewDecisionFromParams(params)
+			decision, decisionErr := humanReviewDecisionFromParams(arguments)
 			if decisionErr != nil {
 				return nil, decisionErr
 			}
@@ -4229,10 +4230,10 @@ func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord, reviewDecision 
 	return updatedTask, bubble, deliveryResult, true, nil
 }
 
-func humanReviewDecisionFromParams(params map[string]any) (map[string]any, error) {
-	decision := mapValue(params, "review")
+func humanReviewDecisionFromParams(arguments map[string]any) (map[string]any, error) {
+	decision := mapValue(arguments, "review")
 	if len(decision) == 0 {
-		decision = mapValue(params, "human_review")
+		decision = mapValue(arguments, "human_review")
 	}
 	if len(decision) == 0 {
 		return nil, fmt.Errorf("review decision is required to resume a human review task")
