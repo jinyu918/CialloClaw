@@ -570,6 +570,32 @@ func (s *Service) TaskEventsList(params map[string]any) (map[string]any, error) 
 	}, nil
 }
 
+// TaskSteer handles agent.task.steer by persisting one follow-up instruction for
+// a still-active task so later execution or resume paths can consume it.
+func (s *Service) TaskSteer(params map[string]any) (map[string]any, error) {
+	taskID := stringValue(params, "task_id", "")
+	message := stringValue(params, "message", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	if strings.TrimSpace(message) == "" {
+		return nil, errors.New("message is required")
+	}
+	task, ok := s.runEngine.GetTask(taskID)
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+	bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "已记录新的补充要求，后续执行会纳入该指令。", time.Now().Format(dateTimeLayout))
+	updatedTask, changed := s.runEngine.AppendSteeringMessage(task.TaskID, message, bubble)
+	if !changed {
+		return nil, ErrTaskStatusInvalid
+	}
+	return map[string]any{
+		"task":           taskMap(updatedTask),
+		"bubble_message": bubble,
+	}, nil
+}
+
 // TaskArtifactList handles `agent.task.artifact.list` and returns protocol-ready
 // artifact items.
 func (s *Service) TaskArtifactList(params map[string]any) (map[string]any, error) {
@@ -4093,6 +4119,7 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 		Title:                processingTask.Title,
 		Intent:               taskIntent,
 		Snapshot:             snapshot,
+		SteeringMessages:     append([]string(nil), processingTask.SteeringMessages...),
 		DeliveryType:         deliveryType,
 		ResultTitle:          resultTitle,
 		ApprovalGranted:      processingTask.Authorization != nil,

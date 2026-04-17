@@ -5823,6 +5823,47 @@ func TestServiceTaskEventsListReturnsNormalizedLoopEvents(t *testing.T) {
 	}
 }
 
+func TestServiceTaskSteerPersistsFollowUpMessage(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "task steer")
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_task_steer",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "Please write this into a file after authorization.",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+
+	result, err := service.TaskSteer(map[string]any{"task_id": taskID, "message": "Also include a short summary section."})
+	if err != nil {
+		t.Fatalf("task steer failed: %v", err)
+	}
+	if result["task"].(map[string]any)["task_id"] != taskID {
+		t.Fatalf("expected steered task id %s, got %+v", taskID, result)
+	}
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected steered task to remain in runtime")
+	}
+	if len(record.SteeringMessages) != 1 || record.SteeringMessages[0] != "Also include a short summary section." {
+		t.Fatalf("expected steering message to persist, got %+v", record.SteeringMessages)
+	}
+	if record.LatestEvent["type"] != "task.steered" {
+		t.Fatalf("expected latest event task.steered, got %+v", record.LatestEvent)
+	}
+}
+
 func TestServiceStartTaskWithExecutorWritesWorkspaceDocument(t *testing.T) {
 	service, workspaceRoot := newTestServiceWithExecution(t, "第一点\n第二点\n第三点")
 

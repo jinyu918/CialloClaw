@@ -951,6 +951,48 @@ func TestDispatchTaskEventsListReturnsLoopEvents(t *testing.T) {
 	}
 }
 
+func TestDispatchTaskSteerReturnsUpdatedTask(t *testing.T) {
+	server := newTestServer()
+	startResult, err := server.orchestrator.StartTask(map[string]any{
+		"session_id": "sess_rpc_task_steer",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "Please write this into a file after authorization.",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+
+	response := server.dispatch(requestEnvelope{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`"req-task-steer"`),
+		Method:  "agent.task.steer",
+		Params: mustMarshal(t, map[string]any{
+			"task_id": taskID,
+			"message": "Also include a short summary section.",
+		}),
+	})
+
+	success, ok := response.(successEnvelope)
+	if !ok {
+		t.Fatalf("expected success response envelope, got %#v", response)
+	}
+	data := success.Result.Data.(map[string]any)
+	if data["task"].(map[string]any)["task_id"] != taskID {
+		t.Fatalf("expected rpc task steer to keep task id, got %+v", data)
+	}
+}
+
 func newTestServer() *Server {
 	orch := orchestrator.NewService(
 		contextsvc.NewService(),

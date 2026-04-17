@@ -66,6 +66,7 @@ type TaskRecord struct {
 	LatestEvent       map[string]any
 	LatestToolCall    map[string]any
 	LoopStopReason    string
+	SteeringMessages  []string
 	CurrentStepStatus string
 }
 
@@ -606,6 +607,39 @@ func (e *Engine) RecordLoopLifecycle(taskID, eventType, stopReason string, paylo
 	})
 	e.persistTaskLocked(record)
 
+	return record.clone(), true
+}
+
+// AppendSteeringMessage stores one follow-up instruction for a non-terminal task
+// so future execution or resume paths can fold it into the loop planner input.
+func (e *Engine) AppendSteeringMessage(taskID, message string, bubbleMessage map[string]any) (TaskRecord, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	record, ok := e.tasks[taskID]
+	if !ok || record.isFinished() {
+		return TaskRecord{}, false
+	}
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return TaskRecord{}, false
+	}
+	record.UpdatedAt = e.now()
+	record.SteeringMessages = append(record.SteeringMessages, trimmed)
+	record.BubbleMessage = cloneMap(bubbleMessage)
+	record.LatestEvent = e.buildEventWithPayload(record, "task.steered", map[string]any{
+		"status":  record.Status,
+		"message": trimmed,
+	})
+	record.queueNotification("task.steered", map[string]any{
+		"task_id": record.TaskID,
+		"message": trimmed,
+	})
+	record.queueNotification("task.updated", map[string]any{
+		"task_id": record.TaskID,
+		"status":  record.Status,
+	})
+	e.persistTaskLocked(record)
 	return record.clone(), true
 }
 
@@ -1725,6 +1759,7 @@ func (r TaskRecord) clone() TaskRecord {
 	clone.Notifications = cloneNotifications(r.Notifications)
 	clone.LatestEvent = cloneMap(r.LatestEvent)
 	clone.LatestToolCall = cloneMap(r.LatestToolCall)
+	clone.SteeringMessages = append([]string(nil), r.SteeringMessages...)
 	if r.FinishedAt != nil {
 		finishedAt := *r.FinishedAt
 		clone.FinishedAt = &finishedAt
@@ -2411,6 +2446,7 @@ func taskRecordToStorage(record TaskRecord) storage.TaskRunRecord {
 		LatestEvent:       cloneMap(record.LatestEvent),
 		LatestToolCall:    cloneMap(record.LatestToolCall),
 		LoopStopReason:    record.LoopStopReason,
+		SteeringMessages:  append([]string(nil), record.SteeringMessages...),
 		CurrentStepStatus: record.CurrentStepStatus,
 	}
 }
@@ -2452,6 +2488,7 @@ func taskRecordFromStorage(record storage.TaskRunRecord) TaskRecord {
 		LatestEvent:       cloneMap(record.LatestEvent),
 		LatestToolCall:    cloneMap(record.LatestToolCall),
 		LoopStopReason:    record.LoopStopReason,
+		SteeringMessages:  append([]string(nil), record.SteeringMessages...),
 		CurrentStepStatus: record.CurrentStepStatus,
 	}
 }

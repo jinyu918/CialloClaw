@@ -46,6 +46,7 @@ export const RPC_METHODS_STABLE = {
   AGENT_TASK_LIST: "agent.task.list",
   AGENT_TASK_DETAIL_GET: "agent.task.detail.get",
   AGENT_TASK_EVENTS_LIST: "agent.task.events.list",
+  AGENT_TASK_STEER: "agent.task.steer",
   AGENT_TASK_ARTIFACT_LIST: "agent.task.artifact.list",
   AGENT_TASK_ARTIFACT_OPEN: "agent.task.artifact.open",
   AGENT_TASK_CONTROL: "agent.task.control",
@@ -307,6 +308,19 @@ export interface AgentTaskEventsListParams {
 export interface AgentTaskEventsListResult {
   items: TaskEvent[];
   page: JsonRpcPage;
+}
+
+// AgentTaskSteerParams defines the parameters for agent.task.steer.
+export interface AgentTaskSteerParams {
+  request_meta: RequestMeta;
+  task_id: string;
+  message: string;
+}
+
+// AgentTaskSteerResult defines the result for agent.task.steer.
+export interface AgentTaskSteerResult {
+  task: Task;
+  bubble_message: BubbleMessage | null;
 }
 
 // AgentTaskArtifactListParams defines the parameters for agent.task.artifact.list.

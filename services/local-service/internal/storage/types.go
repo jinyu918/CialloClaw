@@ -207,6 +207,7 @@ type TaskRunRecord struct {
 	LatestEvent       map[string]any
 	LatestToolCall    map[string]any
 	LoopStopReason    string
+	SteeringMessages  []string
 	CurrentStepStatus string
 }
 

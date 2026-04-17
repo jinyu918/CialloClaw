@@ -55,6 +55,7 @@ type Request struct {
 	Title                string
 	Intent               map[string]any
 	Snapshot             contextsvc.TaskContextSnapshot
+	SteeringMessages     []string
 	DeliveryType         string
 	ResultTitle          string
 	ApprovalGranted      bool
@@ -902,11 +903,25 @@ func (s *Service) generateOutputWithAgentLoop(ctx context.Context, request Reque
 	if !isAgentLoopIntent(request.Intent) || s.model == nil || !s.model.SupportsToolCalling() || s.loop == nil {
 		return generationTrace{}, false, nil
 	}
+	runtimeInput := inputText
+	if len(request.SteeringMessages) > 0 {
+		steeringLines := make([]string, 0, len(request.SteeringMessages))
+		for _, item := range request.SteeringMessages {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			steeringLines = append(steeringLines, "- "+trimmed)
+		}
+		if len(steeringLines) > 0 {
+			runtimeInput += "\n\nFollow-up steering:\n" + strings.Join(steeringLines, "\n")
+		}
+	}
 	runtimeResult, ok, err := s.loop.Run(ctx, agentloop.Request{
 		TaskID:            request.TaskID,
 		RunID:             request.RunID,
 		Intent:            request.Intent,
-		InputText:         inputText,
+		InputText:         runtimeInput,
 		ResultTitle:       request.ResultTitle,
 		FallbackOutput:    fallbackOutput(request, inputText),
 		ToolDefinitions:   s.agentLoopToolDefinitions(),
