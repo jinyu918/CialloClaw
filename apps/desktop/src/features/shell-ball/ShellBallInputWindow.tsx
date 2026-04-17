@@ -120,7 +120,7 @@ export function ShellBallInputWindow({
   const resolvedVoicePreview = voicePreview ?? snapshot.voicePreview;
   const resolvedValue = value ?? draftValue;
   const { rootRef } = useShellBallWindowMetrics({
-    clickThrough: false,
+    clickThrough: snapshot.inputInteraction.clickThrough,
     role: "input",
     visible: snapshot.visibility.input,
   });

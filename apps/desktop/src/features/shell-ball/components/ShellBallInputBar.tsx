@@ -23,6 +23,14 @@ type ShellBallInputManualSize = {
 
 const useShellBallInputLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
+function measureShellBallInputRestingWidth(field: HTMLTextAreaElement) {
+  const previousInlineWidth = field.style.width;
+  field.style.width = "";
+  const restingWidth = field.getBoundingClientRect().width;
+  field.style.width = previousInlineWidth;
+  return restingWidth;
+}
+
 type ShellBallInputBarProps = {
   mode: ShellBallInputBarMode;
   voicePreview: ShellBallVoicePreview;
@@ -54,7 +62,6 @@ export function ShellBallInputBar({
 }: ShellBallInputBarProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const compositionActiveRef = useRef(false);
-  const defaultFieldWidthRef = useRef(0);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [manualSize, setManualSize] = useState<ShellBallInputManualSize>({ width: null, height: null });
   const [resolvedFieldWidth, setResolvedFieldWidth] = useState<number | null>(null);
@@ -110,12 +117,9 @@ export function ShellBallInputBar({
       return;
     }
 
-    if (defaultFieldWidthRef.current === 0) {
-      defaultFieldWidthRef.current = field.getBoundingClientRect().width;
-    }
-
+    const restingWidth = measureShellBallInputRestingWidth(field);
     const computedStyle = window.getComputedStyle(field);
-    const minWidth = defaultFieldWidthRef.current > 0 ? defaultFieldWidthRef.current : field.getBoundingClientRect().width;
+    const minWidth = restingWidth;
     const maxWidth = resolveShellBallInputMaxWidth(minWidth);
     const minHeight = parseFloat(computedStyle.minHeight) || field.getBoundingClientRect().height;
     const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
@@ -225,8 +229,9 @@ export function ShellBallInputBar({
 
     const rect = field.getBoundingClientRect();
     const computedStyle = window.getComputedStyle(field);
+    const restingWidth = measureShellBallInputRestingWidth(field);
     const minHeight = parseFloat(computedStyle.minHeight) || rect.height;
-    const initialWidth = defaultFieldWidthRef.current > 0 ? defaultFieldWidthRef.current : rect.width;
+    const initialWidth = restingWidth;
     const minWidth = initialWidth;
     const maxWidth = resolveShellBallInputMaxWidth(initialWidth);
     const maxHeight = resolveShellBallInputMaxHeight({
@@ -357,7 +362,7 @@ export function ShellBallInputBar({
           rows={1}
           style={textareaStyle}
         />
-        {isHidden || isVoice ? null : (
+        {!isInteractive ? null : (
           <div
             aria-hidden="true"
             className="shell-ball-input-bar__resize-handle"

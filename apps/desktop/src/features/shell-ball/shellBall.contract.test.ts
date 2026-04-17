@@ -69,6 +69,7 @@ import {
   getShellBallBubbleRegionState,
   createShellBallWindowSnapshot,
   getShellBallHelperWindowVisibility,
+  getShellBallInputInteractionState,
   getShellBallVisibleBubbleItems,
   shellBallWindowSyncEvents,
 } from "./shellBall.windowSync";
@@ -1324,6 +1325,9 @@ test("shell-ball helper window sync maps visual states into visibility and snaps
         hasVisibleItems: true,
         clickThrough: true,
       },
+      inputInteraction: {
+        clickThrough: false,
+      },
       visibility: {
         bubble: false,
         input: false,
@@ -1772,7 +1776,7 @@ test("shell-ball interaction contract leaves the region only from hoverable rest
   );
 });
 
-test("shell-ball interaction contract retains hover input while focused or draft remains", () => {
+test("shell-ball interaction contract retains hover input while focused, hovered, or draft remains", () => {
   assert.equal(
     shouldRetainShellBallHoverInput({
       regionActive: false,
@@ -1787,6 +1791,16 @@ test("shell-ball interaction contract retains hover input while focused or draft
       regionActive: false,
       inputFocused: true,
       hasDraft: true,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldRetainShellBallHoverInput({
+      regionActive: false,
+      inputFocused: false,
+      inputHovered: true,
+      hasDraft: false,
     }),
     true,
   );
@@ -2652,6 +2666,7 @@ test("shell-ball input bar removes keyboard focus stops outside interactive mode
   );
 
   assert.match(readonlyMarkup, /tabindex="-1"/i);
+  assert.doesNotMatch(readonlyMarkup, /shell-ball-input-bar__resize-handle/);
   assert.match(voiceMarkup, /tabindex="-1"/i);
 });
 
@@ -2674,6 +2689,9 @@ test("shell-ball input bar uses a resizable textarea for focused draft editing",
   assert.match(interactiveMarkup, /shell-ball-input-bar__resize-handle/);
   assert.match(inputBarSource, /if \(event\.key !== "Enter" \|\| event\.shiftKey \|\| submitDisabled\) \{/);
   assert.match(inputBarSource, /focusShellBallInputField\(inputRef\.current\);/);
+  assert.match(inputBarSource, /const restingWidth = measureShellBallInputRestingWidth\(field\);/);
+  assert.doesNotMatch(inputBarSource, /defaultFieldWidthRef/);
+  assert.match(inputBarSource, /!isInteractive \? null : \(/);
   assert.doesNotMatch(inputBarSource, /inputRef\.current\.select\(\)/);
   assert.match(shellBallStyles, /\.shell-ball-input-bar__resize-handle \{[\s\S]*cursor:\s*nwse-resize;/);
   assert.match(shellBallStyles, /\.shell-ball-input-bar__field \{[\s\S]*overflow-y:\s*hidden;/);
@@ -2727,6 +2745,63 @@ test("shell-ball input helpers clamp manual resize and autosize heights", () => 
       maxHeight: 72,
     }),
     58,
+  );
+});
+
+test("shell-ball input interaction state keeps every visible input helper directly interactive", () => {
+  assert.deepEqual(
+    getShellBallInputInteractionState({
+      visualState: "hover_input",
+      regionActive: false,
+      inputFocused: false,
+      inputHovered: false,
+      hasDraft: true,
+    }),
+    { clickThrough: false },
+  );
+
+  assert.deepEqual(
+    getShellBallInputInteractionState({
+      visualState: "hover_input",
+      regionActive: true,
+      inputFocused: false,
+      inputHovered: false,
+      hasDraft: true,
+    }),
+    { clickThrough: false },
+  );
+
+  assert.deepEqual(
+    getShellBallInputInteractionState({
+      visualState: "hover_input",
+      regionActive: false,
+      inputFocused: false,
+      inputHovered: false,
+      hasDraft: false,
+    }),
+    { clickThrough: false },
+  );
+
+  assert.deepEqual(
+    getShellBallInputInteractionState({
+      visualState: "processing",
+      regionActive: false,
+      inputFocused: false,
+      inputHovered: false,
+      hasDraft: true,
+    }),
+    { clickThrough: false },
+  );
+
+  assert.deepEqual(
+    getShellBallInputInteractionState({
+      visualState: "idle",
+      regionActive: false,
+      inputFocused: false,
+      inputHovered: false,
+      hasDraft: false,
+    }),
+    { clickThrough: true },
   );
 });
 
@@ -2843,7 +2918,9 @@ test("shell-ball coordinator snapshots carry shell-ball-local bubble messages", 
 
   const { snapshot } = useShellBallCoordinator({
     visualState: "hover_input",
+    regionActive: false,
     inputValue: "draft",
+    inputFocused: false,
     finalizedSpeechPayload: null,
     voicePreview: null,
     voiceHintMode: "hidden",
@@ -2851,6 +2928,7 @@ test("shell-ball coordinator snapshots carry shell-ball-local bubble messages", 
     onFinalizedSpeechHandled: () => {},
     onRegionEnter: () => {},
     onRegionLeave: () => {},
+    onInputHoverChange: () => {},
     onInputFocusChange: () => {},
     onSubmitText: () => {},
     onAttachFile: () => {},
@@ -3524,7 +3602,9 @@ test("shell-ball selected-text prompt stays below an existing intent bubble even
 
     const { handleSelectedTextPrompt } = useShellBallCoordinator({
       visualState: "hover_input",
+      regionActive: false,
       inputValue: "",
+      inputFocused: false,
       finalizedSpeechPayload: null,
       voicePreview: null,
       voiceHintMode: "hidden",
@@ -3532,6 +3612,7 @@ test("shell-ball selected-text prompt stays below an existing intent bubble even
       onFinalizedSpeechHandled: () => {},
       onRegionEnter: () => {},
       onRegionLeave: () => {},
+      onInputHoverChange: () => {},
       onInputFocusChange: () => {},
       onSubmitText: () => {},
       onAttachFile: () => {},
@@ -3699,7 +3780,9 @@ test("shell-ball detached bubble actions close pinned windows and delete detache
 
   useShellBallCoordinator({
     visualState: "hover_input",
+    regionActive: false,
     inputValue: "",
+    inputFocused: false,
     finalizedSpeechPayload: null,
     voicePreview: null,
     voiceHintMode: "hidden",
@@ -3707,6 +3790,7 @@ test("shell-ball detached bubble actions close pinned windows and delete detache
     onFinalizedSpeechHandled: () => {},
     onRegionEnter: () => {},
     onRegionLeave: () => {},
+    onInputHoverChange: () => {},
     onInputFocusChange: () => {},
     onSubmitText: () => {},
     onAttachFile: () => {},
@@ -4344,12 +4428,15 @@ test("shell-ball app routes selected-text prompts into input focus and a mock ag
 
 test("shell-ball input window skips window-focus pointer handling for the resize grip", () => {
   const inputWindowSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallInputWindow.tsx"), "utf8");
+  const coordinatorSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/useShellBallCoordinator.ts"), "utf8");
 
   assert.match(inputWindowSource, /target\.closest\('\[data-shell-ball-input-resize-handle="true"\]'\)/);
-  assert.match(inputWindowSource, /clickThrough:\s*false/);
+  assert.match(inputWindowSource, /clickThrough:\s*snapshot\.inputInteraction\.clickThrough/);
   assert.match(inputWindowSource, /if \(isResizingRef\.current\) \{[\s\S]*return;[\s\S]*\}/);
   assert.match(inputWindowSource, /function handlePointerLeave\(\) \{[\s\S]*void emitShellBallInputHover\(false\);[\s\S]*\}/);
   assert.doesNotMatch(inputWindowSource, /activeElement\.blur\(\)/);
+  assert.match(coordinatorSource, /function handleCoordinatorInputHoverChange\(active: boolean\) \{/);
+  assert.match(coordinatorSource, /handlersRef\.current\.onInputHoverChange\(active\);/);
 });
 
 test("shell-ball resize drag keeps pointer capture and releases resize state on cleanup", () => {
@@ -4429,7 +4516,7 @@ test("shell-ball input bar mode stays aligned with visual states", () => {
 
 test("shell-ball interaction timing constants stay frozen", () => {
   assert.equal(SHELL_BALL_HOVER_INTENT_MS, 360);
-  assert.equal(SHELL_BALL_LEAVE_GRACE_MS, 180);
+  assert.equal(SHELL_BALL_LEAVE_GRACE_MS, 360);
   assert.equal(SHELL_BALL_LONG_PRESS_MS, 1000);
   assert.equal(SHELL_BALL_PRESS_DRIFT_TOLERANCE_PX, 12);
   assert.equal(SHELL_BALL_LOCKED_CANCEL_HOLD_MS, 200);
