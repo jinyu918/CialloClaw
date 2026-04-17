@@ -671,7 +671,7 @@ export interface AgentSecurityPendingListResult {
 
 export interface AgentSecurityAuditListParams {
   request_meta: RequestMeta;
-  task_id: string;
+  task_id?: string;
   limit: number;
   offset: number;
 }
@@ -715,12 +715,24 @@ export interface AgentSecurityRespondParams {
   remember_rule?: boolean;
 }
 
-export interface AgentSecurityRespondResult {
+export interface AgentSecurityApprovalRespondResult {
   authorization_record: AuthorizationRecord;
   task: Task;
   bubble_message: BubbleMessage | null;
   impact_scope?: ImpactScope;
 }
+
+export interface AgentSecurityRestoreRespondResult {
+  applied: boolean;
+  task: Task;
+  recovery_point: RecoveryPoint;
+  audit_record: AuditRecord | null;
+  bubble_message: BubbleMessage | null;
+}
+
+export type AgentSecurityRespondResult =
+  | AgentSecurityApprovalRespondResult
+  | AgentSecurityRestoreRespondResult;
 
 export interface AgentSettingsGetParams {
   request_meta: RequestMeta;

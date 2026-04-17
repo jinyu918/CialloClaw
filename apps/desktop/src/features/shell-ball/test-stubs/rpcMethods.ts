@@ -38,17 +38,33 @@ export async function listSecurityPendingDetailed(_params?: unknown) {
 export async function respondSecurityDetailed(_params?: unknown) {
   return createDetailedResponse({
     authorization_record: {
+      authorization_record_id: "auth_stub",
+      task_id: "task_stub",
+      approval_id: "approval_stub",
       decision: "allow_once",
       remember_rule: false,
+      operator: "test-stub",
+      created_at: new Date().toISOString(),
     },
+    bubble_message: null,
     impact_scope: {
       apps: [],
       files: [],
       webpages: [],
+      out_of_workspace: false,
+      overwrite_or_delete_risk: false,
     },
     task: {
       task_id: "task_stub",
+      title: "stub task",
+      source_type: "hover_input",
       status: "processing",
+      intent: null,
+      current_step: "security",
+      risk_level: "yellow",
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      finished_at: null,
     },
   });
 }

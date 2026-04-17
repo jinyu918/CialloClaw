@@ -75,7 +75,7 @@ export type SecurityAuditRecordListData = {
   page: JsonRpcPage;
   rpcContext: SecurityRpcContext;
   source: SecurityModuleSource;
-  taskId: string;
+  taskId: string | null;
 };
 
 export type SecurityRestoreApplyOutcome = {
@@ -343,7 +343,7 @@ export async function loadSecurityRestorePoints(
 
 export async function loadSecurityAuditRecords(
   source: SecurityModuleSource,
-  taskId: string,
+  taskId?: string | null,
   options?: {
     limit?: number;
     offset?: number;
@@ -351,9 +351,12 @@ export async function loadSecurityAuditRecords(
 ): Promise<SecurityAuditRecordListData> {
   const limit = options?.limit ?? 20;
   const offset = options?.offset ?? 0;
+  const normalizedTaskId = taskId?.trim() || null;
 
   if (source === "mock") {
-    const filteredItems = securityAuditMock.items.filter((item) => item.task_id === taskId);
+    const filteredItems = normalizedTaskId
+      ? securityAuditMock.items.filter((item) => item.task_id === normalizedTaskId)
+      : securityAuditMock.items;
     const pagedItems = filteredItems.slice(offset, offset + limit);
 
     return {
@@ -369,16 +372,16 @@ export async function loadSecurityAuditRecords(
         warnings: [],
       },
       source: "mock",
-      taskId,
+      taskId: normalizedTaskId,
     };
   }
 
   try {
     const params: AgentSecurityAuditListParams = {
       request_meta: createRequestMeta(),
-      task_id: taskId,
       limit,
       offset,
+      ...(normalizedTaskId ? { task_id: normalizedTaskId } : {}),
     };
     const response = await listSecurityAuditDetailed(params);
 
@@ -390,12 +393,14 @@ export async function loadSecurityAuditRecords(
         warnings: response.warnings,
       },
       source: "rpc",
-      taskId,
+      taskId: normalizedTaskId,
     };
   } catch (error) {
     if (isRpcChannelUnavailable(error)) {
       logRpcMockFallback("security audit list", error);
-      const filteredItems = securityAuditMock.items.filter((item) => item.task_id === taskId);
+      const filteredItems = normalizedTaskId
+        ? securityAuditMock.items.filter((item) => item.task_id === normalizedTaskId)
+        : securityAuditMock.items;
       const pagedItems = filteredItems.slice(offset, offset + limit);
 
       return {
@@ -411,7 +416,7 @@ export async function loadSecurityAuditRecords(
           warnings: [],
         },
         source: "mock",
-        taskId,
+        taskId: normalizedTaskId,
       };
     }
 
