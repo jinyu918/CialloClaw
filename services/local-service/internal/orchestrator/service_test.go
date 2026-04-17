@@ -182,6 +182,28 @@ func (w failingCheckpointWriter) WriteRecoveryPoint(_ context.Context, _ checkpo
 	return w.err
 }
 
+type failingTodoStore struct {
+	base       storage.TodoStore
+	replaceErr error
+}
+
+func (s failingTodoStore) ReplaceTodoState(ctx context.Context, items []storage.TodoItemRecord, rules []storage.RecurringRuleRecord) error {
+	if s.replaceErr != nil {
+		return s.replaceErr
+	}
+	if s.base == nil {
+		return nil
+	}
+	return s.base.ReplaceTodoState(ctx, items, rules)
+}
+
+func (s failingTodoStore) LoadTodoState(ctx context.Context) ([]storage.TodoItemRecord, []storage.RecurringRuleRecord, error) {
+	if s.base == nil {
+		return nil, nil, nil
+	}
+	return s.base.LoadTodoState(ctx)
+}
+
 func (s stubModelClient) GenerateText(_ context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
 	return model.GenerateTextResponse{
 		TaskID:     request.TaskID,
@@ -1016,13 +1038,28 @@ func TestServiceNotepadListReturnsRuntimeItemsByBucket(t *testing.T) {
 	now := time.Now().UTC()
 	service.runEngine.ReplaceNotepadItems([]map[string]any{
 		{
-			"item_id":          "todo_today",
-			"title":            "translate daily notes",
-			"bucket":           "upcoming",
-			"status":           "normal",
-			"type":             "todo_item",
-			"due_at":           now.Add(2 * time.Hour).Format(time.RFC3339),
-			"agent_suggestion": "translate",
+			"item_id":                "todo_today",
+			"title":                  "translate daily notes",
+			"bucket":                 "upcoming",
+			"status":                 "normal",
+			"type":                   "todo_item",
+			"due_at":                 now.Add(2 * time.Hour).Format(time.RFC3339),
+			"agent_suggestion":       "translate",
+			"note_text":              "Bring the daily notes into English for the external sync.",
+			"prerequisite":           "Confirm the final Chinese source text first.",
+			"repeat_rule":            nil,
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               nil,
+			"related_resources": []map[string]any{
+				{
+					"resource_id":   "todo_today_resource",
+					"label":         "Daily note draft",
+					"path":          "workspace/daily.md",
+					"resource_type": "file",
+				},
+			},
 		},
 		{
 			"item_id":          "todo_later",
@@ -1053,6 +1090,13 @@ func TestServiceNotepadListReturnsRuntimeItemsByBucket(t *testing.T) {
 	}
 	if items[0]["status"] != "due_today" {
 		t.Fatalf("expected runtime list to normalize due_today status, got %v", items[0]["status"])
+	}
+	if items[0]["note_text"] != "Bring the daily notes into English for the external sync." {
+		t.Fatalf("expected note_text to survive list response, got %+v", items[0]["note_text"])
+	}
+	resources, ok := items[0]["related_resources"].([]map[string]any)
+	if !ok || len(resources) != 1 || resources[0]["resource_id"] != "todo_today_resource" {
+		t.Fatalf("expected related_resources to survive list response, got %+v", items[0]["related_resources"])
 	}
 }
 
@@ -1101,12 +1145,24 @@ func TestServiceNotepadConvertToTaskUsesRuntimeItemWithoutClosingTodo(t *testing
 		t.Fatal("expected converted task to attach memory read plans")
 	}
 
+	sourceItem := result["notepad_item"].(map[string]any)
+	if sourceItem["linked_task_id"] != taskID {
+		t.Fatalf("expected convert_to_task to return linked source item, got %+v", sourceItem)
+	}
+	refreshGroups := result["refresh_groups"].([]string)
+	if len(refreshGroups) != 1 || refreshGroups[0] != "upcoming" {
+		t.Fatalf("expected refresh_groups to point at updated bucket, got %+v", refreshGroups)
+	}
+
 	upcomingItems, total := service.runEngine.NotepadItems("upcoming", 10, 0)
 	if total != 1 || len(upcomingItems) != 1 {
 		t.Fatalf("expected converted todo item to stay open until task finishes, total=%d len=%d", total, len(upcomingItems))
 	}
 	if upcomingItems[0]["item_id"] != "todo_translate" || upcomingItems[0]["status"] == "completed" {
 		t.Fatalf("expected notepad item to remain open, got %+v", upcomingItems[0])
+	}
+	if upcomingItems[0]["linked_task_id"] != taskID {
+		t.Fatalf("expected runtime notepad item to keep linked_task_id, got %+v", upcomingItems[0])
 	}
 }
 
@@ -1134,6 +1190,176 @@ func TestServiceNotepadConvertToTaskRequiresConfirmedFlag(t *testing.T) {
 	items, total := service.runEngine.NotepadItems("upcoming", 10, 0)
 	if total != 1 || len(items) != 1 {
 		t.Fatalf("expected notepad item to remain untouched after rejected convert, total=%d len=%d", total, len(items))
+	}
+}
+
+func TestServiceNotepadConvertToTaskRejectsAlreadyLinkedItem(t *testing.T) {
+	service := newTestService()
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id":        "todo_linked",
+		"title":          "already linked note",
+		"bucket":         "upcoming",
+		"status":         "normal",
+		"type":           "todo_item",
+		"linked_task_id": "task_existing",
+	}})
+
+	_, err := service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_linked",
+		"confirmed": true,
+	})
+	if err == nil {
+		t.Fatal("expected convert_to_task to reject already linked item")
+	}
+	if err.Error() != "notepad item is already linked to task: task_existing" {
+		t.Fatalf("expected linked item error, got %v", err)
+	}
+}
+
+func TestServiceNotepadConvertToTaskRejectsInFlightClaim(t *testing.T) {
+	service := newTestService()
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_claimed",
+		"title":   "claimed note",
+		"bucket":  "upcoming",
+		"status":  "normal",
+		"type":    "todo_item",
+	}})
+	if _, handled, err := service.runEngine.ClaimNotepadItemTask("todo_claimed"); err != nil || !handled {
+		t.Fatalf("expected runtime claim to succeed before convert, handled=%v err=%v", handled, err)
+	}
+
+	_, err := service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_claimed",
+		"confirmed": true,
+	})
+	if err == nil {
+		t.Fatal("expected convert_to_task to reject in-flight claim")
+	}
+	if err.Error() != "notepad item is already being converted: todo_claimed" {
+		t.Fatalf("expected in-flight conversion error, got %v", err)
+	}
+}
+
+func TestServiceNotepadConvertToTaskRollsBackTaskWhenLinkPersistenceFails(t *testing.T) {
+	taskStore := storage.NewInMemoryTaskRunStore()
+	engine, err := runengine.NewEngineWithStore(taskStore)
+	if err != nil {
+		t.Fatalf("new stored engine failed: %v", err)
+	}
+	baseTodoStore := storage.NewInMemoryTodoStore()
+	if err := engine.WithTodoStore(baseTodoStore); err != nil {
+		t.Fatalf("attach base todo store failed: %v", err)
+	}
+	engine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_link_failure",
+		"title":   "convert with failing note persistence",
+		"bucket":  "upcoming",
+		"status":  "normal",
+		"type":    "todo_item",
+	}})
+	if err := engine.WithTodoStore(failingTodoStore{
+		base:       baseTodoStore,
+		replaceErr: errors.New("todo replace failed"),
+	}); err != nil {
+		t.Fatalf("swap to failing todo store failed: %v", err)
+	}
+
+	service := NewService(
+		contextsvc.NewService(),
+		intent.NewService(),
+		engine,
+		delivery.NewService(),
+		memory.NewService(),
+		risk.NewService(),
+		model.NewService(modelConfig()),
+		tools.NewRegistry(),
+		plugin.NewService(),
+	)
+
+	_, err = service.NotepadConvertToTask(map[string]any{
+		"item_id":   "todo_link_failure",
+		"confirmed": true,
+	})
+	if err == nil {
+		t.Fatal("expected convert_to_task to fail when note persistence fails")
+	}
+	if !strings.Contains(err.Error(), "failed to link notepad item to task: todo_link_failure") {
+		t.Fatalf("expected link failure in error message, got %v", err)
+	}
+
+	if tasks, total := engine.ListTasks("unfinished", "updated_at", "desc", 10, 0); total != 0 || len(tasks) != 0 {
+		t.Fatalf("expected rollback to remove runtime task, total=%d tasks=%+v", total, tasks)
+	}
+	persisted, loadErr := taskStore.LoadTaskRuns(context.Background())
+	if loadErr != nil {
+		t.Fatalf("load persisted task runs failed: %v", loadErr)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expected rollback to remove persisted task run, got %+v", persisted)
+	}
+
+	item, ok := engine.NotepadItem("todo_link_failure")
+	if !ok {
+		t.Fatal("expected note to remain available after rollback")
+	}
+	if linkedTaskID := stringValue(item, "linked_task_id", ""); linkedTaskID != "" {
+		t.Fatalf("expected note to remain unlinked after rollback, got %+v", item)
+	}
+}
+
+func TestServiceNotepadUpdateReturnsUpdatedItemAndRefreshGroups(t *testing.T) {
+	service := newTestService()
+	now := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_later_update",
+		"title":   "move later note",
+		"bucket":  "later",
+		"status":  "normal",
+		"type":    "todo_item",
+		"due_at":  now.Add(48 * time.Hour).Format(time.RFC3339),
+	}})
+
+	result, err := service.NotepadUpdate(map[string]any{
+		"item_id": "todo_later_update",
+		"action":  "move_upcoming",
+	})
+	if err != nil {
+		t.Fatalf("notepad update failed: %v", err)
+	}
+
+	updatedItem := result["notepad_item"].(map[string]any)
+	if updatedItem["bucket"] != "upcoming" {
+		t.Fatalf("expected updated item bucket upcoming, got %+v", updatedItem)
+	}
+	refreshGroups := result["refresh_groups"].([]string)
+	if len(refreshGroups) != 2 || refreshGroups[0] != "later" || refreshGroups[1] != "upcoming" {
+		t.Fatalf("expected refresh_groups to include source and target buckets, got %+v", refreshGroups)
+	}
+}
+
+func TestServiceNotepadUpdateReturnsDeletedItemID(t *testing.T) {
+	service := newTestService()
+	service.runEngine.ReplaceNotepadItems([]map[string]any{{
+		"item_id": "todo_delete_rpc",
+		"title":   "delete me",
+		"bucket":  "closed",
+		"status":  "completed",
+		"type":    "todo_item",
+	}})
+
+	result, err := service.NotepadUpdate(map[string]any{
+		"item_id": "todo_delete_rpc",
+		"action":  "delete",
+	})
+	if err != nil {
+		t.Fatalf("notepad delete failed: %v", err)
+	}
+	if result["notepad_item"] != nil {
+		t.Fatalf("expected deleted item payload to be nil, got %+v", result["notepad_item"])
+	}
+	if result["deleted_item_id"] != "todo_delete_rpc" {
+		t.Fatalf("expected deleted_item_id in response, got %+v", result["deleted_item_id"])
 	}
 }
 

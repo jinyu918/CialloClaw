@@ -330,6 +330,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `recommendation_scene`：`hover / selected_text / idle / error`
 - `recommendation_feedback`：`positive / negative / ignore`
 - `task_control_action`：`pause / resume / cancel / restart`
+- `notepad_action`：`complete / cancel / move_upcoming / toggle_recurring / cancel_recurring / restore / delete`
 - `time_unit`：`minute / hour / day / week`
 - `run_status`：`processing / completed`
 
@@ -486,6 +487,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `agent.task_inspector.config.update`
 - `agent.task_inspector.run`
 - `agent.notepad.list`
+- `agent.notepad.update`
 - `agent.notepad.convert_to_task`
 
 #### C. 仪表盘 / 镜子 / 安全卫士
@@ -1769,7 +1771,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 - **请求方式**：JSON-RPC 2.0
 - **接口调用时机**：用户查看近期要做、后续安排、重复事项、已结束时
-- **系统处理**：返回指定分组的事项列表
+- **系统处理**：返回指定分组的事项列表，并在同一 read model 里补足 notes 详情页需要的详情字段
 - **入参**：分组、分页
 - **出参**：事项列表、分页信息
 
@@ -1802,15 +1804,27 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ### agent.notepad.list 出参说明
 
-| 字段                            | 中文说明   |
-| ------------------------------- | ---------- |
-| `data.items`                    | 事项列表   |
-| `data.items[].item_id`          | 事项 ID    |
-| `data.items[].title`            | 事项标题   |
-| `data.items[].bucket`           | 所属分组   |
-| `data.items[].status`           | 当前状态   |
-| `data.items[].agent_suggestion` | Agent 建议 |
-| `data.page`                     | 分页信息   |
+| 字段                                  | 中文说明                 |
+| ------------------------------------- | ------------------------ |
+| `data.items`                          | 事项列表                 |
+| `data.items[].item_id`                | 事项 ID                  |
+| `data.items[].title`                  | 事项标题                 |
+| `data.items[].bucket`                 | 所属分组                 |
+| `data.items[].status`                 | 当前状态                 |
+| `data.items[].type`                   | 事项类型                 |
+| `data.items[].due_at`                 | 到期时间                 |
+| `data.items[].agent_suggestion`       | Agent 建议               |
+| `data.items[].recurring_enabled`      | 重复规则当前是否开启     |
+| `data.items[].note_text`              | 背景与说明               |
+| `data.items[].prerequisite`           | 前置条件                 |
+| `data.items[].repeat_rule`            | 重复规则文本             |
+| `data.items[].next_occurrence_at`     | 下次发生时间             |
+| `data.items[].recent_instance_status` | 最近一次执行状态摘要     |
+| `data.items[].effective_scope`        | 生效范围                 |
+| `data.items[].ended_at`               | 结束时间                 |
+| `data.items[].linked_task_id`         | 已转正式任务后的 task ID |
+| `data.items[].related_resources`      | 相关资料列表             |
+| `data.page`                           | 分页信息                 |
 
 ### agent.notepad.list 出参示例
 
@@ -1828,7 +1842,30 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
           "status": "due_today",
           "type": "one_time",
           "due_at": "2026-04-07T18:00:00+08:00",
-          "agent_suggestion": "先生成一个 3 点摘要"
+          "agent_suggestion": "先生成一个 3 点摘要",
+          "recurring_enabled": null,
+          "note_text": "先把本周关键结论和风险项整理成一页摘要，再决定是否扩写为正式文档。",
+          "prerequisite": "确认会议纪要和图表截图都已齐全。",
+          "repeat_rule": null,
+          "next_occurrence_at": null,
+          "recent_instance_status": null,
+          "effective_scope": null,
+          "ended_at": null,
+          "linked_task_id": null,
+          "related_resources": [
+            {
+              "resource_id": "todo_001_minutes",
+              "label": "会议纪要目录",
+              "path": "workspace/meetings",
+              "resource_type": "folder",
+              "open_action": "reveal_in_folder",
+              "open_payload": {
+                "path": "workspace/meetings",
+                "task_id": null,
+                "url": null
+              }
+            }
+          ]
         }
       ],
       "page": {
@@ -1848,13 +1885,91 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ---
 
-### 8.2.8 `agent.notepad.convert_to_task`
+### 8.2.8 `agent.notepad.update`
+
+- **请求方式**：JSON-RPC 2.0
+- **接口调用时机**：用户在 notes 详情页对事项执行状态变更动作时
+- **系统处理**：按动作更新事项状态或分组，并返回更新后的事项结果
+- **入参**：事项 ID、动作类型
+- **出参**：更新后的事项、建议刷新的分组、按需附带删除结果
+
+当前稳定支持的动作：
+
+- `complete`
+- `cancel`
+- `move_upcoming`
+- `toggle_recurring`
+- `cancel_recurring`
+- `restore`
+- `delete`
+
+### agent.notepad.update 入参说明
+
+| 字段      | 中文说明               |
+| --------- | ---------------------- |
+| `item_id` | 事项 ID                |
+| `action`  | 变更动作，取值来自 `notepad_action` |
+
+### agent.notepad.update 入参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_notepad_update_001",
+  "method": "agent.notepad.update",
+  "params": {
+    "request_meta": {
+      "trace_id": "trace_notepad_update_001",
+      "client_time": "2026-04-07T10:55:30+08:00"
+    },
+    "item_id": "todo_001",
+    "action": "complete"
+  }
+}
+```
+
+### agent.notepad.update 出参说明
+
+| 字段                     | 中文说明                    |
+| ------------------------ | --------------------------- |
+| `data.notepad_item`      | 更新后的事项；若删除则为 `null` |
+| `data.refresh_groups`    | 建议前端重新拉取的分组列表  |
+| `data.deleted_item_id`   | 若执行删除动作，返回被删除的事项 ID |
+
+### agent.notepad.update 出参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_notepad_update_001",
+  "result": {
+    "data": {
+      "notepad_item": {
+        "item_id": "todo_001",
+        "bucket": "closed",
+        "status": "completed",
+        "ended_at": "2026-04-07T10:55:31+08:00"
+      },
+      "refresh_groups": ["upcoming", "closed"],
+      "deleted_item_id": null
+    },
+    "meta": {
+      "server_time": "2026-04-07T10:55:31+08:00"
+    },
+    "warnings": []
+  }
+}
+```
+
+---
+
+### 8.2.9 `agent.notepad.convert_to_task`
 
 - **请求方式**：JSON-RPC 2.0
 - **接口调用时机**：用户点击“交给 Agent 处理”时
 - **系统处理**：将事项转成任务，并保留来源关系
 - **入参**：事项 ID、确认标记
-- **出参**：新任务对象
+- **出参**：新任务对象、更新后的来源事项、建议刷新的事项分组
 
 ### agent.notepad.convert_to_task 入参说明
 
@@ -1883,12 +1998,16 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ### agent.notepad.convert_to_task 出参说明
 
-| 字段                    | 中文说明              |
-| ----------------------- | --------------------- |
-| `data.task.task_id`     | 新任务 ID             |
-| `data.task.title`       | 任务标题              |
-| `data.task.source_type` | 来源类型，通常为 `todo` |
-| `data.task.status`      | 初始任务状态          |
+| 字段                         | 中文说明                        |
+| ---------------------------- | ------------------------------- |
+| `data.task.task_id`          | 新任务 ID                       |
+| `data.task.title`            | 任务标题                        |
+| `data.task.source_type`      | 来源类型，通常为 `todo`         |
+| `data.task.status`           | 初始任务状态                    |
+| `data.notepad_item.item_id`  | 来源事项 ID                     |
+| `data.notepad_item.bucket`   | 来源事项仍所在的 bucket         |
+| `data.notepad_item.linked_task_id` | 来源事项关联的新 task ID |
+| `data.refresh_groups`        | 建议前端重新拉取的事项分组列表  |
 
 ### agent.notepad.convert_to_task 出参示例
 
@@ -1902,8 +2021,14 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
         "task_id": "task_401",
         "title": "整理 Q3 复盘要点",
         "source_type": "todo",
-        "status": "processing"
-      }
+        "status": "confirming_intent"
+      },
+      "notepad_item": {
+        "item_id": "todo_001",
+        "bucket": "upcoming",
+        "linked_task_id": "task_401"
+      },
+      "refresh_groups": ["upcoming"]
     },
     "meta": {
       "server_time": "2026-04-07T10:56:01+08:00"
