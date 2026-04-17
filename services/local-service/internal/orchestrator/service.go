@@ -312,15 +312,18 @@ func (s *Service) StartTask(params map[string]any) (map[string]any, error) {
 	return response, nil
 }
 
-// ConfirmTask 确认Task。
-
-// ConfirmTask 处理 agent.task.confirm。
-// 这条路径会把确认后的意图写回运行态，并继续推进执行、授权挂起或正式交付。
+// ConfirmTask handles agent.task.confirm.
+// It only accepts tasks that are still waiting in the intent confirmation phase,
+// then either keeps clarification open, applies a corrected intent, or confirms
+// the stored intent before continuing through governance and delivery.
 func (s *Service) ConfirmTask(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	task, ok := s.runEngine.GetTask(taskID)
 	if !ok {
 		return nil, ErrTaskNotFound
+	}
+	if task.Status != "confirming_intent" {
+		return nil, ErrTaskStatusInvalid
 	}
 	confirmed := boolValue(params, "confirmed", false)
 	correctedIntent := mapValue(params, "corrected_intent")
