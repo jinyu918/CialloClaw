@@ -753,9 +753,17 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 		return nil, fmt.Errorf("unsupported task control action: %s", action)
 	}
 	wasHumanLoop := false
+	var reviewDecision map[string]any
 	if action == "resume" {
 		if existingTask, ok := s.runEngine.GetTask(taskID); ok {
 			wasHumanLoop = taskIsBlockedHumanLoop(existingTask)
+		}
+		if wasHumanLoop {
+			decision, decisionErr := humanReviewDecisionFromParams(params)
+			if decisionErr != nil {
+				return nil, decisionErr
+			}
+			reviewDecision = decision
 		}
 	}
 	bubble := s.delivery.BuildBubbleMessage(taskID, "status", controlBubbleText(action), currentTimeFromTask(s.runEngine, taskID))
@@ -773,7 +781,7 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 		}
 	}
 	if action == "resume" && wasHumanLoop {
-		if traceResumedTask, traceBubble, _, resumed, resumeErr := s.resumeHumanLoopTask(updatedTask); resumeErr != nil {
+		if traceResumedTask, traceBubble, _, resumed, resumeErr := s.resumeHumanLoopTask(updatedTask, reviewDecision); resumeErr != nil {
 			return nil, resumeErr
 		} else if resumed {
 			updatedTask = traceResumedTask
@@ -4163,7 +4171,7 @@ func (s *Service) captureExecutionTrace(task runengine.TaskRecord, snapshot cont
 	return capture, nil
 }
 
-func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord) (runengine.TaskRecord, map[string]any, map[string]any, bool, error) {
+func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord, reviewDecision map[string]any) (runengine.TaskRecord, map[string]any, map[string]any, bool, error) {
 	if !resumedFromHumanLoop(task) {
 		return runengine.TaskRecord{}, nil, nil, false, nil
 	}
@@ -4174,6 +4182,21 @@ func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord) (runengine.Task
 	escalation := mapValue(pendingExecution, "escalation")
 	if len(escalation) == 0 {
 		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	decision := strings.TrimSpace(stringValue(reviewDecision, "decision", ""))
+	if decision == "" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("review.decision is required for human review resume")
+	}
+	if decision != "approve" && decision != "replan" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("unsupported review decision: %s", decision)
+	}
+	escalation["review_result"] = decision
+	escalation["reviewed_at"] = currentTimeFromTask(s.runEngine, task.TaskID)
+	if reviewerID := strings.TrimSpace(stringValue(reviewDecision, "reviewer_id", "")); reviewerID != "" {
+		escalation["reviewer_id"] = reviewerID
+	}
+	if notes := strings.TrimSpace(stringValue(reviewDecision, "notes", "")); notes != "" {
+		escalation["review_notes"] = notes
 	}
 	suggestedAction := firstNonEmptyString(stringValue(escalation, "suggested_action", ""), "review_and_replan")
 	if suggestedAction != "review_and_replan" {
@@ -4188,6 +4211,20 @@ func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord) (runengine.Task
 		bubble = resultBubble
 	}
 	return updatedTask, bubble, deliveryResult, true, nil
+}
+
+func humanReviewDecisionFromParams(params map[string]any) (map[string]any, error) {
+	decision := mapValue(params, "review")
+	if len(decision) == 0 {
+		decision = mapValue(params, "human_review")
+	}
+	if len(decision) == 0 {
+		return nil, fmt.Errorf("review decision is required to resume a human review task")
+	}
+	if strings.TrimSpace(stringValue(decision, "decision", "")) == "" {
+		return nil, fmt.Errorf("review.decision is required to resume a human review task")
+	}
+	return cloneMap(decision), nil
 }
 
 func (s *Service) maybeEscalateHumanLoop(task runengine.TaskRecord, capture traceeval.CaptureResult, executionResult ...execution.Result) (runengine.TaskRecord, map[string]any, bool) {

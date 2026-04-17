@@ -1696,7 +1696,15 @@ func TestServiceTaskControlResumeExecutesHumanLoopTask(t *testing.T) {
 		t.Fatal("expected human escalation to succeed")
 	}
 
-	result, err := service.TaskControl(map[string]any{"task_id": taskID, "action": "resume"})
+	result, err := service.TaskControl(map[string]any{
+		"task_id": taskID,
+		"action":  "resume",
+		"review": map[string]any{
+			"decision":    "approve",
+			"reviewer_id": "reviewer_001",
+			"notes":       "looks safe to continue",
+		},
+	})
 	if err != nil {
 		t.Fatalf("task control resume failed: %v", err)
 	}
@@ -1737,7 +1745,15 @@ func TestServiceTaskControlResumeConsumesHumanLoopPendingPayload(t *testing.T) {
 	}, map[string]any{"task_id": task.TaskID, "type": "status", "text": "需要人工介入"}); !ok {
 		t.Fatal("expected human escalation to succeed")
 	}
-	result, err := service.TaskControl(map[string]any{"task_id": task.TaskID, "action": "resume"})
+	result, err := service.TaskControl(map[string]any{
+		"task_id": task.TaskID,
+		"action":  "resume",
+		"review": map[string]any{
+			"decision":    "replan",
+			"reviewer_id": "reviewer_002",
+			"notes":       "replan then continue",
+		},
+	})
 	if err != nil {
 		t.Fatalf("resume task failed: %v", err)
 	}
@@ -1750,6 +1766,34 @@ func TestServiceTaskControlResumeConsumesHumanLoopPendingPayload(t *testing.T) {
 	}
 	if record.PendingExecution != nil {
 		t.Fatalf("expected orchestrator resume path to consume pending escalation payload, got %+v", record.PendingExecution)
+	}
+}
+
+func TestServiceTaskControlResumeHumanLoopRequiresReviewDecision(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "Recovered after review.")
+	task := service.runEngine.CreateTask(runengine.CreateTaskInput{
+		SessionID:   "sess_hitl_missing_review",
+		Title:       "总结：Please summarize this after review",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "summarize", "arguments": map[string]any{}},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+	})
+	if _, ok := service.runEngine.EscalateHumanLoop(task.TaskID, map[string]any{
+		"reason":           "doom_loop",
+		"status":           "pending",
+		"suggested_action": "review_and_replan",
+	}, map[string]any{"task_id": task.TaskID, "type": "status", "text": "需要人工介入"}); !ok {
+		t.Fatal("expected human escalation to succeed")
+	}
+	_, err := service.TaskControl(map[string]any{"task_id": task.TaskID, "action": "resume"})
+	if err == nil || !strings.Contains(err.Error(), "review decision is required") {
+		t.Fatalf("expected missing review decision to block resume, got %v", err)
+	}
+	record, ok := service.runEngine.GetTask(task.TaskID)
+	if !ok || record.Status != "blocked" || record.CurrentStep != "human_in_loop" {
+		t.Fatalf("expected task to remain blocked in human review, got %+v", record)
 	}
 }
 
