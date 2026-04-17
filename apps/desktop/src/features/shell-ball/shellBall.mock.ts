@@ -76,7 +76,7 @@ export function createMockShellBallConfirmResult(input: {
   correctedIntent?: IntentPayload;
 }): ShellBallMockResult {
   const hasCorrectedIntent = Boolean(input.correctedIntent?.name);
-  const taskStatus = input.confirmed ? "completed" : hasCorrectedIntent ? "processing" : "confirming_intent";
+  const taskStatus = input.confirmed || hasCorrectedIntent ? "completed" : "confirming_intent";
   const intentName = input.confirmed
     ? "offline_mock_confirmed"
     : hasCorrectedIntent
