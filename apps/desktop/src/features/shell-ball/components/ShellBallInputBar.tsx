@@ -4,55 +4,24 @@ import { ArrowUp, Paperclip } from "lucide-react";
 import { cn } from "../../../utils/cn";
 import type { ShellBallVoicePreview } from "../shellBall.interaction";
 import type { ShellBallInputBarMode } from "../shellBall.types";
+import {
+  clampShellBallInputResizeDimension,
+  focusShellBallInputField,
+  measureShellBallInputContentWidth,
+  resolveShellBallInputAutoWidth,
+  resolveShellBallInputFieldHeight,
+  resolveShellBallInputFieldWidth,
+  resolveShellBallInputMaxHeight,
+  resolveShellBallInputMaxWidth,
+  SHELL_BALL_INPUT_MAX_VISIBLE_LINES,
+} from "./shellBallInputBar.helpers";
 
 type ShellBallInputManualSize = {
   width: number | null;
   height: number | null;
 };
 
-export const SHELL_BALL_INPUT_MAX_RESIZE_WIDTH_PX = 512;
-export const SHELL_BALL_INPUT_MAX_RESIZE_HEIGHT_PX = 192;
-
 const useShellBallInputLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
-
-// clampShellBallInputResizeDimension keeps manual textarea resizing inside the
-// bounded hover-input footprint so the shell-ball helper does not turn into a
-// full chat editor or spill past the helper-window placement budget.
-export function clampShellBallInputResizeDimension(value: number, min: number, max: number) {
-  if (max <= min) {
-    return Math.round(min);
-  }
-
-  return Math.round(Math.min(Math.max(value, min), max));
-}
-
-// resolveShellBallInputFieldHeight decides the visible textarea height after
-// combining content-driven autosize with an optional manual resize override.
-// Once the resolved height reaches the bounded maximum, the textarea should
-// stop growing and rely on internal scrolling for additional content.
-export function resolveShellBallInputFieldHeight(input: {
-  contentHeight: number;
-  manualHeight: number | null;
-  minHeight: number;
-  maxHeight: number;
-}) {
-  const preferredHeight = input.manualHeight ?? input.contentHeight;
-  return clampShellBallInputResizeDimension(preferredHeight, input.minHeight, input.maxHeight);
-}
-
-// focusShellBallInputField restores keyboard focus without selecting the whole
-// draft. The hover input should preserve the user's caret context when helper
-// windows request focus during drag-drop or selected-text handoff.
-export function focusShellBallInputField(field: Pick<HTMLTextAreaElement, "focus" | "setSelectionRange" | "value">) {
-  field.focus();
-
-  try {
-    const cursorOffset = field.value.length;
-    field.setSelectionRange(cursorOffset, cursorOffset);
-  } catch {
-    // Ignore selection-range errors from environments that do not expose a live selection API.
-  }
-}
 
 type ShellBallInputBarProps = {
   mode: ShellBallInputBarMode;
@@ -64,6 +33,7 @@ type ShellBallInputBarProps = {
   onAttachFile: () => void;
   onSubmit: () => void;
   onFocusChange: (focused: boolean) => void;
+  onResizeStateChange?: (resizing: boolean) => void;
   onCompositionStateChange?: (composing: boolean) => void;
   onTransientInputActivity?: () => void;
 };
@@ -78,6 +48,7 @@ export function ShellBallInputBar({
   onAttachFile,
   onSubmit,
   onFocusChange,
+  onResizeStateChange = () => {},
   onCompositionStateChange = () => {},
   onTransientInputActivity = () => {},
 }: ShellBallInputBarProps) {
@@ -86,6 +57,7 @@ export function ShellBallInputBar({
   const defaultFieldWidthRef = useRef(0);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [manualSize, setManualSize] = useState<ShellBallInputManualSize>({ width: null, height: null });
+  const [resolvedFieldWidth, setResolvedFieldWidth] = useState<number | null>(null);
   const [resolvedFieldHeight, setResolvedFieldHeight] = useState<number | null>(null);
   const [contentOverflowing, setContentOverflowing] = useState(false);
   const trimmedValue = value.trim();
@@ -126,6 +98,9 @@ export function ShellBallInputBar({
     }
 
     if (isHidden || isVoice) {
+      if (resolvedFieldWidth !== null) {
+        setResolvedFieldWidth(null);
+      }
       if (resolvedFieldHeight !== null) {
         setResolvedFieldHeight(null);
       }
@@ -135,24 +110,59 @@ export function ShellBallInputBar({
       return;
     }
 
-    if (manualSize.width === null) {
+    if (defaultFieldWidthRef.current === 0) {
       defaultFieldWidthRef.current = field.getBoundingClientRect().width;
     }
 
     const computedStyle = window.getComputedStyle(field);
+    const minWidth = defaultFieldWidthRef.current > 0 ? defaultFieldWidthRef.current : field.getBoundingClientRect().width;
+    const maxWidth = resolveShellBallInputMaxWidth(minWidth);
     const minHeight = parseFloat(computedStyle.minHeight) || field.getBoundingClientRect().height;
+    const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
+    const paddingRight = parseFloat(computedStyle.paddingRight) || 0;
+    const maxHeight = resolveShellBallInputMaxHeight({
+      lineHeight: parseFloat(computedStyle.lineHeight) || minHeight / SHELL_BALL_INPUT_MAX_VISIBLE_LINES,
+      paddingTop: parseFloat(computedStyle.paddingTop) || 0,
+      paddingBottom: parseFloat(computedStyle.paddingBottom) || 0,
+      minHeight,
+    });
+    const font = computedStyle.font || `${computedStyle.fontStyle} ${computedStyle.fontWeight} ${computedStyle.fontSize} ${computedStyle.fontFamily}`;
+    const autoWidth = resolveShellBallInputAutoWidth({
+      contentWidth: measureShellBallInputContentWidth({
+        value,
+        font,
+        letterSpacing: parseFloat(computedStyle.letterSpacing) || 0,
+        paddingLeft,
+        paddingRight,
+      }),
+      minWidth,
+      maxWidth,
+    });
+    const nextWidth = resolveShellBallInputFieldWidth({
+      autoWidth,
+      manualWidth: manualSize.width,
+      minWidth,
+      maxWidth,
+    });
+    const previousWidth = field.style.width;
     const previousHeight = field.style.height;
+    field.style.width = `${nextWidth}px`;
     field.style.height = "0px";
     const contentHeight = field.scrollHeight;
+    field.style.width = previousWidth;
     field.style.height = previousHeight;
 
     const nextHeight = resolveShellBallInputFieldHeight({
       contentHeight,
       manualHeight: manualSize.height,
       minHeight,
-      maxHeight: SHELL_BALL_INPUT_MAX_RESIZE_HEIGHT_PX,
+      maxHeight,
     });
     const nextOverflow = contentHeight > nextHeight + 1;
+
+    if (resolvedFieldWidth !== nextWidth) {
+      setResolvedFieldWidth(nextWidth);
+    }
 
     if (resolvedFieldHeight !== nextHeight) {
       setResolvedFieldHeight(nextHeight);
@@ -161,7 +171,7 @@ export function ShellBallInputBar({
     if (contentOverflowing !== nextOverflow) {
       setContentOverflowing(nextOverflow);
     }
-  }, [contentOverflowing, isHidden, isVoice, manualSize.height, manualSize.width, resolvedFieldHeight, value]);
+  }, [contentOverflowing, isHidden, isVoice, manualSize.height, manualSize.width, resolvedFieldHeight, resolvedFieldWidth, value]);
 
   useEffect(() => {
     return () => {
@@ -210,10 +220,21 @@ export function ShellBallInputBar({
     event.preventDefault();
     event.stopPropagation();
 
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+
     const rect = field.getBoundingClientRect();
     const computedStyle = window.getComputedStyle(field);
     const minHeight = parseFloat(computedStyle.minHeight) || rect.height;
-    const minWidth = defaultFieldWidthRef.current > 0 ? defaultFieldWidthRef.current : rect.width;
+    const initialWidth = defaultFieldWidthRef.current > 0 ? defaultFieldWidthRef.current : rect.width;
+    const minWidth = initialWidth;
+    const maxWidth = resolveShellBallInputMaxWidth(initialWidth);
+    const maxHeight = resolveShellBallInputMaxHeight({
+      lineHeight: parseFloat(computedStyle.lineHeight) || minHeight / SHELL_BALL_INPUT_MAX_VISIBLE_LINES,
+      paddingTop: parseFloat(computedStyle.paddingTop) || 0,
+      paddingBottom: parseFloat(computedStyle.paddingBottom) || 0,
+      minHeight,
+    });
     const startWidth = manualSize.width ?? rect.width;
     const startHeight = manualSize.height ?? rect.height;
     const startX = event.clientX;
@@ -226,25 +247,53 @@ export function ShellBallInputBar({
     document.body.style.cursor = "nwse-resize";
     document.body.style.userSelect = "none";
 
+    onResizeStateChange(true);
+
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // Ignore pointer-capture failures from environments that do not support captured dragging.
+    }
+
+    let cleanedUp = false;
+
     const cleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+
+      cleanedUp = true;
+
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", cleanup);
       window.removeEventListener("pointercancel", cleanup);
+      window.removeEventListener("blur", cleanup);
+      handle.removeEventListener("lostpointercapture", cleanup);
+
+      try {
+        if (handle.hasPointerCapture(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // Ignore release failures when the browser already dropped pointer capture.
+      }
+
       document.body.style.cursor = previousBodyCursor;
       document.body.style.userSelect = previousBodyUserSelect;
       resizeCleanupRef.current = null;
+      onResizeStateChange(false);
     };
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const nextWidth = clampShellBallInputResizeDimension(
         startWidth + moveEvent.clientX - startX,
         minWidth,
-        SHELL_BALL_INPUT_MAX_RESIZE_WIDTH_PX,
+        maxWidth,
       );
       const nextHeight = clampShellBallInputResizeDimension(
         startHeight + moveEvent.clientY - startY,
         minHeight,
-        SHELL_BALL_INPUT_MAX_RESIZE_HEIGHT_PX,
+        maxHeight,
       );
 
       setManualSize((current) => {
@@ -263,12 +312,14 @@ export function ShellBallInputBar({
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", cleanup);
     window.addEventListener("pointercancel", cleanup);
-  }, [manualSize.height, manualSize.width]);
+    window.addEventListener("blur", cleanup);
+    handle.addEventListener("lostpointercapture", cleanup);
+  }, [manualSize.height, manualSize.width, onResizeStateChange]);
 
   const textareaStyle: CSSProperties = {
     height: resolvedFieldHeight ?? undefined,
     overflowY: contentOverflowing ? "auto" : "hidden",
-    width: manualSize.width ?? undefined,
+    width: resolvedFieldWidth ?? undefined,
   };
 
   return (

@@ -44,11 +44,18 @@ import { extractShellBallDroppedText, resolveShellBallTextDropEffect, ShellBallS
 import { shouldShowShellBallDemoSwitcher } from "./shellBall.dev";
 import { shellBallWindowLabels, shellBallWindowPermissions } from "../../platform/shellBallWindowController";
 import {
-  clampShellBallInputResizeDimension,
-  focusShellBallInputField,
-  resolveShellBallInputFieldHeight,
   ShellBallInputBar,
 } from "./components/ShellBallInputBar";
+import {
+  clampShellBallInputResizeDimension,
+  focusShellBallInputField,
+  measureShellBallInputContentWidth,
+  resolveShellBallInputAutoWidth,
+  resolveShellBallInputFieldHeight,
+  resolveShellBallInputFieldWidth,
+  resolveShellBallInputMaxHeight,
+  resolveShellBallInputMaxWidth,
+} from "./components/shellBallInputBar.helpers";
 import type { ShellBallTransitionResult } from "./shellBall.types";
 import { shellBallVisualStates } from "./shellBall.types";
 import {
@@ -1765,7 +1772,7 @@ test("shell-ball interaction contract leaves the region only from hoverable rest
   );
 });
 
-test("shell-ball interaction contract retains hover input only while focus is active", () => {
+test("shell-ball interaction contract retains hover input while focused or draft remains", () => {
   assert.equal(
     shouldRetainShellBallHoverInput({
       regionActive: false,
@@ -1778,10 +1785,19 @@ test("shell-ball interaction contract retains hover input only while focus is ac
   assert.equal(
     shouldRetainShellBallHoverInput({
       regionActive: false,
+      inputFocused: true,
+      hasDraft: true,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldRetainShellBallHoverInput({
+      regionActive: false,
       inputFocused: false,
       hasDraft: true,
     }),
-    false,
+    true,
   );
 
   assert.deepEqual(
@@ -2670,25 +2686,87 @@ test("shell-ball input helpers clamp manual resize and autosize heights", () => 
   assert.equal(clampShellBallInputResizeDimension(96.4, 120, 240), 120);
   assert.equal(clampShellBallInputResizeDimension(188.2, 120, 240), 188);
   assert.equal(clampShellBallInputResizeDimension(312.7, 120, 240), 240);
+  assert.equal(resolveShellBallInputAutoWidth({ contentWidth: 448, minWidth: 240, maxWidth: 360 }), 360);
+  assert.equal(resolveShellBallInputFieldWidth({ autoWidth: 300, manualWidth: null, minWidth: 240, maxWidth: 360 }), 300);
+  assert.equal(resolveShellBallInputFieldWidth({ autoWidth: 320, manualWidth: 280, minWidth: 240, maxWidth: 360 }), 320);
+  assert.equal(resolveShellBallInputFieldWidth({ autoWidth: 260, manualWidth: 340, minWidth: 240, maxWidth: 360 }), 340);
+  assert.equal(resolveShellBallInputMaxWidth(240), 360);
+  assert.equal(
+    resolveShellBallInputMaxHeight({
+      lineHeight: 22,
+      paddingTop: 2,
+      paddingBottom: 4,
+      minHeight: 44,
+    }),
+    72,
+  );
 
   assert.equal(
     resolveShellBallInputFieldHeight({
-      contentHeight: 224,
+      contentHeight: 96,
       manualHeight: null,
       minHeight: 44,
-      maxHeight: 192,
+      maxHeight: 72,
     }),
-    192,
+    72,
   );
   assert.equal(
     resolveShellBallInputFieldHeight({
-      contentHeight: 224,
-      manualHeight: 96,
+      contentHeight: 96,
+      manualHeight: 58,
       minHeight: 44,
-      maxHeight: 192,
+      maxHeight: 72,
     }),
-    96,
+    72,
   );
+  assert.equal(
+    resolveShellBallInputFieldHeight({
+      contentHeight: 52,
+      manualHeight: 58,
+      minHeight: 44,
+      maxHeight: 72,
+    }),
+    58,
+  );
+});
+
+test("shell-ball input width helper measures the widest line plus padding", () => {
+  const originalDocument = globalThis.document;
+  const canvasContext = {
+    font: "",
+    measureText(value: string) {
+      return {
+        width: value.length * 10,
+      };
+    },
+  };
+
+  globalThis.document = {
+    createElement(tagName: string) {
+      assert.equal(tagName, "canvas");
+      return {
+        getContext(kind: string) {
+          assert.equal(kind, "2d");
+          return canvasContext;
+        },
+      };
+    },
+  } as unknown as Document;
+
+  try {
+    assert.equal(
+      measureShellBallInputContentWidth({
+        value: "short\nlonger",
+        font: "16px serif",
+        letterSpacing: 1,
+        paddingLeft: 4,
+        paddingRight: 6,
+      }),
+      69,
+    );
+  } finally {
+    globalThis.document = originalDocument;
+  }
 });
 
 test("shell-ball input focus helper keeps the caret at the end of the draft", () => {
@@ -4268,6 +4346,20 @@ test("shell-ball input window skips window-focus pointer handling for the resize
   const inputWindowSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/ShellBallInputWindow.tsx"), "utf8");
 
   assert.match(inputWindowSource, /target\.closest\('\[data-shell-ball-input-resize-handle="true"\]'\)/);
+  assert.match(inputWindowSource, /clickThrough:\s*false/);
+  assert.match(inputWindowSource, /if \(isResizingRef\.current\) \{[\s\S]*return;[\s\S]*\}/);
+  assert.match(inputWindowSource, /function handlePointerLeave\(\) \{[\s\S]*void emitShellBallInputHover\(false\);[\s\S]*\}/);
+  assert.doesNotMatch(inputWindowSource, /activeElement\.blur\(\)/);
+});
+
+test("shell-ball resize drag keeps pointer capture and releases resize state on cleanup", () => {
+  const inputBarSource = readFileSync(resolve(desktopRoot, "src/features/shell-ball/components/ShellBallInputBar.tsx"), "utf8");
+
+  assert.match(inputBarSource, /onResizeStateChange\(true\);/);
+  assert.match(inputBarSource, /handle\.setPointerCapture\(pointerId\);/);
+  assert.match(inputBarSource, /handle\.addEventListener\("lostpointercapture", cleanup\);/);
+  assert.match(inputBarSource, /window\.addEventListener\("blur", cleanup\);/);
+  assert.match(inputBarSource, /onResizeStateChange\(false\);/);
 });
 
 test("shell-ball app dashboard-open gate stays blocked for consumed or non-resting double clicks", () => {

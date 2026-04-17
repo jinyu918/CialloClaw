@@ -88,7 +88,7 @@ export function getShellBallInputBarMode(state: ShellBallVisualState): ShellBall
 }
 
 export function shouldRetainShellBallHoverInput(input: ShellBallHoverRetentionInput): boolean {
-  return !input.regionActive && input.inputFocused;
+  return !input.regionActive && (input.inputFocused || input.hasDraft);
 }
 
 export function getShellBallGestureAxisIntent(input: {
