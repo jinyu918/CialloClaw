@@ -1,11 +1,13 @@
 import type {
   AgentSecurityAuditListParams,
   AgentSecurityAuditListResult,
+  AgentSecurityApprovalRespondResult,
   AgentSecurityPendingListParams,
   AgentSecurityPendingListResult,
   AgentSecurityRestoreApplyParams,
   AgentSecurityRestoreApplyResult,
   AgentSecurityRestorePointsListParams,
+  AgentSecurityRestoreRespondResult,
   AgentSecurityRestorePointsListResult,
   AgentSecurityRespondParams,
   AgentSecurityRespondResult,
@@ -82,6 +84,18 @@ export type SecurityRestoreApplyOutcome = {
   response: AgentSecurityRestoreApplyResult;
   rpcContext: SecurityRpcContext;
 };
+
+export function isSecurityApprovalRespondResult(
+  response: AgentSecurityRespondResult,
+): response is AgentSecurityApprovalRespondResult {
+  return "authorization_record" in response;
+}
+
+export function isSecurityRestoreRespondResult(
+  response: AgentSecurityRespondResult,
+): response is AgentSecurityRestoreRespondResult {
+  return "recovery_point" in response;
+}
 
 function createRequestMeta(): RequestMeta {
   return {

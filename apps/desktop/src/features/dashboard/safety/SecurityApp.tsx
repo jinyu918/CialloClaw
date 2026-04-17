@@ -44,6 +44,7 @@ import {
   getInitialSecurityModuleData,
   loadSecurityPendingApprovals,
   applySecurityRestorePoint,
+  isSecurityRestoreRespondResult,
   loadSecurityAuditRecords,
   loadSecurityModuleData,
   loadSecurityModuleRpcData,
@@ -1136,6 +1137,10 @@ export function SecurityApp() {
       if (routeDrivenDetailKey === approvalRouteKey) {
         setApprovalSnapshot(null);
         setRouteDrivenDetailKey(null);
+      }
+      setSubscribedTaskId(result.response.task.task_id);
+      if (isSecurityRestoreRespondResult(result.response)) {
+        setRestorePointSnapshot(result.response.recovery_point);
       }
       setLastResolvedApproval(result);
       for (const queryKey of taskRefreshPlan.invalidatePrefixes) {
