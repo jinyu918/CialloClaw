@@ -919,14 +919,13 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 	}, nil
 }
 
-// DashboardOverviewGet 处理当前模块的相关逻辑。
-
-// DashboardOverviewGet 处理 agent.dashboard.overview.get。
+// DashboardOverviewGet handles `agent.dashboard.overview.get`.
 func (s *Service) DashboardOverviewGet(params map[string]any) (map[string]any, error) {
-	unfinishedTasks := s.queryTaskView("unfinished", "updated_at", "desc")
-	finishedTasks := s.queryTaskView("finished", "finished_at", "desc")
+	queryViews := newTaskQueryViews(s)
+	unfinishedTasks := queryViews.tasks("unfinished", "updated_at", "desc")
+	finishedTasks := queryViews.tasks("finished", "finished_at", "desc")
 	pendingApprovals, runtimePendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
-	needStorageFallback := !s.hasRuntimeQueryState()
+	needStorageFallback := !queryViews.hasRuntimeState()
 
 	pendingApprovals = pendingApprovalsFromTasks(unfinishedTasks)
 	pendingTotal := len(pendingApprovals)
@@ -1047,14 +1046,13 @@ func pendingApprovalsFromTasks(tasks []runengine.TaskRecord) []map[string]any {
 	return items
 }
 
-// DashboardModuleGet 处理当前模块的相关逻辑。
-
-// DashboardModuleGet 处理 agent.dashboard.module.get。
+// DashboardModuleGet handles `agent.dashboard.module.get`.
 func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, error) {
 	module := stringValue(params, "module", "mirror")
 	tab := stringValue(params, "tab", "daily_summary")
-	finishedTasks := s.queryTaskView("finished", "finished_at", "desc")
-	unfinishedTasks := s.queryTaskView("unfinished", "updated_at", "desc")
+	queryViews := newTaskQueryViews(s)
+	finishedTasks := queryViews.tasks("finished", "finished_at", "desc")
+	unfinishedTasks := queryViews.tasks("unfinished", "updated_at", "desc")
 	_, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
 	if pendingTotal == 0 {
 		pendingTotal = countPendingApprovalTasks(unfinishedTasks)
@@ -1076,12 +1074,10 @@ func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, err
 	}, nil
 }
 
-// MirrorOverviewGet 处理当前模块的相关逻辑。
-
-// MirrorOverviewGet 处理 agent.mirror.overview.get。
+// MirrorOverviewGet handles `agent.mirror.overview.get`.
 func (s *Service) MirrorOverviewGet(params map[string]any) (map[string]any, error) {
 	_ = params
-	finishedTasks := s.queryTaskView("finished", "finished_at", "desc")
+	finishedTasks := newTaskQueryViews(s).tasks("finished", "finished_at", "desc")
 	memoryReferences := collectMirrorReferences(finishedTasks)
 	return map[string]any{
 		"history_summary": buildMirrorHistorySummary(finishedTasks, memoryReferences),
@@ -1095,13 +1091,12 @@ func (s *Service) MirrorOverviewGet(params map[string]any) (map[string]any, erro
 	}, nil
 }
 
-// SecuritySummaryGet 处理当前模块的相关逻辑。
-
-// SecuritySummaryGet 处理 agent.security.summary.get。
+// SecuritySummaryGet handles `agent.security.summary.get`.
 func (s *Service) SecuritySummaryGet() (map[string]any, error) {
 	_, pendingTotal := s.runEngine.PendingApprovalRequests(20, 0)
-	unfinishedTasks := s.queryTaskView("unfinished", "updated_at", "desc")
-	finishedTasks := s.queryTaskView("finished", "finished_at", "desc")
+	queryViews := newTaskQueryViews(s)
+	unfinishedTasks := queryViews.tasks("unfinished", "updated_at", "desc")
+	finishedTasks := queryViews.tasks("finished", "finished_at", "desc")
 	if pendingTotal == 0 {
 		pendingTotal = countPendingApprovalTasks(unfinishedTasks)
 	}
@@ -1679,27 +1674,64 @@ func (s *Service) loadAllTasksFromStorage() []runengine.TaskRecord {
 	return tasks
 }
 
-// queryTaskView builds one task-centric read model by merging runtime and
-// durable task snapshots, then sorting the merged result with the same rules
-// used by list/detail/dashboard queries.
-func (s *Service) queryTaskView(group, sortBy, sortOrder string) []runengine.TaskRecord {
-	runtimeTasks, _ := s.runEngine.ListTasks(group, sortBy, sortOrder, 0, 0)
-	storageTasks := filterAndSortTasks(s.loadAllTasksFromStorage(), group, sortBy, sortOrder)
-	merged := mergeTaskLists(runtimeTasks, storageTasks)
-	if len(merged) == 0 {
-		return nil
+// taskQueryViews caches runtime and storage-backed task snapshots for one
+// request so overview endpoints can reuse one merged task-centric read model
+// without reloading the full task table for every widget.
+type taskQueryViews struct {
+	service      *Service
+	runtimeTasks map[string][]runengine.TaskRecord
+	mergedTasks  map[string][]runengine.TaskRecord
+	storageTasks []runengine.TaskRecord
+	storageReady bool
+}
+
+func newTaskQueryViews(service *Service) *taskQueryViews {
+	return &taskQueryViews{
+		service:      service,
+		runtimeTasks: make(map[string][]runengine.TaskRecord, 2),
+		mergedTasks:  make(map[string][]runengine.TaskRecord, 2),
 	}
-	runengineSortTaskRecords(merged, sortBy, sortOrder)
+}
+
+// tasks returns one merged task-centric view for the requested group and sort
+// order, reusing the same storage snapshot for the whole RPC request.
+func (q *taskQueryViews) tasks(group, sortBy, sortOrder string) []runengine.TaskRecord {
+	key := strings.Join([]string{group, sortBy, sortOrder}, "|")
+	if tasks, ok := q.mergedTasks[key]; ok {
+		return tasks
+	}
+	runtimeTasks := q.runtime(group, sortBy, sortOrder)
+	storageTasks := filterAndSortTasks(q.loadStorage(), group, sortBy, sortOrder)
+	merged := mergeTaskLists(runtimeTasks, storageTasks)
+	if len(merged) > 0 {
+		runengineSortTaskRecords(merged, sortBy, sortOrder)
+	}
+	q.mergedTasks[key] = merged
 	return merged
 }
 
-func (s *Service) hasRuntimeQueryState() bool {
-	unfinishedTasks, _ := s.runEngine.ListTasks("unfinished", "updated_at", "desc", 0, 0)
-	if len(unfinishedTasks) > 0 {
-		return true
+func (q *taskQueryViews) hasRuntimeState() bool {
+	return len(q.runtime("unfinished", "updated_at", "desc")) > 0 ||
+		len(q.runtime("finished", "finished_at", "desc")) > 0
+}
+
+func (q *taskQueryViews) runtime(group, sortBy, sortOrder string) []runengine.TaskRecord {
+	key := strings.Join([]string{group, sortBy, sortOrder}, "|")
+	if tasks, ok := q.runtimeTasks[key]; ok {
+		return tasks
 	}
-	finishedTasks, _ := s.runEngine.ListTasks("finished", "finished_at", "desc", 0, 0)
-	return len(finishedTasks) > 0
+	tasks, _ := q.service.runEngine.ListTasks(group, sortBy, sortOrder, 0, 0)
+	q.runtimeTasks[key] = tasks
+	return tasks
+}
+
+func (q *taskQueryViews) loadStorage() []runengine.TaskRecord {
+	if q.storageReady {
+		return q.storageTasks
+	}
+	q.storageTasks = q.service.loadAllTasksFromStorage()
+	q.storageReady = true
+	return q.storageTasks
 }
 
 func filterAndSortTasks(tasks []runengine.TaskRecord, group, sortBy, sortOrder string) []runengine.TaskRecord {

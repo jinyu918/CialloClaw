@@ -187,6 +187,11 @@ type failingTodoStore struct {
 	replaceErr error
 }
 
+type countingTaskRunStore struct {
+	base      storage.TaskRunStore
+	loadCalls int
+}
+
 func (s failingTodoStore) ReplaceTodoState(ctx context.Context, items []storage.TodoItemRecord, rules []storage.RecurringRuleRecord) error {
 	if s.replaceErr != nil {
 		return s.replaceErr
@@ -202,6 +207,23 @@ func (s failingTodoStore) LoadTodoState(ctx context.Context) ([]storage.TodoItem
 		return nil, nil, nil
 	}
 	return s.base.LoadTodoState(ctx)
+}
+
+func (s *countingTaskRunStore) AllocateIdentifier(ctx context.Context, prefix string) (string, error) {
+	return s.base.AllocateIdentifier(ctx, prefix)
+}
+
+func (s *countingTaskRunStore) DeleteTaskRun(ctx context.Context, taskID string) error {
+	return s.base.DeleteTaskRun(ctx, taskID)
+}
+
+func (s *countingTaskRunStore) SaveTaskRun(ctx context.Context, record storage.TaskRunRecord) error {
+	return s.base.SaveTaskRun(ctx, record)
+}
+
+func (s *countingTaskRunStore) LoadTaskRuns(ctx context.Context) ([]storage.TaskRunRecord, error) {
+	s.loadCalls++
+	return s.base.LoadTaskRuns(ctx)
 }
 
 func (s stubModelClient) GenerateText(_ context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
@@ -340,6 +362,14 @@ func mutateRuntimeTask(t *testing.T, engine *runengine.Engine, taskID string, mu
 	}
 	record := recordValue.Interface().(*runengine.TaskRecord)
 	mutate(record)
+}
+
+func replaceTaskRunStore(t *testing.T, service *storage.Service, store storage.TaskRunStore) {
+	t.Helper()
+
+	serviceValue := reflect.ValueOf(service).Elem()
+	field := serviceValue.FieldByName("taskRunStore")
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
 }
 
 func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
@@ -3496,6 +3526,58 @@ func TestServiceDashboardOverviewResortsMergedRuntimeAndStoredTasks(t *testing.T
 	trustSummary := overview["trust_summary"].(map[string]any)
 	if trustSummary["pending_authorizations"] != 2 {
 		t.Fatalf("expected merged overview to count runtime and stored pending authorizations, got %+v", trustSummary)
+	}
+}
+
+func TestServiceDashboardOverviewLoadsStoredTasksOncePerRequest(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "single storage scan")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+
+	countingStore := &countingTaskRunStore{base: service.storage.TaskRunStore()}
+	replaceTaskRunStore(t, service.storage, countingStore)
+
+	if _, err := service.StartTask(map[string]any{
+		"session_id": "sess_overview_count",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "runtime task for overview count",
+		},
+		"intent": map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("start runtime task failed: %v", err)
+	}
+
+	if err := countingStore.SaveTaskRun(context.Background(), storage.TaskRunRecord{
+		TaskID:      "task_dashboard_count",
+		SessionID:   "sess_overview_count",
+		RunID:       "run_dashboard_count",
+		Title:       "stored task for overview count",
+		SourceType:  "hover_input",
+		Status:      "completed",
+		CurrentStep: "deliver_result",
+		RiskLevel:   "green",
+		StartedAt:   time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 4, 14, 12, 5, 0, 0, time.UTC),
+		FinishedAt:  timePointer(time.Date(2026, 4, 14, 12, 6, 0, 0, time.UTC)),
+	}); err != nil {
+		t.Fatalf("save task run failed: %v", err)
+	}
+
+	if _, err := service.DashboardOverviewGet(map[string]any{}); err != nil {
+		t.Fatalf("dashboard overview failed: %v", err)
+	}
+
+	if countingStore.loadCalls != 1 {
+		t.Fatalf("expected dashboard overview to load stored tasks once per request, got %d", countingStore.loadCalls)
 	}
 }
 
