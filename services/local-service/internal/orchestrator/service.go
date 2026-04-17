@@ -207,19 +207,19 @@ func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 			task = queuedTask
 			bubble = queueBubble
 		} else {
-		governedTask, governedResponse, handled, governanceErr := s.handleTaskGovernanceDecision(task, suggestion.Intent)
-		if governanceErr != nil {
-			return nil, governanceErr
-		}
-		if handled {
-			return governedResponse, nil
-		}
-		task = governedTask
-		var execErr error
-		task, bubble, deliveryResult, _, execErr = s.executeTask(task, snapshot, suggestion.Intent)
-		if execErr != nil {
-			return nil, execErr
-		}
+			governedTask, governedResponse, handled, governanceErr := s.handleTaskGovernanceDecision(task, suggestion.Intent)
+			if governanceErr != nil {
+				return nil, governanceErr
+			}
+			if handled {
+				return governedResponse, nil
+			}
+			task = governedTask
+			var execErr error
+			task, bubble, deliveryResult, _, execErr = s.executeTask(task, snapshot, suggestion.Intent)
+			if execErr != nil {
+				return nil, execErr
+			}
 		}
 	} else {
 		if _, ok := s.runEngine.SetPresentation(task.TaskID, bubble, nil, nil); ok {
@@ -228,8 +228,8 @@ func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	}
 
 	response := map[string]any{
-		"task":           taskMap(task),
-		"bubble_message": bubble,
+		"task":            taskMap(task),
+		"bubble_message":  bubble,
 		"delivery_result": nil,
 	}
 	if deliveryResult != nil {
@@ -805,6 +805,40 @@ func (s *Service) NotepadList(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+// NotepadUpdate 处理 agent.notepad.update。
+func (s *Service) NotepadUpdate(params map[string]any) (map[string]any, error) {
+	itemID := stringValue(params, "item_id", "")
+	if itemID == "" {
+		return nil, fmt.Errorf("item_id is required")
+	}
+
+	action := stringValue(params, "action", "")
+	if action == "" {
+		return nil, fmt.Errorf("action is required")
+	}
+
+	updatedItem, refreshGroups, deletedItemID, handled, err := s.runEngine.UpdateNotepadItem(itemID, action)
+	if err != nil {
+		return nil, err
+	}
+	if !handled {
+		return nil, fmt.Errorf("notepad item not found: %s", itemID)
+	}
+
+	response := map[string]any{
+		"notepad_item":    any(nil),
+		"refresh_groups":  refreshGroups,
+		"deleted_item_id": nil,
+	}
+	if updatedItem != nil {
+		response["notepad_item"] = updatedItem
+	}
+	if deletedItemID != "" {
+		response["deleted_item_id"] = deletedItemID
+	}
+	return response, nil
+}
+
 // NotepadConvertToTask 处理当前模块的相关逻辑。
 
 // NotepadConvertToTask 处理 agent.notepad.convert_to_task。
@@ -817,14 +851,19 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 		return nil, fmt.Errorf("confirmed must be true to convert notepad item")
 	}
 
-	item, ok := s.runEngine.NotepadItem(itemID)
-	if !ok {
+	item, handled, claimErr := s.runEngine.ClaimNotepadItemTask(itemID)
+	if claimErr != nil {
+		return nil, claimErr
+	}
+	if !handled {
 		return nil, fmt.Errorf("notepad item not found: %s", itemID)
 	}
-
-	if status := stringValue(item, "status", "normal"); status == "completed" || status == "cancelled" {
-		return nil, fmt.Errorf("notepad item is already closed: %s", itemID)
-	}
+	claimed := true
+	defer func() {
+		if claimed {
+			s.runEngine.ReleaseNotepadItemClaim(itemID)
+		}
+	}()
 
 	itemTitle := stringValue(item, "title", "待办事项")
 	taskIntent := notepadIntent(item)
@@ -838,9 +877,20 @@ func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, e
 		Timeline:    initialTimeline("confirming_intent", "intent_confirmation"),
 	})
 	s.attachMemoryReadPlans(task.TaskID, task.RunID, notepadSnapshot(item), taskIntent)
+	updatedItem, ok := s.runEngine.LinkNotepadItemTask(itemID, task.TaskID)
+	if !ok {
+		linkErr := fmt.Errorf("failed to link notepad item to task: %s", itemID)
+		if rollbackErr := s.runEngine.DeleteTask(task.TaskID); rollbackErr != nil {
+			return nil, errors.Join(linkErr, fmt.Errorf("rollback task %s: %w", task.TaskID, rollbackErr))
+		}
+		return nil, linkErr
+	}
+	claimed = false
 
 	return map[string]any{
-		"task": taskMap(task),
+		"task":           taskMap(task),
+		"notepad_item":   updatedItem,
+		"refresh_groups": []string{stringValue(updatedItem, "bucket", "upcoming")},
 	}, nil
 }
 

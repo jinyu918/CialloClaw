@@ -131,17 +131,18 @@ type InspectorConfig struct {
 // Engine 是主链路运行态的内存状态机。
 // 它负责维护 task/run 映射、时间线推进、授权等待、交付计划、通知缓存以及设置项快照。
 type Engine struct {
-	mu           sync.RWMutex
-	nextID       uint64
-	now          func() time.Time
-	taskStore    storage.TaskRunStore
-	todoStore    storage.TodoStore
-	tasks        map[string]*TaskRecord
-	taskOrder    []string
-	sessionOrder []string
-	inspector    InspectorConfig
-	settings     map[string]any
-	notepadItems []map[string]any
+	mu            sync.RWMutex
+	nextID        uint64
+	now           func() time.Time
+	taskStore     storage.TaskRunStore
+	todoStore     storage.TodoStore
+	tasks         map[string]*TaskRecord
+	taskOrder     []string
+	sessionOrder  []string
+	inspector     InspectorConfig
+	settings      map[string]any
+	notepadItems  []map[string]any
+	notepadClaims map[string]struct{}
 }
 
 // NewEngine 创建并返回Engine。
@@ -179,11 +180,12 @@ func (e *Engine) WithTodoStore(todoStore storage.TodoStore) error {
 
 func newEngine(taskStore storage.TaskRunStore) (*Engine, error) {
 	engine := &Engine{
-		now:          time.Now,
-		taskStore:    taskStore,
-		tasks:        map[string]*TaskRecord{},
-		taskOrder:    []string{},
-		sessionOrder: []string{},
+		now:           time.Now,
+		taskStore:     taskStore,
+		tasks:         map[string]*TaskRecord{},
+		taskOrder:     []string{},
+		sessionOrder:  []string{},
+		notepadClaims: map[string]struct{}{},
 		inspector: InspectorConfig{
 			TaskSources:          []string{defaultTaskSourcePath},
 			InspectionInterval:   map[string]any{"unit": "minute", "value": 15},
@@ -286,6 +288,35 @@ func (e *Engine) CreateTask(input CreateTaskInput) TaskRecord {
 	e.persistTaskLocked(record)
 
 	return record.clone()
+}
+
+// DeleteTask removes a task from runtime state and the backing task store.
+// It is used for compensating rollback paths where task creation succeeded but
+// the surrounding workflow failed before the task became a valid external
+// object.
+func (e *Engine) DeleteTask(taskID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ErrTaskNotFound
+	}
+
+	record, ok := e.tasks[taskID]
+	if !ok || record == nil {
+		return ErrTaskNotFound
+	}
+	if e.taskStore != nil {
+		if err := e.taskStore.DeleteTaskRun(context.Background(), taskID); err != nil {
+			return fmt.Errorf("delete task run %s: %w", taskID, err)
+		}
+	}
+
+	delete(e.tasks, taskID)
+	e.taskOrder = removeStringValue(e.taskOrder, taskID)
+	e.untrackSessionLocked(record.SessionID)
+	return nil
 }
 
 // GetTask 获取Task。
@@ -1351,6 +1382,150 @@ func (e *Engine) CompleteNotepadItem(itemID string) (map[string]any, bool) {
 	return normalizeNotepadItem(updated, e.now()), true
 }
 
+func (e *Engine) ClaimNotepadItemTask(itemID string) (map[string]any, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	item, _, ok := e.findNotepadItem(itemID)
+	if !ok {
+		return nil, false, nil
+	}
+
+	status := stringValue(item, "status", "normal")
+	if status == "completed" || status == "cancelled" {
+		return nil, true, fmt.Errorf("notepad item is already closed: %s", itemID)
+	}
+
+	linkedTaskID := stringValue(item, "linked_task_id", "")
+	if linkedTaskID != "" {
+		return nil, true, fmt.Errorf("notepad item is already linked to task: %s", linkedTaskID)
+	}
+	if _, claimed := e.notepadClaims[itemID]; claimed {
+		return nil, true, fmt.Errorf("notepad item is already being converted: %s", itemID)
+	}
+
+	e.notepadClaims[itemID] = struct{}{}
+	return normalizeNotepadItem(item, e.now()), true, nil
+}
+
+func (e *Engine) ReleaseNotepadItemClaim(itemID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.notepadClaims, strings.TrimSpace(itemID))
+}
+
+func (e *Engine) LinkNotepadItemTask(itemID, taskID string) (map[string]any, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	item, index, ok := e.findNotepadItem(itemID)
+	if !ok {
+		return nil, false
+	}
+
+	linkedTaskID := stringValue(item, "linked_task_id", "")
+	if linkedTaskID != "" && linkedTaskID != strings.TrimSpace(taskID) {
+		return nil, false
+	}
+	if _, claimed := e.notepadClaims[itemID]; !claimed {
+		return nil, false
+	}
+
+	updated := cloneMap(item)
+	updated["linked_task_id"] = strings.TrimSpace(taskID)
+	items := cloneMapSlice(e.notepadItems)
+	items[index] = updated
+	if err := e.replaceNotepadItemsLocked(items); err != nil {
+		return nil, false
+	}
+	delete(e.notepadClaims, strings.TrimSpace(itemID))
+	return normalizeNotepadItem(updated, e.now()), true
+}
+
+func (e *Engine) UpdateNotepadItem(itemID, action string) (map[string]any, []string, string, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	item, index, ok := e.findNotepadItem(itemID)
+	if !ok {
+		return nil, nil, "", false, nil
+	}
+
+	now := e.now()
+	currentBucket := stringValue(item, "bucket", "upcoming")
+	refreshGroups := []string{currentBucket}
+	updated := cloneMap(item)
+
+	switch strings.TrimSpace(action) {
+	case "complete":
+		if currentBucket == "closed" {
+			return nil, nil, "", true, fmt.Errorf("notepad item is already closed: %s", itemID)
+		}
+		closeNotepadItem(updated, "completed", now)
+		refreshGroups = append(refreshGroups, "closed")
+	case "cancel":
+		if currentBucket == "closed" {
+			return nil, nil, "", true, fmt.Errorf("notepad item is already closed: %s", itemID)
+		}
+		closeNotepadItem(updated, "cancelled", now)
+		refreshGroups = append(refreshGroups, "closed")
+	case "move_upcoming":
+		if currentBucket != "later" {
+			return nil, nil, "", true, fmt.Errorf("notepad action move_upcoming requires later bucket: %s", itemID)
+		}
+		updated["bucket"] = "upcoming"
+		updated["status"] = "normal"
+		refreshGroups = append(refreshGroups, "upcoming")
+	case "toggle_recurring":
+		if currentBucket != "recurring_rule" {
+			return nil, nil, "", true, fmt.Errorf("notepad action toggle_recurring requires recurring_rule bucket: %s", itemID)
+		}
+		currentEnabled := boolValue(updated["recurring_enabled"], true)
+		nextEnabled := !currentEnabled
+		updated["recurring_enabled"] = nextEnabled
+		if nextEnabled {
+			updated["status"] = "normal"
+			updated["recent_instance_status"] = "重复规则已恢复"
+		} else {
+			updated["status"] = "cancelled"
+			updated["recent_instance_status"] = "重复规则已暂停"
+		}
+	case "cancel_recurring":
+		if currentBucket != "recurring_rule" {
+			return nil, nil, "", true, fmt.Errorf("notepad action cancel_recurring requires recurring_rule bucket: %s", itemID)
+		}
+		updated["recurring_enabled"] = false
+		closeNotepadItem(updated, "cancelled", now)
+		refreshGroups = append(refreshGroups, "closed")
+	case "restore":
+		if currentBucket != "closed" {
+			return nil, nil, "", true, fmt.Errorf("notepad action restore requires closed bucket: %s", itemID)
+		}
+		restoreNotepadItem(updated, now)
+		refreshGroups = append(refreshGroups, stringValue(updated, "bucket", currentBucket))
+	case "delete":
+		if currentBucket != "closed" {
+			return nil, nil, "", true, fmt.Errorf("notepad action delete requires closed bucket: %s", itemID)
+		}
+		items := cloneMapSlice(e.notepadItems)
+		items = append(items[:index], items[index+1:]...)
+		if err := e.replaceNotepadItemsLocked(items); err != nil {
+			return nil, nil, "", true, err
+		}
+		return nil, dedupeStrings(refreshGroups), itemID, true, nil
+	default:
+		return nil, nil, "", true, fmt.Errorf("unsupported notepad action: %s", action)
+	}
+
+	items := cloneMapSlice(e.notepadItems)
+	items[index] = updated
+	if err := e.replaceNotepadItemsLocked(items); err != nil {
+		return nil, nil, "", true, err
+	}
+	return normalizeNotepadItem(updated, now), dedupeStrings(refreshGroups), "", true, nil
+}
+
 func (e *Engine) AppendAuditData(taskID string, auditRecords []map[string]any, tokenUsage map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1729,6 +1904,33 @@ func (e *Engine) trackSessionLocked(sessionID string) {
 	e.sessionOrder = append(e.sessionOrder, sessionID)
 }
 
+func (e *Engine) untrackSessionLocked(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	for _, task := range e.tasks {
+		if task != nil && task.SessionID == sessionID {
+			return
+		}
+	}
+	e.sessionOrder = removeStringValue(e.sessionOrder, sessionID)
+}
+
+func removeStringValue(values []string, target string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	filtered := values[:0]
+	for _, value := range values {
+		if value == target {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return append([]string(nil), filtered...)
+}
+
 // timelineCurrentStepID 处理当前模块的相关逻辑。
 func timelineCurrentStepID(timeline []TaskStepRecord) any {
 	if len(timeline) == 0 {
@@ -1848,38 +2050,61 @@ func buildDefaultNotepadItems(now time.Time) []map[string]any {
 
 	return []map[string]any{
 		{
-			"item_id":          "todo_001",
-			"title":            "整理本周会议纪要",
-			"bucket":           "upcoming",
-			"status":           "normal",
-			"type":             "one_time",
-			"due_at":           dueToday.Format(time.RFC3339),
-			"agent_suggestion": "先生成一个结构化摘要",
-			"note_text":        "汇总会议结论、待办人和风险项，整理成一页纪要。",
+			"item_id":                "todo_001",
+			"title":                  "整理本周会议纪要",
+			"bucket":                 "upcoming",
+			"status":                 "normal",
+			"type":                   "one_time",
+			"due_at":                 dueToday.Format(time.RFC3339),
+			"agent_suggestion":       "先生成一个结构化摘要",
+			"recurring_enabled":      nil,
+			"note_text":              "把这周会议里的共识、待确认事项和风险点整理成一页结构化纪要，方便后续同步给项目组。",
+			"prerequisite":           "先确认会议录音、群聊结论和白板截图都已经归档。",
+			"repeat_rule_text":       "",
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               nil,
 			"related_resources": []map[string]any{{
-				"id":          "todo_001_minutes",
-				"label":       "会议资料目录",
-				"path":        "workspace/meetings",
-				"type":        "directory",
-				"target_kind": "folder",
+				"resource_id":   "todo_001_minutes",
+				"label":         "会议纪要目录",
+				"path":          "workspace/meetings",
+				"resource_type": "folder",
+				"open_action":   "reveal_in_folder",
+				"open_payload": map[string]any{
+					"path":    "workspace/meetings",
+					"task_id": nil,
+					"url":     nil,
+				},
 			}},
 		},
 		{
-			"item_id":          "todo_002",
-			"title":            "补齐下周评审材料",
-			"bucket":           "later",
-			"status":           "normal",
-			"type":             "one_time",
-			"due_at":           later.Format(time.RFC3339),
-			"agent_suggestion": "可以先整理提纲再扩写成文档",
-			"note_text":        "先确认评审范围和负责人，再补齐材料。",
-			"prerequisite":     "等本周评审结论收齐后再开始整理。",
+			"item_id":                "todo_002",
+			"title":                  "补齐下周评审材料",
+			"bucket":                 "later",
+			"status":                 "normal",
+			"type":                   "one_time",
+			"due_at":                 later.Format(time.RFC3339),
+			"agent_suggestion":       "可以先整理提纲再扩写成文档",
+			"recurring_enabled":      nil,
+			"note_text":              "这份材料暂时不急着执行，但需要提前把背景、目标和评审关注点补齐，否则下周会上无法直接过稿。",
+			"prerequisite":           "等本周结论稳定后再整理，避免材料重复返工。",
+			"repeat_rule_text":       "",
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               nil,
 			"related_resources": []map[string]any{{
-				"id":          "todo_002_review",
-				"label":       "评审草稿区",
-				"path":        "workspace/drafts/reviews",
-				"type":        "directory",
-				"target_kind": "folder",
+				"resource_id":   "todo_002_review",
+				"label":         "评审材料草稿",
+				"path":          "workspace/reviews/next-week.md",
+				"resource_type": "file",
+				"open_action":   "open_file",
+				"open_payload": map[string]any{
+					"path":    "workspace/reviews/next-week.md",
+					"task_id": nil,
+					"url":     nil,
+				},
 			}},
 		},
 		{
@@ -1890,37 +2115,54 @@ func buildDefaultNotepadItems(now time.Time) []map[string]any {
 			"type":                   "recurring",
 			"due_at":                 recurring.Format(time.RFC3339),
 			"agent_suggestion":       "建议生成固定模板后重复复用",
-			"note_text":              "按固定模板回顾进展、阻塞项和下周计划。",
-			"prerequisite":           "确认本周任务状态和风险变更已经同步。",
-			"repeat_rule_text":       "每周五 18:00 生成复盘提醒",
-			"next_occurrence_at":     recurring.Format(time.RFC3339),
-			"recent_instance_status": "completed",
-			"effective_scope":        "默认工作区内所有项目复盘笔记",
 			"recurring_enabled":      true,
+			"note_text":              "每周固定回看目标完成情况、风险变化和下周重点，持续沉淀团队可复用的复盘节奏。",
+			"prerequisite":           "先把本周新增任务和已完成交付汇总齐全。",
+			"repeat_rule_text":       "每周五 18:00",
+			"next_occurrence_at":     recurring.Format(time.RFC3339),
+			"recent_instance_status": "上次复盘已完成并生成摘要",
+			"effective_scope":        "仅对当前项目工作周生效",
+			"ended_at":               nil,
 			"related_resources": []map[string]any{{
-				"id":          "todo_003_retro",
-				"label":       "复盘模板",
-				"path":        "workspace/templates/retro.md",
-				"type":        "file",
-				"target_kind": "file",
+				"resource_id":   "todo_003_template",
+				"label":         "复盘模板",
+				"path":          "workspace/templates/weekly-retro.md",
+				"resource_type": "file",
+				"open_action":   "open_file",
+				"open_payload": map[string]any{
+					"path":    "workspace/templates/weekly-retro.md",
+					"task_id": nil,
+					"url":     nil,
+				},
 			}},
 		},
 		{
-			"item_id":          "todo_004",
-			"title":            "已归档的日报整理",
-			"bucket":           "closed",
-			"status":           "completed",
-			"type":             "one_time",
-			"due_at":           completedAt.Format(time.RFC3339),
-			"agent_suggestion": nil,
-			"note_text":        "日报已整理完成，仅保留归档记录与相关资料入口。",
-			"ended_at":         completedAt.Format(time.RFC3339),
+			"item_id":                "todo_004",
+			"title":                  "已归档的日报整理",
+			"bucket":                 "closed",
+			"status":                 "completed",
+			"type":                   "one_time",
+			"due_at":                 completedAt.Format(time.RFC3339),
+			"agent_suggestion":       nil,
+			"recurring_enabled":      nil,
+			"note_text":              "这条事项已经处理完成并归档，用来保留来源记录和后续追溯入口。",
+			"prerequisite":           nil,
+			"repeat_rule_text":       "",
+			"next_occurrence_at":     nil,
+			"recent_instance_status": nil,
+			"effective_scope":        nil,
+			"ended_at":               completedAt.Format(time.RFC3339),
 			"related_resources": []map[string]any{{
-				"id":          "todo_004_archive",
-				"label":       "日报归档",
-				"path":        "workspace/archive/daily",
-				"type":        "directory",
-				"target_kind": "folder",
+				"resource_id":   "todo_004_archive",
+				"label":         "归档日报",
+				"path":          "workspace/archive/daily-summary.md",
+				"resource_type": "file",
+				"open_action":   "open_file",
+				"open_payload": map[string]any{
+					"path":    "workspace/archive/daily-summary.md",
+					"task_id": nil,
+					"url":     nil,
+				},
 			}},
 		},
 	}
@@ -2008,6 +2250,40 @@ func todoBucketRank(bucket string) int {
 	default:
 		return 4
 	}
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func boolValue(rawValue any, fallback bool) bool {
+	if rawValue == nil {
+		return fallback
+	}
+	value, ok := rawValue.(bool)
+	if !ok {
+		return fallback
+	}
+	return value
 }
 
 func stringValue(values map[string]any, key, fallback string) string {

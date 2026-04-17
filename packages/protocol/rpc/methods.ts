@@ -14,6 +14,7 @@ import type {
   InputType,
   IntentPayload,
   MirrorReference,
+  NotepadAction,
   RecommendationFeedback,
   RecommendationScene,
   RecoveryPoint,
@@ -52,6 +53,7 @@ export const RPC_METHODS_STABLE = {
   AGENT_TASK_INSPECTOR_RUN: "agent.task_inspector.run",
   AGENT_NOTEPAD_LIST: "agent.notepad.list",
   AGENT_NOTEPAD_CONVERT_TO_TASK: "agent.notepad.convert_to_task",
+  AGENT_NOTEPAD_UPDATE: "agent.notepad.update",
   AGENT_DASHBOARD_OVERVIEW_GET: "agent.dashboard.overview.get",
   AGENT_DASHBOARD_MODULE_GET: "agent.dashboard.module.get",
   AGENT_MIRROR_OVERVIEW_GET: "agent.mirror.overview.get",
@@ -417,6 +419,22 @@ export interface AgentNotepadConvertToTaskParams {
 // AgentNotepadConvertToTaskResult 定义当前模块的接口约束。
 export interface AgentNotepadConvertToTaskResult {
   task: Task;
+  notepad_item: TodoItem;
+  refresh_groups: TodoBucket[];
+}
+
+// AgentNotepadUpdateParams defines the parameters for `agent.notepad.update`.
+export interface AgentNotepadUpdateParams {
+  request_meta: RequestMeta;
+  item_id: string;
+  action: NotepadAction;
+}
+
+// AgentNotepadUpdateResult defines the result for `agent.notepad.update`.
+export interface AgentNotepadUpdateResult {
+  notepad_item: TodoItem | null;
+  refresh_groups: TodoBucket[];
+  deleted_item_id?: string | null;
 }
 
 // AgentDashboardOverviewGetParams 定义当前模块的接口约束。

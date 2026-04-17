@@ -95,12 +95,16 @@ type TodoItemRecord struct {
 	Status               string
 	SourcePath           string
 	SourceLine           int
+	SourceBucket         string
 	DueAt                string
 	TagsJSON             string
 	AgentSuggestion      string
 	NoteText             string
 	Prerequisite         string
 	PlannedAt            string
+	PreviousBucket       string
+	PreviousDueAt        string
+	PreviousStatus       string
 	EndedAt              string
 	RelatedResourcesJSON string
 	LinkedTaskID         string
@@ -207,6 +211,7 @@ type TaskRunRecord struct {
 // TaskRunStore 定义 task/run 主状态的持久化契约。
 type TaskRunStore interface {
 	AllocateIdentifier(ctx context.Context, prefix string) (string, error)
+	DeleteTaskRun(ctx context.Context, taskID string) error
 	SaveTaskRun(ctx context.Context, record TaskRunRecord) error
 	LoadTaskRuns(ctx context.Context) ([]TaskRunRecord, error)
 }
