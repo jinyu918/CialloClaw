@@ -1399,6 +1399,10 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | `data.mirror_references` | 命中的镜子记忆 |
 | `data.approval_request`  | 当前任务的正式安全锚点 |
 | `data.security_summary`  | 安全摘要       |
+| `data.runtime_summary.loop_stop_reason` | 最近一次 loop 停止原因 |
+| `data.runtime_summary.events_count` | 当前 task 归一化运行时事件总数 |
+| `data.runtime_summary.latest_event_type` | 最近一次 runtime event 类型 |
+| `data.runtime_summary.active_steering_count` | 当前待消费 steering 数量 |
 
 其中 `data.timeline` 条目对应对外 `task_step` / `task_steps` 视图对象，不直接暴露内核 `step` / `steps`。
 
