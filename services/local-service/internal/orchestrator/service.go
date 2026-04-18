@@ -548,7 +548,7 @@ func (s *Service) persistAuthorizationState(taskID string, authorizationRecord m
 	if s.storage == nil {
 		return nil
 	}
-	if err := s.persistAuthorizationRecord(taskID, authorizationRecord); err != nil {
+	if err := s.persistAuthorizationDecision(taskID, authorizationRecord); err != nil {
 		return fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
 	}
 	return nil
@@ -579,7 +579,7 @@ func (s *Service) persistApprovalRequest(taskID string, approvalRequest map[stri
 	return s.storage.ApprovalRequestStore().WriteApprovalRequest(context.Background(), record)
 }
 
-func (s *Service) persistAuthorizationRecord(taskID string, authorizationRecord map[string]any) error {
+func (s *Service) persistAuthorizationDecision(taskID string, authorizationRecord map[string]any) error {
 	if s == nil || s.storage == nil || len(authorizationRecord) == 0 {
 		return nil
 	}
@@ -588,6 +588,7 @@ func (s *Service) persistAuthorizationRecord(taskID string, authorizationRecord 
 	if approvalID != "" {
 		recordID = fmt.Sprintf("auth_%s_%d", approvalID, time.Now().UnixNano())
 	}
+	createdAt := stringValue(authorizationRecord, "created_at", time.Now().Format(dateTimeLayout))
 	record := storage.AuthorizationRecordRecord{
 		AuthorizationRecordID: recordID,
 		TaskID:                firstNonEmptyString(stringValue(authorizationRecord, "task_id", ""), taskID),
@@ -595,10 +596,7 @@ func (s *Service) persistAuthorizationRecord(taskID string, authorizationRecord 
 		Decision:              stringValue(authorizationRecord, "decision", ""),
 		Operator:              stringValue(authorizationRecord, "operator", "user"),
 		RememberRule:          boolValue(authorizationRecord, "remember_rule", false),
-		CreatedAt:             stringValue(authorizationRecord, "created_at", time.Now().Format(dateTimeLayout)),
-	}
-	if err := s.storage.AuthorizationRecordStore().WriteAuthorizationRecord(context.Background(), record); err != nil {
-		return err
+		CreatedAt:             createdAt,
 	}
 	decision := record.Decision
 	status := "resolved"
@@ -607,7 +605,18 @@ func (s *Service) persistAuthorizationRecord(taskID string, authorizationRecord 
 	} else if decision == "allow_once" || decision == "allow_always" {
 		status = "approved"
 	}
-	return s.storage.ApprovalRequestStore().UpdateApprovalRequestStatus(context.Background(), approvalID, status, record.CreatedAt)
+	return s.storage.AuthorizationRecordStore().WriteAuthorizationDecision(context.Background(), record, status, createdAt)
+}
+
+func (s *Service) activeApprovalIDForTask(task runengine.TaskRecord) (string, bool) {
+	if task.Status != "waiting_auth" || task.CurrentStep != "waiting_authorization" {
+		return "", false
+	}
+	approvalID := strings.TrimSpace(stringValue(task.ApprovalRequest, "approval_id", ""))
+	if approvalID == "" {
+		return "", false
+	}
+	return approvalID, true
 }
 
 // ConfirmTask handles agent.task.confirm.
@@ -822,6 +831,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	} else {
 		securitySummary["latest_restore_point"] = latestRestorePoint
 	}
+	runtimeSummary := s.buildTaskRuntimeSummary(task)
 
 	return map[string]any{
 		"task":              taskMap(task),
@@ -830,7 +840,34 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"mirror_references": protocolMirrorReferenceList(task.MirrorReferences),
 		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
+		"runtime_summary":   runtimeSummary,
 	}, nil
+}
+
+func (s *Service) buildTaskRuntimeSummary(task runengine.TaskRecord) map[string]any {
+	summary := map[string]any{
+		"loop_stop_reason":      nil,
+		"events_count":          0,
+		"latest_event_type":     nil,
+		"active_steering_count": len(task.SteeringMessages),
+	}
+	if strings.TrimSpace(task.LoopStopReason) != "" {
+		summary["loop_stop_reason"] = task.LoopStopReason
+	}
+	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
+		return summary
+	}
+	// Keep latest_event_type scoped to normalized runtime events so task-level
+	// notifications such as task.updated or task.steered do not leak into the
+	// runtime summary contract when no runtime events have been persisted yet.
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), task.TaskID, "", "", 1, 0)
+	if err == nil {
+		summary["events_count"] = total
+		if len(records) > 0 && strings.TrimSpace(records[0].Type) != "" {
+			summary["latest_event_type"] = records[0].Type
+		}
+	}
+	return summary
 }
 
 // TaskEventsList handles agent.task.events.list and exposes normalized runtime
@@ -839,13 +876,15 @@ func (s *Service) TaskEventsList(params map[string]any) (map[string]any, error) 
 	limit := clampListLimit(intValue(params, "limit", 20))
 	offset := clampListOffset(intValue(params, "offset", 0))
 	taskID := stringValue(params, "task_id", "")
+	runID := stringValue(params, "run_id", "")
+	eventType := stringValue(params, "type", "")
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("task_id is required")
 	}
 	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
 		return map[string]any{"items": []map[string]any{}, "page": pageMap(limit, offset, 0)}, nil
 	}
-	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, limit, offset)
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, runID, eventType, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
 	}
@@ -1772,16 +1811,13 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 	if !ok {
 		return nil, ErrTaskNotFound
 	}
+	approvalID, ok := s.activeApprovalIDForTask(task)
+	if !ok {
+		return nil, ErrTaskStatusInvalid
+	}
 
 	decision := stringValue(params, "decision", "allow_once")
 	rememberRule := boolValue(params, "remember_rule", false)
-	approvalID := stringValue(task.ApprovalRequest, "approval_id", "")
-	if approvalID == "" {
-		approvalID = stringValue(params, "approval_id", "")
-	}
-	if approvalID == "" {
-		approvalID = "appr_001"
-	}
 	authorizationRecord := map[string]any{
 		"authorization_record_id": fmt.Sprintf("auth_%s_%d", task.TaskID, time.Now().UnixNano()),
 		"task_id":                 task.TaskID,

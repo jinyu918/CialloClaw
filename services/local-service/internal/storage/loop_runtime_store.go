@@ -113,14 +113,21 @@ func (s *inMemoryLoopRuntimeStore) SaveDeliveryResult(_ context.Context, record 
 	return nil
 }
 
-func (s *inMemoryLoopRuntimeStore) ListEvents(_ context.Context, taskID string, limit, offset int) ([]EventRecord, int, error) {
+func (s *inMemoryLoopRuntimeStore) ListEvents(_ context.Context, taskID, runID, eventType string, limit, offset int) ([]EventRecord, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	filtered := make([]EventRecord, 0, len(s.events))
 	for _, record := range s.events {
-		if taskID == "" || record.TaskID == taskID {
-			filtered = append(filtered, record)
+		if taskID != "" && record.TaskID != taskID {
+			continue
 		}
+		if runID != "" && record.RunID != runID {
+			continue
+		}
+		if eventType != "" && record.Type != eventType {
+			continue
+		}
+		filtered = append(filtered, record)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
 		return parseGovernanceTime(filtered[i].CreatedAt).After(parseGovernanceTime(filtered[j].CreatedAt))
@@ -200,22 +207,36 @@ func (s *SQLiteLoopRuntimeStore) SaveDeliveryResult(ctx context.Context, record 
 	return nil
 }
 
-func (s *SQLiteLoopRuntimeStore) ListEvents(ctx context.Context, taskID string, limit, offset int) ([]EventRecord, int, error) {
+func (s *SQLiteLoopRuntimeStore) ListEvents(ctx context.Context, taskID, runID, eventType string, limit, offset int) ([]EventRecord, int, error) {
+	filters := make([]string, 0, 3)
+	filterArgs := make([]any, 0, 3)
+	if strings.TrimSpace(taskID) != "" {
+		filters = append(filters, `task_id = ?`)
+		filterArgs = append(filterArgs, taskID)
+	}
+	if strings.TrimSpace(runID) != "" {
+		filters = append(filters, `run_id = ?`)
+		filterArgs = append(filterArgs, runID)
+	}
+	if strings.TrimSpace(eventType) != "" {
+		filters = append(filters, `type = ?`)
+		filterArgs = append(filterArgs, eventType)
+	}
 	countQuery := `SELECT COUNT(1) FROM events`
 	query := `SELECT event_id, run_id, task_id, step_id, type, level, payload_json, created_at FROM events`
-	args := []any{}
-	if strings.TrimSpace(taskID) != "" {
-		countQuery += ` WHERE task_id = ?`
-		query += ` WHERE task_id = ?`
-		args = append(args, taskID)
+	if len(filters) > 0 {
+		whereClause := ` WHERE ` + strings.Join(filters, ` AND `)
+		countQuery += whereClause
+		query += whereClause
 	}
 	query += ` ORDER BY created_at DESC, event_id DESC`
+	args := append([]any(nil), filterArgs...)
 	if limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, limit, offset)
 	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, countQuery, firstArg(taskID)...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count events: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)

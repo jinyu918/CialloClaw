@@ -308,6 +308,66 @@ func TestApprovalAndAuthorizationStoresPersistStructuredGovernanceRecords(t *tes
 	}
 }
 
+func TestAuthorizationDecisionWriteIsAtomicInSQLiteStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approval-auth-atomic.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	if err := service.ApprovalRequestStore().WriteApprovalRequest(context.Background(), ApprovalRequestRecord{
+		ApprovalID:      "appr_atomic_001",
+		TaskID:          "task_atomic_001",
+		OperationName:   "write_file",
+		RiskLevel:       "yellow",
+		TargetObject:    "workspace/result.md",
+		Reason:          "atomic authorization persistence",
+		Status:          "pending",
+		ImpactScopeJSON: `{"files":["workspace/result.md"]}`,
+		CreatedAt:       "2026-04-18T10:00:00Z",
+		UpdatedAt:       "2026-04-18T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("write approval request failed: %v", err)
+	}
+	if err := service.AuthorizationRecordStore().WriteAuthorizationDecision(context.Background(), AuthorizationRecordRecord{
+		AuthorizationRecordID: "auth_atomic_001",
+		TaskID:                "task_atomic_001",
+		ApprovalID:            "appr_atomic_001",
+		Decision:              "allow_once",
+		Operator:              "user",
+		RememberRule:          true,
+		CreatedAt:             "2026-04-18T10:01:00Z",
+	}, "approved", "2026-04-18T10:01:00Z"); err != nil {
+		t.Fatalf("write atomic authorization decision failed: %v", err)
+	}
+
+	approvalItems, approvalTotal, err := service.ApprovalRequestStore().ListApprovalRequests(context.Background(), "task_atomic_001", 10, 0)
+	if err != nil || approvalTotal != 1 || len(approvalItems) != 1 {
+		t.Fatalf("unexpected approval records after atomic authorization write total=%d len=%d err=%v", approvalTotal, len(approvalItems), err)
+	}
+	if approvalItems[0].Status != "approved" {
+		t.Fatalf("expected atomic authorization write to update approval status, got %+v", approvalItems[0])
+	}
+
+	err = service.AuthorizationRecordStore().WriteAuthorizationDecision(context.Background(), AuthorizationRecordRecord{
+		AuthorizationRecordID: "auth_atomic_missing",
+		TaskID:                "task_atomic_missing",
+		ApprovalID:            "appr_missing",
+		Decision:              "deny_once",
+		Operator:              "user",
+		CreatedAt:             "2026-04-18T10:02:00Z",
+	}, "denied", "2026-04-18T10:02:00Z")
+	if !errors.Is(err, ErrApprovalRequestNotFound) {
+		t.Fatalf("expected missing approval to fail atomic authorization write, got %v", err)
+	}
+
+	authorizationItems, authorizationTotal, err := service.AuthorizationRecordStore().ListAuthorizationRecords(context.Background(), "", 10, 0)
+	if err != nil || authorizationTotal != 1 || len(authorizationItems) != 1 {
+		t.Fatalf("expected failed atomic authorization write to leave history unchanged total=%d len=%d err=%v items=%+v", authorizationTotal, len(authorizationItems), err, authorizationItems)
+	}
+	if authorizationItems[0].AuthorizationRecordID != "auth_atomic_001" {
+		t.Fatalf("expected only committed authorization decision to remain, got %+v", authorizationItems)
+	}
+}
+
 // TestCloseIsSafeWithoutConfiguredStore 验证CloseIsSafeWithoutConfiguredStore。
 func TestCloseIsSafeWithoutConfiguredStore(t *testing.T) {
 	service := NewService(nil)
@@ -423,7 +483,7 @@ func TestLoopRuntimeStorePersistsNormalizedRecords(t *testing.T) {
 	assertTableCount(t, sqliteStore.db, "events", 1)
 	assertTableCount(t, sqliteStore.db, "delivery_results", 1)
 
-	events, total, err := store.ListEvents(context.Background(), "task_loop_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_loop_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListEvents returned error: %v", err)
 	}
@@ -494,12 +554,28 @@ func TestLoopRuntimeStoreKeepsAppendOnlyEventsAcrossRuns(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save second event failed: %v", err)
 	}
-	events, total, err := store.ListEvents(context.Background(), "task_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("list append-only events failed: %v", err)
 	}
 	if total != 2 || len(events) != 2 {
 		t.Fatalf("expected append-only events from multiple runs, got total=%d items=%+v", total, events)
+	}
+
+	filteredByRun, totalByRun, err := store.ListEvents(context.Background(), "task_001", "run_002", "", 20, 0)
+	if err != nil {
+		t.Fatalf("list events by run failed: %v", err)
+	}
+	if totalByRun != 1 || len(filteredByRun) != 1 || filteredByRun[0].RunID != "run_002" {
+		t.Fatalf("expected one run-scoped event, got total=%d items=%+v", totalByRun, filteredByRun)
+	}
+
+	filteredByType, totalByType, err := store.ListEvents(context.Background(), "task_001", "", "loop.round.completed", 20, 0)
+	if err != nil {
+		t.Fatalf("list events by type failed: %v", err)
+	}
+	if totalByType != 2 || len(filteredByType) != 2 {
+		t.Fatalf("expected two type-scoped events, got total=%d items=%+v", totalByType, filteredByType)
 	}
 }
 

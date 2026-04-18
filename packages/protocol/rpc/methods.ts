@@ -283,6 +283,13 @@ export interface AgentTaskDetailGetParams {
 }
 
 // AgentTaskDetailGetResult 定义当前模块的接口约束。
+export interface TaskRuntimeSummary {
+  loop_stop_reason?: string | null;
+  events_count: number;
+  latest_event_type?: string | null;
+  active_steering_count: number;
+}
+
 export interface AgentTaskDetailGetResult {
   task: Task;
   timeline: TaskStep[];
@@ -290,6 +297,7 @@ export interface AgentTaskDetailGetResult {
   mirror_references: MirrorReference[];
   approval_request: ApprovalRequest | null;
   security_summary: SecuritySummary;
+  runtime_summary: TaskRuntimeSummary;
 }
 
 // TaskEvent defines one persisted compatibility event exposed through task-centric queries.
@@ -308,6 +316,8 @@ export interface TaskEvent {
 export interface AgentTaskEventsListParams {
   request_meta: RequestMeta;
   task_id: string;
+  run_id?: string;
+  type?: string;
   limit?: number;
   offset?: number;
 }

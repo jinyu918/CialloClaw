@@ -1510,6 +1510,8 @@ func TestDispatchTaskEventsListReturnsLoopEvents(t *testing.T) {
 		Method:  "agent.task.events.list",
 		Params: mustMarshal(t, map[string]any{
 			"task_id": "task_rpc_loop_001",
+			"run_id":  "run_rpc_loop_001",
+			"type":    "loop.completed",
 			"limit":   20,
 			"offset":  0,
 		}),
