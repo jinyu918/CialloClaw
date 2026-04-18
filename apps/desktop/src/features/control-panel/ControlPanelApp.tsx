@@ -75,16 +75,18 @@ function getSourceCopy(source: ControlPanelData["source"]) {
  * @param needRestart Whether the current change set requires an app restart.
  * @returns User-facing save feedback copy.
  */
-function getApplyModeCopy(applyMode: string, needRestart: boolean) {
+function getApplyModeCopy(applyMode: string, needRestart: boolean, source: ControlPanelData["source"]) {
+  const localSnapshotSuffix = source === "mock" ? " 当前仍在使用本地快照，不会写入后端。": "";
+
   if (needRestart) {
-    return "部分设置需要重启桌面端后生效。";
+    return `部分设置需要重启桌面端后生效。${localSnapshotSuffix}`;
   }
 
   if (applyMode === "next_task_effective") {
-    return "设置已保存，将在下一个任务周期生效。";
+    return `设置已保存，将在下一个任务周期生效。${localSnapshotSuffix}`;
   }
 
-  return "设置已即时生效。";
+  return `设置已即时生效。${localSnapshotSuffix}`;
 }
 
 /**
@@ -206,6 +208,10 @@ export function ControlPanelApp() {
   const workSummaryCadence = `${draft.settings.memory.work_summary_interval.value}${draft.settings.memory.work_summary_interval.unit}`;
   const profileCadence = `${draft.settings.memory.profile_refresh_interval.value}${draft.settings.memory.profile_refresh_interval.unit}`;
   const providerApiKeyStatus = draft.settings.models.provider_api_key_configured ? "已配置" : "未配置";
+  const providerApiKeyHint =
+    draft.source === "rpc"
+      ? "通过 JSON-RPC `agent.settings.update` 提交；只写入后端 Stronghold，不会回显明文。"
+      : "当前为本地快照模式：不会写入后端 Stronghold，也不会在桌面端保存明文 API key。";
   const sourceValue = (
     <span className="control-panel-page__value-cluster">
       <span
@@ -280,7 +286,7 @@ export function ControlPanelApp() {
       };
       setPanelData(nextData);
       setDraft(nextData);
-      setSaveFeedback(getApplyModeCopy(result.applyMode, result.needRestart));
+      setSaveFeedback(getApplyModeCopy(result.applyMode, result.needRestart, result.source));
     } catch (error) {
       setSaveFeedback(error instanceof Error ? error.message : "保存控制面板设置失败。");
     } finally {
@@ -733,7 +739,7 @@ export function ControlPanelApp() {
 
                 <ControlLine
                   label="API Key"
-                  hint="通过 JSON-RPC `agent.settings.update` 提交；只写入后端 Stronghold，不会回显明文。"
+                  hint={providerApiKeyHint}
                   tone="warm"
                 >
                   <TextField.Root

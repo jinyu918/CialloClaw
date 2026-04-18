@@ -106,14 +106,16 @@ function normalizeSettingsSnapshot(
   const normalizedDataLog: ProtocolDataLogSettings = {
     ...defaults.settings.data_log,
     ...storedDataLog,
-    provider: storedModels?.provider ?? storedDataLog?.provider ?? defaults.settings.data_log.provider,
+    // Shared RPC fields stay authoritative in `data_log`; the desktop-local
+    // `models` view mirrors them instead of overriding backend snapshots.
+    provider: storedDataLog?.provider ?? storedModels?.provider ?? defaults.settings.data_log.provider,
     budget_auto_downgrade:
-      storedModels?.budget_auto_downgrade ??
       storedDataLog?.budget_auto_downgrade ??
+      storedModels?.budget_auto_downgrade ??
       defaults.settings.data_log.budget_auto_downgrade,
     provider_api_key_configured:
-      storedModels?.provider_api_key_configured ??
       storedDataLog?.provider_api_key_configured ??
+      storedModels?.provider_api_key_configured ??
       defaults.settings.data_log.provider_api_key_configured,
   };
   const normalizedModels: DesktopModelSettings = {
