@@ -65,6 +65,8 @@ type TaskRecord struct {
 	Notifications     []NotificationRecord
 	LatestEvent       map[string]any
 	LatestToolCall    map[string]any
+	LoopStopReason    string
+	SteeringMessages  []string
 	CurrentStepStatus string
 }
 
@@ -620,6 +622,110 @@ func (e *Engine) RecordToolCallLifecycle(taskID, toolName, status string, input,
 	return record.clone(), true
 }
 
+// RecordLoopLifecycle records one structured agent loop lifecycle event so
+// task-centric consumers can inspect round transitions without querying the
+// normalized compatibility tables directly.
+func (e *Engine) RecordLoopLifecycle(taskID, eventType, stopReason string, payload map[string]any) (TaskRecord, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	record, ok := e.tasks[taskID]
+	if !ok {
+		return TaskRecord{}, false
+	}
+
+	record.UpdatedAt = e.now()
+	record.LoopStopReason = firstNonEmpty(stopReason, record.LoopStopReason)
+	record.LatestEvent = e.buildEventWithPayload(record, eventType, payload)
+	record.queueNotification(eventType, map[string]any{
+		"task_id":     record.TaskID,
+		"event":       cloneMap(record.LatestEvent),
+		"stop_reason": firstNonEmpty(stopReason, record.LoopStopReason),
+	})
+	record.queueNotification("task.updated", map[string]any{
+		"task_id":     record.TaskID,
+		"status":      record.Status,
+		"stop_reason": firstNonEmpty(stopReason, record.LoopStopReason),
+	})
+	e.persistTaskLocked(record)
+
+	return record.clone(), true
+}
+
+// EmitRuntimeNotification appends a formal runtime notification for task-level
+// consumers while also keeping LatestEvent in sync for query surfaces.
+func (e *Engine) EmitRuntimeNotification(taskID, method string, payload map[string]any) (TaskRecord, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	record, ok := e.tasks[taskID]
+	if !ok {
+		return TaskRecord{}, false
+	}
+	record.UpdatedAt = e.now()
+	record.LoopStopReason = firstNonEmpty(runtimeStopReasonFromPayload(payload), record.LoopStopReason)
+	record.LatestEvent = e.buildEventWithPayload(record, method, payload)
+	record.queueNotification(method, map[string]any{
+		"task_id":     taskID,
+		"event":       cloneMap(record.LatestEvent),
+		"stop_reason": firstNonEmpty(runtimeStopReasonFromPayload(payload), record.LoopStopReason),
+	})
+	e.persistTaskLocked(record)
+	return record.clone(), true
+}
+
+// AppendSteeringMessage stores one follow-up instruction for a non-terminal task
+// so future execution or resume paths can fold it into the loop planner input.
+func (e *Engine) AppendSteeringMessage(taskID, message string, bubbleMessage map[string]any) (TaskRecord, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	record, ok := e.tasks[taskID]
+	if !ok || record.isFinished() {
+		return TaskRecord{}, false
+	}
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return TaskRecord{}, false
+	}
+	record.UpdatedAt = e.now()
+	record.SteeringMessages = append(record.SteeringMessages, trimmed)
+	record.BubbleMessage = cloneMap(bubbleMessage)
+	record.LatestEvent = e.buildEventWithPayload(record, "task.steered", map[string]any{
+		"status":  record.Status,
+		"message": trimmed,
+	})
+	record.queueNotification("task.steered", map[string]any{
+		"task_id": record.TaskID,
+		"message": trimmed,
+	})
+	record.queueNotification("task.updated", map[string]any{
+		"task_id": record.TaskID,
+		"status":  record.Status,
+	})
+	e.persistTaskLocked(record)
+	return record.clone(), true
+}
+
+// DrainSteeringMessages returns and clears queued steering messages for the
+// active task so an in-flight loop can absorb new follow-up guidance.
+func (e *Engine) DrainSteeringMessages(taskID string) ([]string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	record, ok := e.tasks[taskID]
+	if !ok {
+		return nil, false
+	}
+	if len(record.SteeringMessages) == 0 {
+		return nil, true
+	}
+	messages := append([]string(nil), record.SteeringMessages...)
+	record.SteeringMessages = nil
+	e.persistTaskLocked(record)
+	return messages, true
+}
+
 // FailTaskExecution 将任务收敛到 failed，用于执行失败或恢复点准备失败场景。
 func (e *Engine) FailTaskExecution(taskID, stepName, securityStatus, outputSummary string, impactScope map[string]any, bubbleMessage map[string]any, latestRestorePoint ...map[string]any) (TaskRecord, bool) {
 	e.mu.Lock()
@@ -722,6 +828,7 @@ func (e *Engine) CompleteTask(taskID string, deliveryResult map[string]any, bubb
 	record.Artifacts = cloneMapSlice(artifacts)
 	record.PendingExecution = nil
 	record.ApprovalRequest = nil
+	record.Authorization = nil
 	record.Timeline = advanceTimeline(record.Timeline, "return_result", "completed", "结果已正式交付")
 	record.CurrentStepStatus = currentTimelineStatus(record.Timeline)
 	restorePoint := buildRecoveryPoint(record.TaskID, now)
@@ -840,6 +947,9 @@ func (e *Engine) ControlTask(taskID, action string, bubbleMessage map[string]any
 		if !record.isFinished() {
 			return TaskRecord{}, ErrTaskStatusInvalid
 		}
+		// Restart begins a fresh execution attempt for the same task, so it must
+		// allocate a new run identifier before any loop/runtime rows are emitted.
+		record.RunID = e.nextIdentifier("run")
 		record.Status = "processing"
 		record.FinishedAt = nil
 		record.CurrentStep = "generate_output"
@@ -855,6 +965,7 @@ func (e *Engine) ControlTask(taskID, action string, bubbleMessage map[string]any
 		record.MemoryReadPlans = nil
 		record.MemoryWritePlans = nil
 		record.MirrorReferences = nil
+		record.LoopStopReason = ""
 		record.SecuritySummary = buildSecuritySummary(record.RiskLevel, latestRestorePointFromSummary(record.SecuritySummary))
 		record.Timeline = advanceTimeline(record.Timeline, "generate_output", "running", "任务已重新开始")
 	default:
@@ -1799,6 +1910,7 @@ func (r TaskRecord) clone() TaskRecord {
 	clone.Notifications = cloneNotifications(r.Notifications)
 	clone.LatestEvent = cloneMap(r.LatestEvent)
 	clone.LatestToolCall = cloneMap(r.LatestToolCall)
+	clone.SteeringMessages = append([]string(nil), r.SteeringMessages...)
 	if r.FinishedAt != nil {
 		finishedAt := *r.FinishedAt
 		clone.FinishedAt = &finishedAt
@@ -2051,6 +2163,19 @@ func firstNonEmpty(primary, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+func runtimeStopReasonFromPayload(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if stopReason, ok := payload["stop_reason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return strings.TrimSpace(stopReason)
+	}
+	if stopReason, ok := payload["loop_stop_reason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return strings.TrimSpace(stopReason)
+	}
+	return ""
 }
 
 // sortTaskRecords 按协议约定的排序字段和方向整理任务列表。
@@ -2484,6 +2609,8 @@ func taskRecordToStorage(record TaskRecord) storage.TaskRunRecord {
 		Notifications:     notificationsToStorage(record.Notifications),
 		LatestEvent:       cloneMap(record.LatestEvent),
 		LatestToolCall:    cloneMap(record.LatestToolCall),
+		LoopStopReason:    record.LoopStopReason,
+		SteeringMessages:  append([]string(nil), record.SteeringMessages...),
 		CurrentStepStatus: record.CurrentStepStatus,
 	}
 }
@@ -2524,6 +2651,8 @@ func taskRecordFromStorage(record storage.TaskRunRecord) TaskRecord {
 		Notifications:     notificationsFromStorage(record.Notifications),
 		LatestEvent:       cloneMap(record.LatestEvent),
 		LatestToolCall:    cloneMap(record.LatestToolCall),
+		LoopStopReason:    record.LoopStopReason,
+		SteeringMessages:  append([]string(nil), record.SteeringMessages...),
 		CurrentStepStatus: record.CurrentStepStatus,
 	}
 }

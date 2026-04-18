@@ -1552,7 +1552,182 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ---
 
-### 8.2.4 `agent.task_inspector.config.get`
+### 8.2.4 `agent.task.events.list`
+
+- **请求方式**：JSON-RPC 2.0
+- **接口调用时机**：任务详情页、任务巡检页或调试入口需要查看正式运行时事件时
+- **系统处理**：按 `task_id` 返回归一化后的 `events` 记录，覆盖 `loop.*`、`task.steered` 等兼容运行时事件
+- **入参**：任务 ID、分页参数
+- **出参**：事件列表、分页信息
+
+### agent.task.events.list 入参说明
+
+| 字段      | 中文说明    |
+| --------- | ----------- |
+| `task_id` | 目标任务 ID |
+| `limit`   | 每页条数    |
+| `offset`  | 偏移量      |
+
+### agent.task.events.list 入参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_task_events_001",
+  "method": "agent.task.events.list",
+  "params": {
+    "request_meta": {
+      "trace_id": "trace_task_events_001",
+      "client_time": "2026-04-18T10:43:00+08:00"
+    },
+    "task_id": "task_201",
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+### agent.task.events.list 出参说明
+
+| 字段                     | 中文说明 |
+| ------------------------ | -------- |
+| `data.items`             | 事件列表 |
+| `data.items[].event_id`  | 事件 ID  |
+| `data.items[].run_id`    | 关联 run |
+| `data.items[].task_id`   | 关联 task |
+| `data.items[].step_id`   | 关联 step |
+| `data.items[].type`      | 事件类型 |
+| `data.items[].level`     | 事件级别 |
+| `data.items[].payload_json` | 事件负载 JSON |
+| `data.items[].created_at` | 创建时间 |
+| `data.page`              | 分页信息 |
+
+### agent.task.events.list 出参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_task_events_001",
+  "result": {
+    "data": {
+      "items": [
+        {
+          "event_id": "evt_loop_run_201_001",
+          "run_id": "run_201",
+          "task_id": "task_201",
+          "step_id": "run_201_step_loop_01",
+          "type": "loop.round.completed",
+          "level": "info",
+          "payload_json": "{\"loop_round\":1,\"stop_reason\":\"completed\"}",
+          "created_at": "2026-04-18T10:43:01+08:00"
+        }
+      ],
+      "page": {
+        "limit": 20,
+        "offset": 0,
+        "total": 1,
+        "has_more": false
+      }
+    },
+    "meta": {
+      "server_time": "2026-04-18T10:43:01+08:00"
+    },
+    "warnings": []
+  }
+}
+```
+
+---
+
+### 8.2.5 `agent.task.steer`
+
+- **请求方式**：JSON-RPC 2.0
+- **接口调用时机**：用户在任务运行中补充新的 follow-up 指令时
+- **系统处理**：把新的 steering 文本写入当前 task 的运行态，并允许 Agent Loop 在后续轮次主动消费
+- **入参**：任务 ID、追加消息
+- **出参**：更新后的任务对象、状态气泡
+
+### agent.task.steer 入参说明
+
+| 字段      | 中文说明       |
+| --------- | -------------- |
+| `task_id` | 目标任务 ID    |
+| `message` | 追加 steering 文本 |
+
+### agent.task.steer 入参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_task_steer_001",
+  "method": "agent.task.steer",
+  "params": {
+    "request_meta": {
+      "trace_id": "trace_task_steer_001",
+      "client_time": "2026-04-18T10:44:00+08:00"
+    },
+    "task_id": "task_201",
+    "message": "Also include a short summary section."
+  }
+}
+```
+
+### agent.task.steer 出参说明
+
+| 字段                  | 中文说明     |
+| --------------------- | ------------ |
+| `data.task`           | 更新后的任务 |
+| `data.bubble_message` | steering 记录结果提示 |
+
+### agent.task.steer 出参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_task_steer_001",
+  "result": {
+    "data": {
+      "task": {
+        "task_id": "task_201",
+        "status": "waiting_auth",
+        "loop_stop_reason": null
+      },
+      "bubble_message": {
+        "bubble_id": "bubble_201",
+        "task_id": "task_201",
+        "type": "status",
+        "text": "已记录新的补充要求，后续执行会纳入该指令。"
+      }
+    },
+    "meta": {
+      "server_time": "2026-04-18T10:44:01+08:00"
+    },
+    "warnings": []
+  }
+}
+```
+
+### 8.2.6 Agent Loop 运行时通知
+
+当前阶段，以下通知方法已进入正式调试/流式通道，可用于前端或调试观察运行时进展：
+
+- `task.updated`
+- `delivery.ready`
+- `approval.pending`
+- `task.steered`
+- `loop.started`
+- `loop.round.started`
+- `loop.retrying`
+- `loop.compacted`
+- `loop.round.completed`
+- `loop.completed`
+- `loop.failed`
+
+其中 `loop.*` 事件服务于 Agent Loop / ReAct 运行时观察，不替代正式 `task` 对象本身；当前 query 读侧仍以 `task` 为主对象、以 `agent.task.events.list` 为事件补充视图。
+
+---
+
+### 8.2.7 `agent.task_inspector.config.get`
 
 - **请求方式**：JSON-RPC 2.0
 - **接口调用时机**：用户进入巡检配置页时
@@ -1615,7 +1790,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 
 ---
 
-### 8.2.5 `agent.task_inspector.config.update`
+### 8.2.8 `agent.task_inspector.config.update`
 
 - **请求方式**：JSON-RPC 2.0
 - **接口调用时机**：用户修改巡检配置并保存时

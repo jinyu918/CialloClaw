@@ -156,6 +156,40 @@ func TestEngineExecutionProgressAndToolCall(t *testing.T) {
 	}
 }
 
+func TestEngineEmitRuntimeNotificationPersistsLoopStopReason(t *testing.T) {
+	engine := NewEngine()
+	engine.now = func() time.Time { return time.Date(2026, 4, 8, 11, 0, 0, 0, time.UTC) }
+
+	task := engine.CreateTask(CreateTaskInput{
+		SessionID:   "sess_runtime",
+		Title:       "runtime stop reason",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "agent_loop"},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+	})
+
+	record, ok := engine.EmitRuntimeNotification(task.TaskID, "loop.failed", map[string]any{
+		"task_id":     task.TaskID,
+		"stop_reason": "planner_error",
+	})
+	if !ok {
+		t.Fatal("expected runtime notification to succeed")
+	}
+	if record.LoopStopReason != "planner_error" {
+		t.Fatalf("expected loop stop reason to persist, got %+v", record)
+	}
+
+	listed, total := engine.ListTasks("unfinished", "updated_at", "desc", 10, 0)
+	if total != 1 || len(listed) != 1 {
+		t.Fatalf("expected runtime task to remain listed, total=%d len=%d", total, len(listed))
+	}
+	if listed[0].LoopStopReason != "planner_error" {
+		t.Fatalf("expected task list to expose loop stop reason, got %+v", listed[0])
+	}
+}
+
 // TestEngineAuthorizationAndHandoffState 验证EngineAuthorizationAndHandoffState。
 func TestEngineAppendAuditDataPersistsAuditAndTokenUsage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task-run-audit.db")
@@ -1138,6 +1172,7 @@ func TestEngineControlTaskRestartResetsFinishedOutputs(t *testing.T) {
 	if _, ok := engine.SetMirrorReferences(task.TaskID, []map[string]any{{"memory_id": "mem_write_task_001_1"}}); !ok {
 		t.Fatal("expected mirror references to be stored before restart")
 	}
+	originalRunID := task.RunID
 
 	restarted, err := engine.ControlTask(task.TaskID, "restart", map[string]any{"task_id": task.TaskID, "type": "status"})
 	if err != nil {
@@ -1149,11 +1184,17 @@ func TestEngineControlTaskRestartResetsFinishedOutputs(t *testing.T) {
 	if restarted.FinishedAt != nil {
 		t.Fatal("expected restart to clear finished_at")
 	}
+	if restarted.RunID == originalRunID {
+		t.Fatalf("expected restart to allocate a new run_id, got %s", restarted.RunID)
+	}
 	if restarted.DeliveryResult != nil || len(restarted.Artifacts) != 0 {
 		t.Fatal("expected restart to clear finished delivery outputs")
 	}
 	if restarted.MemoryReadPlans != nil || restarted.MemoryWritePlans != nil || restarted.MirrorReferences != nil {
 		t.Fatal("expected restart to clear handoff and mirror snapshots")
+	}
+	if restarted.LoopStopReason != "" {
+		t.Fatalf("expected restart to clear loop stop reason, got %q", restarted.LoopStopReason)
 	}
 }
 
