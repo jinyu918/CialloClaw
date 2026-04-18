@@ -175,7 +175,9 @@ func (r *Runtime) Run(ctx context.Context, request Request) (Result, bool, error
 		if request.PollSteering != nil {
 			steeringMessages := request.PollSteering(ctx, request.TaskID)
 			if len(steeringMessages) > 0 {
-				activeInputText = appendSteeringInput(request.InputText, steeringMessages)
+				// Keep every accepted steering message in the planner prompt so
+				// later rounds do not silently discard earlier guidance.
+				activeInputText = appendSteeringInput(activeInputText, steeringMessages)
 				events = append(events, newEvent(request, "task.steered", map[string]any{
 					"task_id":  request.TaskID,
 					"messages": append([]string(nil), steeringMessages...),
@@ -239,7 +241,13 @@ func (r *Runtime) Run(ctx context.Context, request Request) (Result, bool, error
 				"stop_reason": string(StopReasonPlannerError),
 				"error":       err.Error(),
 			}))
-			return Result{}, true, fmt.Errorf("agent loop planning turn %d: %w", turn+1, err)
+			return Result{
+				ToolCalls:       allToolCalls,
+				ModelInvocation: invocationRecordMap(latestInvocation),
+				Events:          events,
+				Rounds:          rounds,
+				StopReason:      StopReasonPlannerError,
+			}, true, fmt.Errorf("agent loop planning turn %d: %w", turn+1, err)
 		}
 
 		latestInvocation = &model.InvocationRecord{

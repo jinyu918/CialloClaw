@@ -958,17 +958,23 @@ func (s *Service) generateOutputWithAgentLoop(ctx context.Context, request Reque
 		Hook:               noopAgentLoopHook{},
 		Now:                time.Now,
 	})
+	if ok && shouldPersistAgentLoopRuntime(runtimeResult) {
+		s.persistAgentLoopRuntime(request, runtimeResult)
+		s.EmitAgentLoopNotifications(request.TaskID, runtimeResult)
+	}
 	if err != nil || !ok {
 		return generationTrace{}, ok, err
 	}
-	s.persistAgentLoopRuntime(request, runtimeResult)
-	s.EmitAgentLoopNotifications(request.TaskID, runtimeResult)
 	return generationTrace{
 		OutputText:      runtimeResult.OutputText,
 		ToolCalls:       runtimeResult.ToolCalls,
 		ModelInvocation: cloneMap(runtimeResult.ModelInvocation),
 		AuditRecord:     cloneMap(runtimeResult.AuditRecord),
 	}, true, nil
+}
+
+func shouldPersistAgentLoopRuntime(result agentloop.Result) bool {
+	return len(result.Rounds) > 0 || len(result.Events) > 0 || result.DeliveryRecord != nil
 }
 
 func (s *Service) buildModelAuditRecord(ctx context.Context, request Request, invocation *model.InvocationRecord) (map[string]any, error) {

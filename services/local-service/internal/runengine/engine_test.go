@@ -156,6 +156,40 @@ func TestEngineExecutionProgressAndToolCall(t *testing.T) {
 	}
 }
 
+func TestEngineEmitRuntimeNotificationPersistsLoopStopReason(t *testing.T) {
+	engine := NewEngine()
+	engine.now = func() time.Time { return time.Date(2026, 4, 8, 11, 0, 0, 0, time.UTC) }
+
+	task := engine.CreateTask(CreateTaskInput{
+		SessionID:   "sess_runtime",
+		Title:       "runtime stop reason",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "agent_loop"},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+	})
+
+	record, ok := engine.EmitRuntimeNotification(task.TaskID, "loop.failed", map[string]any{
+		"task_id":     task.TaskID,
+		"stop_reason": "planner_error",
+	})
+	if !ok {
+		t.Fatal("expected runtime notification to succeed")
+	}
+	if record.LoopStopReason != "planner_error" {
+		t.Fatalf("expected loop stop reason to persist, got %+v", record)
+	}
+
+	listed, total := engine.ListTasks("unfinished", "updated_at", "desc", 10, 0)
+	if total != 1 || len(listed) != 1 {
+		t.Fatalf("expected runtime task to remain listed, total=%d len=%d", total, len(listed))
+	}
+	if listed[0].LoopStopReason != "planner_error" {
+		t.Fatalf("expected task list to expose loop stop reason, got %+v", listed[0])
+	}
+}
+
 // TestEngineAuthorizationAndHandoffState 验证EngineAuthorizationAndHandoffState。
 func TestEngineAppendAuditDataPersistsAuditAndTokenUsage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task-run-audit.db")

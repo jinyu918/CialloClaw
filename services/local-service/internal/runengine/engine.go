@@ -663,10 +663,12 @@ func (e *Engine) EmitRuntimeNotification(taskID, method string, payload map[stri
 		return TaskRecord{}, false
 	}
 	record.UpdatedAt = e.now()
+	record.LoopStopReason = firstNonEmpty(runtimeStopReasonFromPayload(payload), record.LoopStopReason)
 	record.LatestEvent = e.buildEventWithPayload(record, method, payload)
 	record.queueNotification(method, map[string]any{
-		"task_id": taskID,
-		"event":   cloneMap(record.LatestEvent),
+		"task_id":     taskID,
+		"event":       cloneMap(record.LatestEvent),
+		"stop_reason": firstNonEmpty(runtimeStopReasonFromPayload(payload), record.LoopStopReason),
 	})
 	e.persistTaskLocked(record)
 	return record.clone(), true
@@ -2157,6 +2159,19 @@ func firstNonEmpty(primary, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+func runtimeStopReasonFromPayload(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if stopReason, ok := payload["stop_reason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return strings.TrimSpace(stopReason)
+	}
+	if stopReason, ok := payload["loop_stop_reason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return strings.TrimSpace(stopReason)
+	}
+	return ""
 }
 
 // sortTaskRecords 按协议约定的排序字段和方向整理任务列表。

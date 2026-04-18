@@ -29,6 +29,7 @@ type stubModelClient struct {
 	err                    error
 	toolCalls              []model.ToolCallResult
 	generateToolCallsCount int
+	plannerInputs          []string
 }
 
 func (s *stubModelClient) GenerateText(_ context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
@@ -48,6 +49,7 @@ func (s *stubModelClient) GenerateText(_ context.Context, request model.Generate
 
 func (s *stubModelClient) GenerateToolCalls(_ context.Context, request model.ToolCallRequest) (model.ToolCallResult, error) {
 	s.generateToolCallsCount++
+	s.plannerInputs = append(s.plannerInputs, request.Input)
 	if s.err != nil {
 		return model.ToolCallResult{}, s.err
 	}
@@ -469,6 +471,49 @@ func TestExecuteAgentLoopPersistsRuntimeEventsAndStopReason(t *testing.T) {
 	}
 }
 
+func TestExecuteAgentLoopPersistsPlannerErrors(t *testing.T) {
+	modelClient := &stubModelClient{err: errors.New("planner unavailable")}
+	loopStore := storage.NewService(nil).LoopRuntimeStore()
+	service, _ := newTestExecutionServiceWithModelClient(t, modelClient)
+	notifications := []string{}
+	service = service.WithLoopRuntimeStore(loopStore).WithNotificationEmitter(func(_ string, method string, _ map[string]any) {
+		notifications = append(notifications, method)
+	})
+
+	_, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_loop_planner_error",
+		RunID:        "run_loop_planner_error",
+		Title:        "Loop planner error persistence",
+		Intent:       map[string]any{"name": defaultAgentLoopIntentName, "arguments": map[string]any{}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text", Text: "Inspect the workspace and answer."},
+		DeliveryType: "bubble",
+		ResultTitle:  "Loop runtime result",
+	})
+	if err == nil {
+		t.Fatal("expected planner error to surface")
+	}
+	events, total, listErr := loopStore.ListEvents(context.Background(), "task_loop_planner_error", 20, 0)
+	if listErr != nil {
+		t.Fatalf("ListEvents returned error: %v", listErr)
+	}
+	if total == 0 || len(events) == 0 {
+		t.Fatal("expected persisted loop planner error events")
+	}
+	foundFailed := false
+	for _, event := range events {
+		if event.Type == "loop.failed" && strings.Contains(event.PayloadJSON, "planner_error") {
+			foundFailed = true
+			break
+		}
+	}
+	if !foundFailed {
+		t.Fatalf("expected loop.failed planner_error event in %+v", events)
+	}
+	if len(notifications) == 0 {
+		t.Fatal("expected runtime notifications for planner error")
+	}
+}
+
 func TestExecuteAgentLoopRetriesPlannerOnceBeforeFailing(t *testing.T) {
 	modelClient := &stubModelClient{err: errors.New("temporary planner error")}
 	service, _ := newTestExecutionServiceWithModelClient(t, modelClient)
@@ -557,6 +602,81 @@ func TestExecuteAgentLoopConsumesActiveRunSteeringBetweenRounds(t *testing.T) {
 	}
 	if pollCount < 2 {
 		t.Fatalf("expected active-run steering poller to run between rounds, got %d", pollCount)
+	}
+	if len(modelClient.plannerInputs) < 2 {
+		t.Fatalf("expected planner inputs for both rounds, got %+v", modelClient.plannerInputs)
+	}
+	if !strings.Contains(modelClient.plannerInputs[1], "Also include the newly added summary section.") {
+		t.Fatalf("expected second planner input to include active steering, got %q", modelClient.plannerInputs[1])
+	}
+	if !strings.Contains(modelClient.plannerInputs[1], "Inspect the notes directory and answer.") {
+		t.Fatalf("expected second planner input to preserve original input, got %q", modelClient.plannerInputs[1])
+	}
+}
+
+func TestExecuteAgentLoopAppendsMultipleActiveSteeringMessages(t *testing.T) {
+	modelClient := &stubModelClient{
+		toolCalls: []model.ToolCallResult{
+			{
+				RequestID: "req_loop_multi_1",
+				Provider:  "openai_responses",
+				ModelID:   "gpt-5.4",
+				ToolCalls: []model.ToolInvocation{{Name: "list_dir", Arguments: map[string]any{"path": "notes"}}},
+			},
+			{
+				RequestID: "req_loop_multi_2",
+				Provider:  "openai_responses",
+				ModelID:   "gpt-5.4",
+				ToolCalls: []model.ToolInvocation{{Name: "list_dir", Arguments: map[string]any{"path": "notes"}}},
+			},
+			{
+				RequestID:  "req_loop_multi_3",
+				Provider:   "openai_responses",
+				ModelID:    "gpt-5.4",
+				OutputText: "Loop runtime finished after multiple steering updates.",
+			},
+		},
+	}
+	service, workspaceRoot := newTestExecutionServiceWithModelClient(t, modelClient)
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "notes"), 0o755); err != nil {
+		t.Fatalf("mkdir notes: %v", err)
+	}
+	pollCount := 0
+	service = service.WithSteeringPoller(func(_ string) []string {
+		pollCount++
+		switch pollCount {
+		case 2:
+			return []string{"Keep the original checklist format."}
+		case 3:
+			return []string{"Also include the new summary section."}
+		default:
+			return nil
+		}
+	})
+
+	result, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_loop_multi_steer",
+		RunID:        "run_loop_multi_steer",
+		Title:        "Loop multiple steering",
+		Intent:       map[string]any{"name": defaultAgentLoopIntentName, "arguments": map[string]any{}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text", Text: "Inspect the notes directory and answer."},
+		DeliveryType: "bubble",
+		ResultTitle:  "Loop result",
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if result.Content != "Loop runtime finished after multiple steering updates." {
+		t.Fatalf("unexpected multi-steering result: %+v", result)
+	}
+	if len(modelClient.plannerInputs) < 3 {
+		t.Fatalf("expected planner inputs for three rounds, got %+v", modelClient.plannerInputs)
+	}
+	if !strings.Contains(modelClient.plannerInputs[2], "Keep the original checklist format.") {
+		t.Fatalf("expected final planner input to keep first steering message, got %q", modelClient.plannerInputs[2])
+	}
+	if !strings.Contains(modelClient.plannerInputs[2], "Also include the new summary section.") {
+		t.Fatalf("expected final planner input to include second steering message, got %q", modelClient.plannerInputs[2])
 	}
 }
 
