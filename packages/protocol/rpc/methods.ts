@@ -308,6 +308,8 @@ export interface TaskEvent {
 export interface AgentTaskEventsListParams {
   request_meta: RequestMeta;
   task_id: string;
+  run_id?: string;
+  type?: string;
   limit?: number;
   offset?: number;
 }

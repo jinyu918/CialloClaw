@@ -1565,6 +1565,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | 字段      | 中文说明    |
 | --------- | ----------- |
 | `task_id` | 目标任务 ID |
+| `run_id`  | 可选，用于只看某一次执行的事件 |
+| `type`    | 可选，用于按事件类型过滤，如 `loop.failed` |
 | `limit`   | 每页条数    |
 | `offset`  | 偏移量      |
 
@@ -1581,6 +1583,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
       "client_time": "2026-04-18T10:43:00+08:00"
     },
     "task_id": "task_201",
+    "run_id": "run_201",
+    "type": "loop.round.completed",
     "limit": 20,
     "offset": 0
   }

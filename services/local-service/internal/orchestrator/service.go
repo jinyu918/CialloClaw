@@ -757,13 +757,15 @@ func (s *Service) TaskEventsList(params map[string]any) (map[string]any, error) 
 	limit := clampListLimit(intValue(params, "limit", 20))
 	offset := clampListOffset(intValue(params, "offset", 0))
 	taskID := stringValue(params, "task_id", "")
+	runID := stringValue(params, "run_id", "")
+	eventType := stringValue(params, "type", "")
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("task_id is required")
 	}
 	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
 		return map[string]any{"items": []map[string]any{}, "page": pageMap(limit, offset, 0)}, nil
 	}
-	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, limit, offset)
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, runID, eventType, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
 	}

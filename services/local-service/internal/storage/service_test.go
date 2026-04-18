@@ -342,7 +342,7 @@ func TestLoopRuntimeStorePersistsNormalizedRecords(t *testing.T) {
 	assertTableCount(t, sqliteStore.db, "events", 1)
 	assertTableCount(t, sqliteStore.db, "delivery_results", 1)
 
-	events, total, err := store.ListEvents(context.Background(), "task_loop_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_loop_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListEvents returned error: %v", err)
 	}
@@ -380,12 +380,28 @@ func TestLoopRuntimeStoreKeepsAppendOnlyEventsAcrossRuns(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save second event failed: %v", err)
 	}
-	events, total, err := store.ListEvents(context.Background(), "task_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("list append-only events failed: %v", err)
 	}
 	if total != 2 || len(events) != 2 {
 		t.Fatalf("expected append-only events from multiple runs, got total=%d items=%+v", total, events)
+	}
+
+	filteredByRun, totalByRun, err := store.ListEvents(context.Background(), "task_001", "run_002", "", 20, 0)
+	if err != nil {
+		t.Fatalf("list events by run failed: %v", err)
+	}
+	if totalByRun != 1 || len(filteredByRun) != 1 || filteredByRun[0].RunID != "run_002" {
+		t.Fatalf("expected one run-scoped event, got total=%d items=%+v", totalByRun, filteredByRun)
+	}
+
+	filteredByType, totalByType, err := store.ListEvents(context.Background(), "task_001", "", "loop.round.completed", 20, 0)
+	if err != nil {
+		t.Fatalf("list events by type failed: %v", err)
+	}
+	if totalByType != 2 || len(filteredByType) != 2 {
+		t.Fatalf("expected two type-scoped events, got total=%d items=%+v", totalByType, filteredByType)
 	}
 }
 

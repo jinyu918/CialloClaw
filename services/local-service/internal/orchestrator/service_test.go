@@ -6604,6 +6604,28 @@ func TestServiceTaskEventsListReturnsNormalizedLoopEvents(t *testing.T) {
 	}
 }
 
+func TestServiceTaskEventsListSupportsRunAndTypeFilters(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "loop event filters")
+	if service.storage == nil || service.storage.LoopRuntimeStore() == nil {
+		t.Fatal("expected loop runtime store to be wired")
+	}
+	if err := service.storage.LoopRuntimeStore().SaveEvents(context.Background(), []storage.EventRecord{
+		{EventID: "evt_loop_filter_001", RunID: "run_loop_filter_a", TaskID: "task_loop_filter_001", StepID: "step_a", Type: "loop.round.started", Level: "info", PayloadJSON: `{}`, CreatedAt: "2026-04-17T10:00:00Z"},
+		{EventID: "evt_loop_filter_002", RunID: "run_loop_filter_b", TaskID: "task_loop_filter_001", StepID: "step_b", Type: "loop.failed", Level: "error", PayloadJSON: `{}`, CreatedAt: "2026-04-17T10:01:00Z"},
+	}); err != nil {
+		t.Fatalf("save loop filter events failed: %v", err)
+	}
+
+	result, err := service.TaskEventsList(map[string]any{"task_id": "task_loop_filter_001", "run_id": "run_loop_filter_b", "type": "loop.failed", "limit": 20, "offset": 0})
+	if err != nil {
+		t.Fatalf("task events list with filters failed: %v", err)
+	}
+	items := result["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["run_id"] != "run_loop_filter_b" || items[0]["type"] != "loop.failed" {
+		t.Fatalf("expected filtered loop event, got %+v", items)
+	}
+}
+
 func TestServiceTaskSteerPersistsFollowUpMessage(t *testing.T) {
 	service, _ := newTestServiceWithExecution(t, "task steer")
 	startResult, err := service.StartTask(map[string]any{
