@@ -2111,7 +2111,9 @@ func (s *Service) persistAgentLoopRuntime(request Request, result agentloop.Resu
 	if result.StopReason == agentloop.StopReasonCompleted || result.StopReason == agentloop.StopReasonMaxIterations || result.StopReason == agentloop.StopReasonRepeatedToolChoice || result.StopReason == agentloop.StopReasonToolRetryExhausted || result.StopReason == agentloop.StopReasonPlannerError {
 		runRecord.FinishedAt = updatedAt
 	}
-	_ = s.loopStore.SaveRun(context.Background(), runRecord)
+	if s.loopStore != nil {
+		_ = s.loopStore.SaveRun(context.Background(), runRecord)
+	}
 	if s.notificationEmitter != nil && result.StopReason != "" {
 		s.notificationEmitter(request.TaskID, "task.updated", map[string]any{
 			"task_id":          request.TaskID,
@@ -2141,7 +2143,7 @@ func (s *Service) persistAgentLoopRuntime(request Request, result agentloop.Resu
 			ToolCallID:    round.ToolCallRecord.ToolCallID,
 		})
 	}
-	if len(stepRecords) > 0 {
+	if s.loopStore != nil && len(stepRecords) > 0 {
 		_ = s.loopStore.SaveSteps(context.Background(), stepRecords)
 	}
 
@@ -2158,11 +2160,11 @@ func (s *Service) persistAgentLoopRuntime(request Request, result agentloop.Resu
 			CreatedAt:   event.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	if len(eventRecords) > 0 {
+	if s.loopStore != nil && len(eventRecords) > 0 {
 		_ = s.loopStore.SaveEvents(context.Background(), eventRecords)
 	}
 
-	if result.DeliveryRecord != nil {
+	if s.loopStore != nil && result.DeliveryRecord != nil {
 		_ = s.loopStore.SaveDeliveryResult(context.Background(), storage.DeliveryResultRecord{
 			DeliveryResultID: result.DeliveryRecord.DeliveryResultID,
 			TaskID:           result.DeliveryRecord.TaskID,
