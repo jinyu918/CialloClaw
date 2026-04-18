@@ -39,6 +39,20 @@ func TestInMemoryTaskRunStoreSaveLoadAndAllocate(t *testing.T) {
 	if records[0].TaskID != record.TaskID || records[0].RunID != record.RunID {
 		t.Fatalf("unexpected task run record: %+v", records[0])
 	}
+	taskItems, taskTotal, err := store.taskStore.ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 1 || len(taskItems) != 1 {
+		t.Fatalf("expected one first-class task record, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
+	}
+	if taskItems[0].TaskID != record.TaskID || taskItems[0].IntentName != "summarize" {
+		t.Fatalf("unexpected first-class task record: %+v", taskItems[0])
+	}
+	stepItems, stepTotal, err := store.stepStore.ListTaskSteps(context.Background(), record.TaskID, 10, 0)
+	if err != nil || stepTotal != 1 || len(stepItems) != 1 {
+		t.Fatalf("expected one first-class task_step record, got total=%d items=%+v err=%v", stepTotal, stepItems, err)
+	}
+	if stepItems[0].StepID != record.Timeline[0].StepID || stepItems[0].OrderIndex != 1 {
+		t.Fatalf("unexpected first-class task_step record: %+v", stepItems[0])
+	}
 
 	if err := store.DeleteTaskRun(context.Background(), record.TaskID); err != nil {
 		t.Fatalf("DeleteTaskRun returned error: %v", err)
@@ -50,6 +64,10 @@ func TestInMemoryTaskRunStoreSaveLoadAndAllocate(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("expected task run record to be deleted, got %d records", len(records))
+	}
+	taskItems, taskTotal, err = store.taskStore.ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 0 || len(taskItems) != 0 {
+		t.Fatalf("expected task record to be deleted too, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
 	}
 }
 
@@ -119,6 +137,45 @@ func TestSQLiteTaskRunStoreSaveLoadAndAllocate(t *testing.T) {
 	if len(records[0].Notifications) != 1 || records[0].Notifications[0].Method != "task.updated" {
 		t.Fatalf("expected notifications to round-trip, got %+v", records[0].Notifications)
 	}
+	taskItems, taskTotal, err := store.taskStore.ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 1 || len(taskItems) != 1 {
+		t.Fatalf("expected one structured task record, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
+	}
+	if taskItems[0].TaskID != taskID || taskItems[0].RunID != runID || taskItems[0].CurrentStepStatus != "completed" {
+		t.Fatalf("unexpected structured task record: %+v", taskItems[0])
+	}
+	stepItems, stepTotal, err := store.stepStore.ListTaskSteps(context.Background(), taskID, 10, 0)
+	if err != nil || stepTotal != 1 || len(stepItems) != 1 {
+		t.Fatalf("expected one structured task_step record, got total=%d items=%+v err=%v", stepTotal, stepItems, err)
+	}
+	if stepItems[0].TaskID != taskID || stepItems[0].Name != "return_result" {
+		t.Fatalf("unexpected structured task_step record: %+v", stepItems[0])
+	}
+	updatedRecord := sampleTaskRunRecord()
+	updatedRecord.TaskID = taskID
+	updatedRecord.RunID = runID
+	updatedRecord.Status = "processing"
+	updatedRecord.CurrentStep = "draft_response"
+	updatedRecord.CurrentStepStatus = "processing"
+	updatedRecord.Timeline = []TaskStepSnapshot{{
+		StepID:        "step_002",
+		TaskID:        taskID,
+		Name:          "draft_response",
+		Status:        "processing",
+		OrderIndex:    1,
+		InputSummary:  "updated input",
+		OutputSummary: "",
+	}}
+	if err := store.SaveTaskRun(context.Background(), updatedRecord); err != nil {
+		t.Fatalf("SaveTaskRun update returned error: %v", err)
+	}
+	updatedStepItems, updatedStepTotal, err := store.stepStore.ListTaskSteps(context.Background(), taskID, 10, 0)
+	if err != nil || updatedStepTotal != 1 || len(updatedStepItems) != 1 {
+		t.Fatalf("expected replaced structured task_step records, got total=%d items=%+v err=%v", updatedStepTotal, updatedStepItems, err)
+	}
+	if updatedStepItems[0].StepID != "step_002" || updatedStepItems[0].Status != "processing" {
+		t.Fatalf("expected task_steps to be replaced on update, got %+v", updatedStepItems[0])
+	}
 
 	if err := store.DeleteTaskRun(context.Background(), taskID); err != nil {
 		t.Fatalf("DeleteTaskRun returned error: %v", err)
@@ -130,6 +187,10 @@ func TestSQLiteTaskRunStoreSaveLoadAndAllocate(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("expected sqlite task run record to be deleted, got %d records", len(records))
+	}
+	taskItems, taskTotal, err = store.taskStore.ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 0 || len(taskItems) != 0 {
+		t.Fatalf("expected sqlite structured task record to be deleted, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
 	}
 }
 

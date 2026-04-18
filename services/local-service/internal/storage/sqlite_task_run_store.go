@@ -37,7 +37,9 @@ var (
 
 // SQLiteTaskRunStore persists task/run snapshots in SQLite.
 type SQLiteTaskRunStore struct {
-	db *sql.DB
+	db        *sql.DB
+	taskStore TaskStore
+	stepStore TaskStepStore
 }
 
 // NewSQLiteTaskRunStore opens and initializes the SQLite task/run store.
@@ -65,6 +67,19 @@ func NewSQLiteTaskRunStore(databasePath string) (*SQLiteTaskRunStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	taskStore, err := NewSQLiteTaskStore(databasePath)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	stepStore, err := NewSQLiteTaskStepStore(databasePath)
+	if err != nil {
+		_ = taskStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	store.taskStore = taskStore
+	store.stepStore = stepStore
 
 	return store, nil
 }
@@ -123,6 +138,16 @@ func (s *SQLiteTaskRunStore) DeleteTaskRun(ctx context.Context, taskID string) e
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM task_runs WHERE task_id = ?`, taskID); err != nil {
 		return fmt.Errorf("delete task run %s: %w", taskID, err)
 	}
+	if s.taskStore != nil {
+		if err := s.taskStore.DeleteTask(ctx, taskID); err != nil {
+			return err
+		}
+	}
+	if s.stepStore != nil {
+		if err := s.stepStore.ReplaceTaskSteps(ctx, taskID, nil); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -165,6 +190,9 @@ func (s *SQLiteTaskRunStore) SaveTaskRun(ctx context.Context, record TaskRunReco
 		recordJSON,
 	); err != nil {
 		return fmt.Errorf("save task run %s: %w", record.TaskID, err)
+	}
+	if err := writeStructuredTaskState(ctx, s.taskStore, s.stepStore, record); err != nil {
+		return fmt.Errorf("save structured task state %s: %w", record.TaskID, err)
 	}
 
 	return nil
@@ -209,8 +237,14 @@ func (s *SQLiteTaskRunStore) Close() error {
 	if s.db == nil {
 		return nil
 	}
-
-	return s.db.Close()
+	err := s.db.Close()
+	if closer, ok := s.taskStore.(interface{ Close() error }); ok {
+		err = errors.Join(err, closer.Close())
+	}
+	if closer, ok := s.stepStore.(interface{ Close() error }); ok {
+		err = errors.Join(err, closer.Close())
+	}
+	return err
 }
 
 func (s *SQLiteTaskRunStore) journalMode(ctx context.Context) (string, error) {

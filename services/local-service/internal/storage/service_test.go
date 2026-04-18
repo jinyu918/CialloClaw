@@ -432,6 +432,39 @@ func TestLoopRuntimeStorePersistsNormalizedRecords(t *testing.T) {
 	}
 }
 
+func TestServiceTaskStoresTrackStructuredTaskRecordsFromTaskRunSnapshots(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task-structured.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	record := sampleTaskRunRecord()
+	if err := service.TaskRunStore().SaveTaskRun(context.Background(), record); err != nil {
+		t.Fatalf("SaveTaskRun returned error: %v", err)
+	}
+
+	taskItems, taskTotal, err := service.TaskStore().ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 1 || len(taskItems) != 1 {
+		t.Fatalf("expected one first-class task record, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
+	}
+	if taskItems[0].TaskID != record.TaskID || taskItems[0].IntentName != "summarize" {
+		t.Fatalf("unexpected first-class task record: %+v", taskItems[0])
+	}
+	stepItems, stepTotal, err := service.TaskStepStore().ListTaskSteps(context.Background(), record.TaskID, 10, 0)
+	if err != nil || stepTotal != 1 || len(stepItems) != 1 {
+		t.Fatalf("expected one first-class task_step record, got total=%d items=%+v err=%v", stepTotal, stepItems, err)
+	}
+	if stepItems[0].StepID != record.Timeline[0].StepID || stepItems[0].Name != "return_result" {
+		t.Fatalf("unexpected first-class task_step record: %+v", stepItems[0])
+	}
+	if err := service.TaskRunStore().DeleteTaskRun(context.Background(), record.TaskID); err != nil {
+		t.Fatalf("DeleteTaskRun returned error: %v", err)
+	}
+	taskItems, taskTotal, err = service.TaskStore().ListTasks(context.Background(), 10, 0)
+	if err != nil || taskTotal != 0 || len(taskItems) != 0 {
+		t.Fatalf("expected first-class task record to be deleted, got total=%d items=%+v err=%v", taskTotal, taskItems, err)
+	}
+}
+
 func TestLoopRuntimeStoreKeepsAppendOnlyEventsAcrossRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "loop-runtime-append.db")
 	service := NewService(stubAdapter{databasePath: path})
