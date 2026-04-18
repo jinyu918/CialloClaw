@@ -831,6 +831,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	} else {
 		securitySummary["latest_restore_point"] = latestRestorePoint
 	}
+	runtimeSummary := s.buildTaskRuntimeSummary(task)
 
 	return map[string]any{
 		"task":              taskMap(task),
@@ -839,7 +840,34 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"mirror_references": protocolMirrorReferenceList(task.MirrorReferences),
 		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
+		"runtime_summary":   runtimeSummary,
 	}, nil
+}
+
+func (s *Service) buildTaskRuntimeSummary(task runengine.TaskRecord) map[string]any {
+	summary := map[string]any{
+		"loop_stop_reason":      nil,
+		"events_count":          0,
+		"latest_event_type":     nil,
+		"active_steering_count": len(task.SteeringMessages),
+	}
+	if strings.TrimSpace(task.LoopStopReason) != "" {
+		summary["loop_stop_reason"] = task.LoopStopReason
+	}
+	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
+		return summary
+	}
+	// Keep latest_event_type scoped to normalized runtime events so task-level
+	// notifications such as task.updated or task.steered do not leak into the
+	// runtime summary contract when no runtime events have been persisted yet.
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), task.TaskID, "", "", 1, 0)
+	if err == nil {
+		summary["events_count"] = total
+		if len(records) > 0 && strings.TrimSpace(records[0].Type) != "" {
+			summary["latest_event_type"] = records[0].Type
+		}
+	}
+	return summary
 }
 
 // TaskEventsList handles agent.task.events.list and exposes normalized runtime
