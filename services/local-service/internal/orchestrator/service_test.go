@@ -40,7 +40,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestServiceStartTaskAndConfirmFlow 验证确认后的普通任务会继续执行并完成交付。
 type stubModelClient struct {
 	output string
 }
@@ -390,6 +389,8 @@ func replaceTaskRunStore(t *testing.T, service *storage.Service, store storage.T
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
 }
 
+// TestServiceStartTaskAndConfirmFlow verifies that a confirmed standard task
+// continues execution and completes delivery.
 func TestServiceStartTaskAndConfirmFlow(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -2340,7 +2341,8 @@ func TestServiceSubmitInputWithFilesDoesNotWaitForInput(t *testing.T) {
 	}
 }
 
-// TestServiceSubmitInputEmptyTextReturnsWaitingInput 验证空文本提交会进入 waiting_input。
+// TestServiceSubmitInputEmptyTextReturnsWaitingInput verifies that empty text
+// submissions enter waiting_input.
 func TestServiceSubmitInputEmptyTextReturnsWaitingInput(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -2401,7 +2403,8 @@ func TestServiceSubmitInputEmptyTextReturnsWaitingInput(t *testing.T) {
 	}
 }
 
-// TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs 验证ServiceDirectStartBuildsMemoryAndDeliveryHandoffs。
+// TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs verifies direct starts
+// attach memory and delivery handoffs.
 func TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -2465,7 +2468,8 @@ func TestServiceDirectStartBuildsMemoryAndDeliveryHandoffs(t *testing.T) {
 	}
 }
 
-// TestServiceStartTaskWaitingAuthDoesNotSetFinishedAt 验证等待授权前不会提前写入 finished_at。
+// TestServiceStartTaskRespectsPreferredDelivery verifies direct starts preserve
+// preferred and fallback delivery settings.
 func TestServiceStartTaskRespectsPreferredDelivery(t *testing.T) {
 	service := newTestService()
 
@@ -2661,7 +2665,8 @@ func TestServiceStartTaskWaitingAuthDoesNotSetFinishedAt(t *testing.T) {
 	}
 }
 
-// TestServiceConfirmCanEnterWaitingAuth 验证ServiceConfirmCanEnterWaitingAuth。
+// TestServiceConfirmCanEnterWaitingAuth verifies confirm flows can enter
+// waiting_auth.
 func TestServiceConfirmCanEnterWaitingAuth(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -2736,7 +2741,8 @@ func TestServiceConfirmCanEnterWaitingAuth(t *testing.T) {
 	}
 }
 
-// TestServiceSecurityRespondAllowOnceResumesAndCompletes 验证授权通过后任务会继续执行并完成交付。
+// TestServiceSecurityRespondAllowOnceResumesAndCompletes verifies allow-once
+// resumes execution and completes delivery.
 func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
 	service := NewService(
 		contextsvc.NewService(),
@@ -2838,7 +2844,8 @@ func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
 	}
 }
 
-// TestServiceSecurityRespondDenyOnceCancelsTask 验证拒绝授权后任务会结束。
+// TestServiceSecurityRespondRespectsFallbackDelivery verifies authorization
+// resume honors fallback delivery resolution.
 func TestServiceSecurityRespondRespectsFallbackDelivery(t *testing.T) {
 	service := newTestService()
 
@@ -3292,7 +3299,7 @@ func TestServiceSecurityRespondAllowOnceReturnsStructuredRecoveryFailure(t *test
 	}
 }
 
-// modelConfig 处理当前模块的相关逻辑。
+// TestServiceTaskListSupportsSortParams verifies task list sorting parameters.
 func TestServiceTaskListSupportsSortParams(t *testing.T) {
 	service := newTestService()
 

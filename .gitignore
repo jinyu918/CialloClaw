@@ -18,5 +18,6 @@ bin/
 *.db
 *.db-shm
 *.db-wal
+services/local-service/internal/rpc/workspace/
 
 .DS_Store

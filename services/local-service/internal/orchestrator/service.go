@@ -1,4 +1,4 @@
-// 该文件负责 4 号主链路的任务编排与对外语义收口。
+// Package orchestrator assembles the owner-4 task-centric backend workflow.
 package orchestrator
 
 import (
@@ -31,9 +31,8 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/traceeval"
 )
 
-// ErrTaskNotFound 定义当前模块的基础变量。
-
-// ErrTaskNotFound 表示调用方给出的 task_id 在当前运行态中不存在。
+// ErrTaskNotFound indicates that the provided task_id does not exist in the
+// current runtime or hydrated query state.
 var (
 	ErrTaskNotFound           = errors.New("task not found")
 	ErrArtifactNotFound       = errors.New("artifact not found")
@@ -44,10 +43,8 @@ var (
 	ErrRecoveryPointNotFound  = errors.New("recovery point not found")
 )
 
-// Service 提供当前模块的服务能力。
-
-// Service 是 4 号后端 Harness 主链路的统一编排入口。
-// 所有稳定的 task-centric RPC 方法都会在这里汇合，并继续拆分到 context、intent、runengine、delivery 等子模块。
+// Service is the task-centric orchestration entrypoint for the local-service
+// backend.
 type Service struct {
 	context        *contextsvc.Service
 	intent         *intent.Service
@@ -70,9 +67,7 @@ type Service struct {
 	taskStartTaps  map[uint64]func(taskID, sessionID, traceID string)
 }
 
-// NewService 创建并返回Service。
-
-// NewService 组装主链路编排服务依赖。
+// NewService wires the main orchestration dependencies.
 func NewService(
 	context *contextsvc.Service,
 	intent *intent.Service,
@@ -103,7 +98,8 @@ func NewService(
 	}
 }
 
-// WithAudit 挂接共享审计服务，避免运行态出现独立计数器。
+// WithAudit attaches the shared audit service so runtime views do not fork
+// their own counters.
 func (s *Service) WithAudit(auditService *audit.Service) *Service {
 	if auditService != nil {
 		s.audit = auditService
@@ -111,7 +107,7 @@ func (s *Service) WithAudit(auditService *audit.Service) *Service {
 	return s
 }
 
-// WithExecutor 把真实执行服务挂入 orchestrator。
+// WithExecutor attaches the execution service used by the main task loop.
 func (s *Service) WithExecutor(executorService *execution.Service) *Service {
 	s.executor = executorService
 	if executorService != nil {
@@ -213,7 +209,7 @@ func (s *Service) publishTaskStart(taskID, sessionID, traceID string) {
 	}
 }
 
-// WithTaskInspector 挂接任务巡检运行态服务。
+// WithTaskInspector attaches the task-inspector runtime service.
 func (s *Service) WithTaskInspector(inspectorService *taskinspector.Service) *Service {
 	if inspectorService != nil {
 		s.inspector = inspectorService
@@ -221,7 +217,7 @@ func (s *Service) WithTaskInspector(inspectorService *taskinspector.Service) *Se
 	return s
 }
 
-// WithStorage 挂接共享 storage 服务，用于治理数据读侧回填。
+// WithStorage attaches shared storage for governance and query-side hydration.
 func (s *Service) WithStorage(storageService *storage.Service) *Service {
 	if storageService != nil {
 		s.storage = storageService
@@ -237,9 +233,8 @@ func (s *Service) WithTraceEval(traceEvalService *traceeval.Service) *Service {
 	return s
 }
 
-// Snapshot 处理当前模块的相关逻辑。
-
-// Snapshot 返回 orchestrator 当前用于调试和健康检查的最小概览。
+// Snapshot returns the minimal orchestrator summary used by debug and health
+// endpoints.
 func (s *Service) Snapshot() map[string]any {
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(100, 0)
 	return map[string]any{
@@ -264,10 +259,9 @@ func (s *Service) RunEngine() *runengine.Engine {
 	return s.runEngine
 }
 
-// SubmitInput 处理当前模块的相关逻辑。
-
-// SubmitInput 处理 agent.input.submit。
-// 这条路径负责承接悬浮球文本输入，根据上下文生成意图建议，并决定进入确认态、等待输入态还是直接执行。
+// SubmitInput handles agent.input.submit.
+// It captures context, derives intent suggestions, and decides whether the task
+// waits for more input, asks for confirmation, or runs immediately.
 func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	snapshot := s.context.Capture(params)
 	options := mapValue(params, "options")
@@ -361,10 +355,8 @@ func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	return response, nil
 }
 
-// StartTask 启动Task。
-
-// StartTask 处理 agent.task.start。
-// 它会基于显式 intent 或默认建议创建 task/run 映射，并决定是否需要确认或授权。
+// StartTask handles agent.task.start and creates the task/run mapping from an
+// explicit or inferred intent.
 func (s *Service) StartTask(params map[string]any) (map[string]any, error) {
 	snapshot := s.context.Capture(params)
 	explicitIntent := mapValue(params, "intent")
@@ -636,9 +628,8 @@ func (s *Service) revertTaskToIntentConfirmation(task runengine.TaskRecord) (run
 	return updatedTask, nil
 }
 
-// RecommendationGet 处理当前模块的相关逻辑。
-
-// RecommendationGet 处理 agent.recommendation.get，返回轻量推荐动作。
+// RecommendationGet handles agent.recommendation.get and returns lightweight
+// recommendation actions derived from current context signals.
 func (s *Service) RecommendationGet(params map[string]any) (map[string]any, error) {
 	contextValue := mapValue(params, "context")
 	signals := perception.CaptureContextSignals(stringValue(params, "source", "floating_ball"), stringValue(params, "scene", "hover"), contextValue)
@@ -675,9 +666,7 @@ func (s *Service) RecommendationGet(params map[string]any) (map[string]any, erro
 	}, nil
 }
 
-// RecommendationFeedbackSubmit 处理当前模块的相关逻辑。
-
-// RecommendationFeedbackSubmit 处理 agent.recommendation.feedback.submit。
+// RecommendationFeedbackSubmit handles agent.recommendation.feedback.submit.
 func (s *Service) RecommendationFeedbackSubmit(params map[string]any) (map[string]any, error) {
 	return map[string]any{
 		"applied": s.recommendation.SubmitFeedback(
@@ -1014,9 +1003,11 @@ func normalizeDeliveryOpenResult(artifact map[string]any, deliveryResult map[str
 	return resolved
 }
 
-// TaskControl 处理当前模块的相关逻辑。
-
-// TaskControl 处理 agent.task.control，把用户控制动作转换成状态机操作。
+// TaskControl handles agent.task.control and converts user actions into runtime
+// state-machine transitions. The orchestration layer owns error translation and
+// post-transition follow-up such as human-loop resume handling and queue drain,
+// because those behaviors depend on task-centric semantics rather than the raw
+// runtime mutation alone.
 func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	if strings.TrimSpace(taskID) == "" {
@@ -1078,16 +1069,12 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
-// TaskInspectorConfigGet 处理当前模块的相关逻辑。
-
-// TaskInspectorConfigGet 处理 agent.task_inspector.config.get。
+// TaskInspectorConfigGet handles agent.task_inspector.config.get.
 func (s *Service) TaskInspectorConfigGet() (map[string]any, error) {
 	return s.runEngine.InspectorConfig(), nil
 }
 
-// TaskInspectorConfigUpdate 处理当前模块的相关逻辑。
-
-// TaskInspectorConfigUpdate 处理 agent.task_inspector.config.update。
+// TaskInspectorConfigUpdate handles agent.task_inspector.config.update.
 func (s *Service) TaskInspectorConfigUpdate(params map[string]any) (map[string]any, error) {
 	effective := s.runEngine.UpdateInspectorConfig(params)
 	return map[string]any{
@@ -1096,9 +1083,8 @@ func (s *Service) TaskInspectorConfigUpdate(params map[string]any) (map[string]a
 	}, nil
 }
 
-// TaskInspectorRun 处理当前模块的相关逻辑。
-
-// TaskInspectorRun 处理 agent.task_inspector.run，返回巡检摘要和建议。
+// TaskInspectorRun handles agent.task_inspector.run and returns the inspection
+// summary plus suggestions.
 func (s *Service) TaskInspectorRun(params map[string]any) (map[string]any, error) {
 	config := s.runEngine.InspectorConfig()
 	targetSources := stringSliceValue(params["target_sources"])
@@ -1127,9 +1113,7 @@ func (s *Service) TaskInspectorRun(params map[string]any) (map[string]any, error
 	}, nil
 }
 
-// NotepadList 处理当前模块的相关逻辑。
-
-// NotepadList 处理 agent.notepad.list。
+// NotepadList handles agent.notepad.list.
 func (s *Service) NotepadList(params map[string]any) (map[string]any, error) {
 	group := stringValue(params, "group", "upcoming")
 	limit := intValue(params, "limit", 20)
@@ -1141,7 +1125,7 @@ func (s *Service) NotepadList(params map[string]any) (map[string]any, error) {
 	}, nil
 }
 
-// NotepadUpdate 处理 agent.notepad.update。
+// NotepadUpdate handles agent.notepad.update.
 func (s *Service) NotepadUpdate(params map[string]any) (map[string]any, error) {
 	itemID := stringValue(params, "item_id", "")
 	if itemID == "" {
@@ -1175,9 +1159,7 @@ func (s *Service) NotepadUpdate(params map[string]any) (map[string]any, error) {
 	return response, nil
 }
 
-// NotepadConvertToTask 处理当前模块的相关逻辑。
-
-// NotepadConvertToTask 处理 agent.notepad.convert_to_task。
+// NotepadConvertToTask handles agent.notepad.convert_to_task.
 func (s *Service) NotepadConvertToTask(params map[string]any) (map[string]any, error) {
 	itemID := stringValue(params, "item_id", "")
 	if itemID == "" {
@@ -1461,7 +1443,7 @@ func (s *Service) SecurityPendingList(params map[string]any) (map[string]any, er
 	}, nil
 }
 
-// SecurityAuditList 处理 agent.security.audit.list。
+// SecurityAuditList handles agent.security.audit.list.
 func (s *Service) SecurityAuditList(params map[string]any) (map[string]any, error) {
 	limit := clampListLimit(intValue(params, "limit", 20))
 	offset := clampListOffset(intValue(params, "offset", 0))
@@ -1486,7 +1468,7 @@ func (s *Service) SecurityAuditList(params map[string]any) (map[string]any, erro
 	}, nil
 }
 
-// SecurityRestorePointsList 处理 agent.security.restore_points.list。
+// SecurityRestorePointsList handles agent.security.restore_points.list.
 func (s *Service) SecurityRestorePointsList(params map[string]any) (map[string]any, error) {
 	limit := clampListLimit(intValue(params, "limit", 20))
 	offset := clampListOffset(intValue(params, "offset", 0))
@@ -1514,7 +1496,7 @@ func (s *Service) SecurityRestorePointsList(params map[string]any) (map[string]a
 	}, nil
 }
 
-// SecurityRestoreApply 处理 agent.security.restore.apply。
+// SecurityRestoreApply handles agent.security.restore.apply.
 func (s *Service) SecurityRestoreApply(params map[string]any) (map[string]any, error) {
 	recoveryPointID := stringValue(params, "recovery_point_id", "")
 	if strings.TrimSpace(recoveryPointID) == "" {
@@ -1614,9 +1596,9 @@ func clampListOffset(offset int) int {
 	return offset
 }
 
-// PendingNotifications 返回待处理的Notifications。
-
-// PendingNotifications 读取某个任务当前尚未消费的通知列表。
+// PendingNotifications returns the buffered notification list for a task
+// without consuming it. Debug transports use this read-only path when they need
+// to inspect pending events but must not disturb the ordered replay pipeline.
 func (s *Service) PendingNotifications(taskID string) ([]map[string]any, error) {
 	notifications, ok := s.runEngine.PendingNotifications(taskID)
 	if !ok {
@@ -1635,9 +1617,10 @@ func (s *Service) PendingNotifications(taskID string) ([]map[string]any, error) 
 	return items, nil
 }
 
-// DrainNotifications 取出并清空Notifications。
-
-// DrainNotifications 取出并清空某个任务的通知列表。
+// DrainNotifications returns and clears the buffered notification list for a
+// task. The orchestrator exposes this explicit destructive read so transports
+// can replay notifications exactly once instead of coupling queue semantics to
+// ordinary task detail or list reads.
 func (s *Service) DrainNotifications(taskID string) ([]map[string]any, error) {
 	notifications, ok := s.runEngine.DrainNotifications(taskID)
 	if !ok {
@@ -1656,10 +1639,11 @@ func (s *Service) DrainNotifications(taskID string) ([]map[string]any, error) {
 	return items, nil
 }
 
-// SecurityRespond 处理当前模块的相关逻辑。
-
-// SecurityRespond 处理 agent.security.respond。
-// 它是风险挂起链路的恢复入口，负责把“允许/拒绝”转换成任务状态推进、交付恢复和审计结果。
+// SecurityRespond handles agent.security.respond. It is the single resume
+// entrypoint for risk-gated tasks, so it must translate allow/deny decisions
+// into runtime state changes, delivery continuation, impact scope reporting,
+// and audit data in one place instead of letting transports or callers stitch
+// those pieces together inconsistently.
 func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error) {
 	taskID := stringValue(params, "task_id", "")
 	task, ok := s.runEngine.GetTask(taskID)
@@ -1789,9 +1773,7 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 	return response, nil
 }
 
-// SettingsGet 设置tingsGet。
-
-// SettingsGet 处理 agent.settings.get。
+// SettingsGet handles agent.settings.get.
 func (s *Service) SettingsGet(params map[string]any) (map[string]any, error) {
 	settings := s.runEngine.Settings()
 	settingsWithSecrets, err := s.attachSensitiveSettingAvailability(settings)
@@ -1812,9 +1794,8 @@ func (s *Service) SettingsGet(params map[string]any) (map[string]any, error) {
 	return map[string]any{"settings": map[string]any{scope: cloneMap(section)}}, nil
 }
 
-// SettingsUpdate 设置tingsUpdate。
-
-// SettingsUpdate 处理 agent.settings.update，并返回生效设置和应用模式。
+// SettingsUpdate handles agent.settings.update and returns the effective
+// settings patch plus apply-mode metadata.
 func (s *Service) SettingsUpdate(params map[string]any) (map[string]any, error) {
 	if dataLog := mapValue(params, "data_log"); len(dataLog) > 0 {
 		if apiKey := stringValue(dataLog, "api_key", ""); apiKey != "" {
@@ -1891,9 +1872,7 @@ func (s *Service) executeScreenAnalysisAfterApproval(task runengine.TaskRecord, 
 	return updatedTask, bubble, deliveryResult, nil
 }
 
-// taskMap 处理当前模块的相关逻辑。
-
-// taskMap 把 runengine 内部任务记录映射成对外统一的 task 结构。
+// taskMap converts a runengine task record into the protocol-facing task shape.
 func taskMap(record runengine.TaskRecord) map[string]any {
 	result := map[string]any{
 		"task_id":          record.TaskID,
@@ -1994,9 +1973,7 @@ func taskIsTerminal(status string) bool {
 	}
 }
 
-// timelineMap 处理当前模块的相关逻辑。
-
-// timelineMap 把内部时间线记录映射成对外返回值。
+// timelineMap converts internal timeline records into protocol-facing values.
 func timelineMap(timeline []runengine.TaskStepRecord) []map[string]any {
 	result := make([]map[string]any, 0, len(timeline))
 	for _, step := range timeline {
@@ -2013,9 +1990,7 @@ func timelineMap(timeline []runengine.TaskStepRecord) []map[string]any {
 	return result
 }
 
-// pageMap 处理当前模块的相关逻辑。
-
-// pageMap 统一列表接口返回的分页信息。
+// pageMap builds the shared paging payload used by list endpoints.
 func pageMap(limit, offset, total int) map[string]any {
 	return map[string]any{
 		"limit":    limit,
@@ -2403,7 +2378,8 @@ func cloneTimePointer(value *time.Time) *time.Time {
 	return &cloned
 }
 
-// taskStatusForSuggestion 处理当前模块的相关逻辑。
+// taskStatusForSuggestion derives the initial task_status from the suggestion
+// confirmation requirement.
 func taskStatusForSuggestion(requiresConfirm bool) string {
 	if requiresConfirm {
 		return "confirming_intent"
@@ -2411,7 +2387,8 @@ func taskStatusForSuggestion(requiresConfirm bool) string {
 	return "processing"
 }
 
-// currentStepForSuggestion 处理当前模块的相关逻辑。
+// currentStepForSuggestion derives the initial current_step from the suggested
+// intent.
 func currentStepForSuggestion(requiresConfirm bool, taskIntent map[string]any) string {
 	if requiresConfirm {
 		return "intent_confirmation"
@@ -2422,7 +2399,8 @@ func currentStepForSuggestion(requiresConfirm bool, taskIntent map[string]any) s
 	return "generate_output"
 }
 
-// bubbleTypeForSuggestion 处理当前模块的相关逻辑。
+// bubbleTypeForSuggestion selects the outward-facing bubble type for the
+// suggestion result.
 func bubbleTypeForSuggestion(requiresConfirm bool) string {
 	if requiresConfirm {
 		return "intent_confirm"
@@ -2430,7 +2408,7 @@ func bubbleTypeForSuggestion(requiresConfirm bool) string {
 	return "result"
 }
 
-// bubbleTextForInput 处理当前模块的相关逻辑。
+// bubbleTextForInput returns the bubble text for agent.input.submit flows.
 func bubbleTextForInput(suggestion intent.Suggestion) string {
 	if suggestion.RequiresConfirm {
 		if !suggestion.IntentConfirmed {
@@ -2441,7 +2419,7 @@ func bubbleTextForInput(suggestion intent.Suggestion) string {
 	return suggestion.ResultBubbleText
 }
 
-// bubbleTextForStart 处理当前模块的相关逻辑。
+// bubbleTextForStart returns the bubble text for agent.task.start flows.
 func bubbleTextForStart(suggestion intent.Suggestion) string {
 	if suggestion.RequiresConfirm {
 		if !suggestion.IntentConfirmed {
@@ -2469,10 +2447,8 @@ func confirmIntentText(taskIntent map[string]any) string {
 	}
 }
 
-// initialTimeline 处理当前模块的相关逻辑。
-
-// initialTimeline 生成任务创建时的第一条时间线步骤。
-// 它会根据当前 task_status 决定步骤初始状态是 pending 还是 running。
+// initialTimeline creates the first timeline step for a new task and derives
+// whether that step starts as pending or running.
 func initialTimeline(status, currentStep string) []runengine.TaskStepRecord {
 	stepStatus := "running"
 	if status == "confirming_intent" || status == "waiting_input" {
@@ -2496,9 +2472,7 @@ func initialTimeline(status, currentStep string) []runengine.TaskStepRecord {
 	}
 }
 
-// controlBubbleText 处理当前模块的相关逻辑。
-
-// controlBubbleText 根据 task_control_action 生成对应的状态气泡文案。
+// controlBubbleText returns the status bubble text for a task_control action.
 func controlBubbleText(action string) string {
 	switch action {
 	case "pause":
@@ -2523,7 +2497,8 @@ func isSupportedTaskControlAction(action string) bool {
 	}
 }
 
-// currentTimeFromTask 处理当前模块的相关逻辑。
+// currentTimeFromTask returns the latest task update time formatted for bubble
+// payloads.
 func currentTimeFromTask(engine *runengine.Engine, taskID string) string {
 	task, ok := engine.GetTask(taskID)
 	if !ok {
@@ -2532,9 +2507,8 @@ func currentTimeFromTask(engine *runengine.Engine, taskID string) string {
 	return task.UpdatedAt.Format(dateTimeLayout)
 }
 
-// workspacePathFromSettings 处理当前模块的相关逻辑。
-
-// workspacePathFromSettings 从设置快照里提取当前 workspace 路径。
+// workspacePathFromSettings extracts the current workspace path from the
+// settings snapshot.
 func workspacePathFromSettings(settings map[string]any) string {
 	general, ok := settings["general"].(map[string]any)
 	if !ok {
@@ -2547,7 +2521,8 @@ func workspacePathFromSettings(settings map[string]any) string {
 	return stringValue(download, "workspace_path", "workspace")
 }
 
-// defaultIntentMap 处理当前模块的相关逻辑。
+// defaultIntentMap creates a minimal default intent payload for notepad
+// conversions.
 func defaultIntentMap(name string) map[string]any {
 	arguments := map[string]any{}
 	if name == "summarize" {
@@ -2589,9 +2564,8 @@ func notepadSnapshot(item map[string]any) contextsvc.TaskContextSnapshot {
 	}
 }
 
-// defaultMirrorReference 处理当前模块的相关逻辑。
-
-// defaultMirrorReference 构造镜像模块返回的示例记忆引用。
+// defaultMirrorReference creates the sample memory reference returned by the
+// mirror module.
 func defaultMirrorReference() map[string]any {
 	return map[string]any{
 		"memory_id": "pref_001",
@@ -3571,9 +3545,10 @@ func hasOverwriteOrDeleteRisk(taskIntent map[string]any) bool {
 	return boolValue(arguments, "overwrite", false) || boolValue(arguments, "delete", false)
 }
 
-// attachMemoryReadPlans 处理当前模块的相关逻辑。
-
-// attachMemoryReadPlans 在任务启动或确认后挂接 memory 读取计划。
+// attachMemoryReadPlans registers the retrieval plans attached at task start or
+// confirmation time. Read plans are persisted before execution so later mirror,
+// debug, or storage-backed views can explain what memory lookup the task was
+// supposed to perform even if execution changes or the process restarts.
 func (s *Service) attachMemoryReadPlans(taskID, runID string, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any) {
 	readPlans := []map[string]any{
 		{
@@ -3595,9 +3570,10 @@ func (s *Service) attachMemoryReadPlans(taskID, runID string, snapshot contextsv
 	s.syncTaskReadMirrorReferences(taskID, references, err)
 }
 
-// attachPostDeliveryHandoffs 处理当前模块的相关逻辑。
-
-// attachPostDeliveryHandoffs 在任务完成后挂接 memory 写入和交付落盘计划。
+// attachPostDeliveryHandoffs registers memory-write and delivery persistence
+// handoffs after a task finishes. Keeping these side effects in one post-
+// delivery step prevents runtime execution from mixing formal delivery with
+// memory persistence details while still leaving a durable handoff trail.
 func (s *Service) attachPostDeliveryHandoffs(taskID, runID string, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any, deliveryResult map[string]any, artifacts []map[string]any) {
 	writePlans := []map[string]any{
 		{
@@ -3621,9 +3597,9 @@ func (s *Service) attachPostDeliveryHandoffs(taskID, runID string, snapshot cont
 	s.persistArtifacts(taskID, artifactPlans)
 }
 
-// buildApprovalRequest 处理当前模块的相关逻辑。
-
-// buildApprovalRequest 构造统一的 approval_request 结构。
+// buildApprovalRequest creates the normalized approval_request payload. The
+// object must already be protocol-facing here because it is persisted, replayed
+// to transports, and later echoed back through agent.security.respond.
 func buildApprovalRequest(taskID string, taskIntent map[string]any, assessment execution.GovernanceAssessment) map[string]any {
 	arguments := mapValue(taskIntent, "arguments")
 	targetObject := firstNonEmptyString(assessment.TargetObject, stringValue(arguments, "target_path", "workspace_document"))
@@ -3643,9 +3619,10 @@ func buildApprovalRequest(taskID string, taskIntent map[string]any, assessment e
 	}
 }
 
-// buildImpactScope 处理当前模块的相关逻辑。
-
-// buildImpactScope 构造最小影响范围摘要，用于授权结果回传和安全面板展示。
+// buildImpactScope derives the minimal impact summary used by authorization
+// results and the security views. It intentionally normalizes files around the
+// workspace root so policy, audit, and restore flows all reason about one scope
+// shape instead of transport- or tool-specific paths.
 func (s *Service) buildImpactScope(task runengine.TaskRecord, pendingExecution map[string]any) map[string]any {
 	if impactScope, ok := pendingExecution["impact_scope"].(map[string]any); ok && len(impactScope) > 0 {
 		return cloneMap(impactScope)
@@ -3669,9 +3646,8 @@ func (s *Service) buildImpactScope(task runengine.TaskRecord, pendingExecution m
 	}
 }
 
-// snapshotFromTask 处理当前模块的相关逻辑。
-
-// snapshotFromTask 从任务记录反推一个最小上下文快照，用于授权恢复等场景。
+// snapshotFromTask rebuilds the minimum context snapshot needed for resume and
+// other post-creation flows.
 func snapshotFromTask(task runengine.TaskRecord) contextsvc.TaskContextSnapshot {
 	if !isEmptySnapshot(task.Snapshot) {
 		return cloneTaskSnapshot(task.Snapshot)
@@ -3733,9 +3709,10 @@ func confirmationTitleFromTask(task runengine.TaskRecord) string {
 	return "确认处理方式：" + subject
 }
 
-// memoryQueryFromSnapshot 处理当前模块的相关逻辑。
-
-// memoryQueryFromSnapshot 从当前上下文挑选最适合作为检索 query 的内容。
+// memoryQueryFromSnapshot selects the most representative retrieval query from
+// the current context snapshot. The fallback order intentionally prefers direct
+// user focus, then file context, then broader perception signals so memory
+// lookup stays anchored to what most likely triggered the task.
 func memoryQueryFromSnapshot(snapshot contextsvc.TaskContextSnapshot) string {
 	for _, value := range []string{snapshot.SelectionText, snapshot.Text, snapshot.ErrorText} {
 		if value != "" {
@@ -3756,9 +3733,9 @@ func memoryQueryFromSnapshot(snapshot contextsvc.TaskContextSnapshot) string {
 	return "task_context"
 }
 
-// buildMemorySummary 处理当前模块的相关逻辑。
-
-// buildMemorySummary 构造任务完成后写入 memory 的简要摘要。
+// buildMemorySummary creates the short post-task memory summary written after
+// delivery completes. It keeps the output compact on purpose because this text
+// is later used as durable memory material rather than a full-fidelity trace.
 func buildMemorySummary(snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any, deliveryResult map[string]any) string {
 	intentName := stringValue(taskIntent, "name", "summarize")
 	title := stringValue(deliveryResult, "title", "任务结果")
@@ -3786,9 +3763,8 @@ func buildMemorySummary(snapshot contextsvc.TaskContextSnapshot, taskIntent map[
 	return fmt.Sprintf("任务完成，意图=%s，输入=%s，感知=%s，交付=%s，结果摘要=%s", intentName, truncateText(query, 48), strings.Join(perceptionSummary, ", "), title, truncateText(preview, 96))
 }
 
-// resultSpecFromIntent 处理当前模块的相关逻辑。
-
-// resultSpecFromIntent 根据 intent 返回默认结果标题、预览文案和结果气泡文案。
+// resultSpecFromIntent returns the default result title, preview text, and
+// completion bubble text for an intent.
 func resultSpecFromIntent(taskIntent map[string]any) (string, string, string) {
 	switch stringValue(taskIntent, "name", "summarize") {
 	case "agent_loop":
@@ -3810,9 +3786,7 @@ func resultSpecFromIntent(taskIntent map[string]any) (string, string, string) {
 	}
 }
 
-// deliveryTypeFromIntent 处理当前模块的相关逻辑。
-
-// deliveryTypeFromIntent 根据意图类型返回默认交付方式。
+// deliveryTypeFromIntent returns the default delivery type for an intent.
 func deliveryTypeFromIntent(taskIntent map[string]any) string {
 	switch stringValue(taskIntent, "name", "summarize") {
 	case "agent_loop", "translate", "explain", "page_read", "page_search":
@@ -3822,7 +3796,10 @@ func deliveryTypeFromIntent(taskIntent map[string]any) string {
 	}
 }
 
-// firstNonEmptyString 处理当前模块的相关逻辑。
+// deliveryPreferenceFromSubmit reads delivery preferences from
+// agent.input.submit. Submit uses options.* while agent.task.start uses a
+// dedicated delivery object, so the orchestrator keeps both decoders separate
+// and normalizes them before any execution or approval plan is built.
 func deliveryPreferenceFromSubmit(params map[string]any) (string, string) {
 	options := mapValue(params, "options")
 	return stringValue(options, "preferred_delivery", ""), ""
@@ -3843,7 +3820,11 @@ func mergeSuggestedDeliveryPreference(preferredDelivery, fallbackDelivery, sugge
 	return preferredDelivery, fallbackDelivery
 }
 
-// buildPendingExecution 生成等待授权任务在恢复执行时需要的交付计划。
+// buildPendingExecution creates the minimum delivery plan required to resume a
+// task after authorization. The stored plan must be deterministic and task-
+// centric because waiting_auth can outlive the original request and later needs
+// to restart execution without recomputing delivery intent from transport-only
+// inputs.
 func (s *Service) buildPendingExecution(task runengine.TaskRecord, taskIntent map[string]any) map[string]any {
 	plan := s.delivery.BuildApprovalExecutionPlan(task.TaskID, taskIntent)
 	return s.applyResolvedDeliveryToPlan(task, plan, taskIntent)
@@ -4184,7 +4165,8 @@ func impactScopeTarget(impactScope map[string]any, fallback string) string {
 	return firstNonEmptyString(strings.TrimSpace(fallback), "main_flow")
 }
 
-// applyResolvedDeliveryToPlan 把任务级交付偏好解析结果回填到恢复执行计划中。
+// applyResolvedDeliveryToPlan folds the resolved task-level delivery preference
+// back into a pending execution plan.
 func (s *Service) applyResolvedDeliveryToPlan(task runengine.TaskRecord, plan map[string]any, taskIntent map[string]any) map[string]any {
 	if len(plan) == 0 {
 		return nil
@@ -4197,12 +4179,13 @@ func (s *Service) applyResolvedDeliveryToPlan(task runengine.TaskRecord, plan ma
 	return updatedPlan
 }
 
-// resolveTaskDeliveryType 统一计算某个任务当前应采用的交付类型。
+// resolveTaskDeliveryType computes the effective delivery type for a task.
 func resolveTaskDeliveryType(task runengine.TaskRecord, taskIntent map[string]any) string {
 	return resolveDeliveryType(task.PreferredDelivery, task.FallbackDelivery, deliveryTypeFromIntent(taskIntent))
 }
 
-// resolveDeliveryType 按“任务偏好 -> fallback -> 默认值”的顺序解析最终交付类型。
+// resolveDeliveryType resolves the final delivery type in priority order:
+// task preference, fallback, then default.
 func resolveDeliveryType(preferred, fallback, defaultType string) string {
 	if normalized := normalizeDeliveryType(preferred); normalized != "" {
 		return normalized
@@ -4230,7 +4213,7 @@ func normalizeDeliveryType(deliveryType string) string {
 	}
 }
 
-// previewTextForDeliveryType 返回不同交付类型对应的预览文案。
+// previewTextForDeliveryType returns the preview copy for each delivery type.
 func previewTextForDeliveryType(deliveryType string) string {
 	if deliveryType == "bubble" {
 		return "\u7ed3\u679c\u5df2\u901a\u8fc7\u6c14\u6ce1\u8fd4\u56de"
@@ -4294,9 +4277,7 @@ func floatValueFromAny(value any) float64 {
 	}
 }
 
-// firstMapOrNil 处理当前模块的相关逻辑。
-
-// firstMapOrNil 返回列表中的第一项拷贝；如果为空则返回 nil。
+// firstMapOrNil returns a copy of the first item in a list, or nil when empty.
 func firstMapOrNil(items []map[string]any) map[string]any {
 	if len(items) == 0 {
 		return nil
@@ -4304,7 +4285,8 @@ func firstMapOrNil(items []map[string]any) map[string]any {
 	return cloneMap(items[0])
 }
 
-// latestRestorePointFromApprovals 处理当前模块的相关逻辑。
+// latestRestorePointFromApprovals extracts the newest restore point carried by
+// approval-derived task data.
 func latestRestorePointFromApprovals(items []map[string]any) any {
 	if len(items) == 0 {
 		return nil
@@ -4315,9 +4297,7 @@ func latestRestorePointFromApprovals(items []map[string]any) any {
 	}
 }
 
-// cloneMap 处理当前模块的相关逻辑。
-
-// cloneMap 对 map[string]any 做递归复制，避免不同层之间共享引用。
+// cloneMap recursively copies a map[string]any payload.
 func cloneMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -4338,9 +4318,7 @@ func cloneMap(values map[string]any) map[string]any {
 	return result
 }
 
-// cloneMapSlice 处理当前模块的相关逻辑。
-
-// cloneMapSlice 对 []map[string]any 做逐项复制。
+// cloneMapSlice recursively copies a []map[string]any payload.
 func cloneMapSlice(values []map[string]any) []map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -4352,9 +4330,7 @@ func cloneMapSlice(values []map[string]any) []map[string]any {
 	return result
 }
 
-// mapValue 处理当前模块的相关逻辑。
-
-// mapValue 安全读取嵌套对象字段。
+// mapValue safely reads a nested object field.
 func mapValue(values map[string]any, key string) map[string]any {
 	rawValue, ok := values[key]
 	if !ok {
@@ -4367,9 +4343,7 @@ func mapValue(values map[string]any, key string) map[string]any {
 	return value
 }
 
-// stringValue 处理当前模块的相关逻辑。
-
-// stringValue 安全读取字符串字段，并在空值时回退到默认值。
+// stringValue safely reads a string field and falls back when empty.
 func stringValue(values map[string]any, key, fallback string) string {
 	rawValue, ok := values[key]
 	if !ok {
@@ -4386,9 +4360,7 @@ func requestTraceID(values map[string]any) string {
 	return stringValue(mapValue(values, "request_meta"), "trace_id", "")
 }
 
-// boolValue 处理当前模块的相关逻辑。
-
-// boolValue 安全读取布尔字段。
+// boolValue safely reads a boolean field.
 func boolValue(values map[string]any, key string, fallback bool) bool {
 	rawValue, ok := values[key]
 	if !ok {
@@ -4401,9 +4373,7 @@ func boolValue(values map[string]any, key string, fallback bool) bool {
 	return value
 }
 
-// intValue 处理当前模块的相关逻辑。
-
-// intValue 安全读取经过 JSON 解码后的数值字段。
+// intValue safely reads a JSON-decoded numeric field.
 func intValue(values map[string]any, key string, fallback int) int {
 	rawValue, ok := values[key]
 	if !ok {
@@ -4416,9 +4386,8 @@ func intValue(values map[string]any, key string, fallback int) int {
 	return int(value)
 }
 
-// truncateText 处理当前模块的相关逻辑。
-
-// truncateText 以固定长度截断文本，用于推荐文案和 memory 查询。
+// truncateText trims text to a fixed length for recommendation and memory
+// query surfaces.
 func truncateText(value string, maxLength int) string {
 	if len(value) <= maxLength {
 		return value
@@ -4426,7 +4395,6 @@ func truncateText(value string, maxLength int) string {
 	return value[:maxLength] + "..."
 }
 
-// dateTimeLayout 定义当前模块的基础变量。
 func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any) (runengine.TaskRecord, map[string]any, map[string]any, []map[string]any, error) {
 	processingTask, ok := s.runEngine.BeginExecution(task.TaskID, executionStepName(taskIntent), "开始生成正式结果")
 	if !ok {
@@ -4802,6 +4770,8 @@ func (s *Service) appendAuditData(task runengine.TaskRecord, auditRecords []map[
 	return updatedTask
 }
 
+// dateTimeLayout is the shared timestamp layout exposed by orchestrator RPC
+// payloads.
 const dateTimeLayout = time.RFC3339
 
 func stringSliceValue(rawValue any) []string {
