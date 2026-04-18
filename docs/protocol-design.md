@@ -1472,6 +1472,12 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
           "created_at": "2026-04-07T10:39:58+08:00",
           "objects": ["workspace/Q3复盘.md"]
         }
+      },
+      "runtime_summary": {
+        "loop_stop_reason": "loop_round_completed",
+        "events_count": 8,
+        "latest_event_type": "loop.round.completed",
+        "active_steering_count": 0
       }
     },
     "meta": {
