@@ -33,6 +33,15 @@ type stubModelClient struct {
 	plannerInputs          []string
 }
 
+type stubToolCallStore struct {
+	records []tools.ToolCallRecord
+}
+
+func (s *stubToolCallStore) SaveToolCall(_ context.Context, record tools.ToolCallRecord) error {
+	s.records = append(s.records, record)
+	return nil
+}
+
 func (s *stubModelClient) GenerateText(_ context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
 	if s.err != nil {
 		return model.GenerateTextResponse{}, s.err
@@ -477,6 +486,58 @@ func TestExecuteAgentLoopPersistsRuntimeEventsAndStopReason(t *testing.T) {
 	}
 	if !foundCompleted {
 		t.Fatalf("expected loop.completed event in %+v", events)
+	}
+}
+
+func TestExecuteAgentLoopPersistsToolCallsAlongsideRuntimeRecords(t *testing.T) {
+	modelClient := &stubModelClient{
+		toolCalls: []model.ToolCallResult{
+			{
+				RequestID: "req_loop_tool_call_1",
+				Provider:  "openai_responses",
+				ModelID:   "gpt-5.4",
+				ToolCalls: []model.ToolInvocation{{Name: "list_dir", Arguments: map[string]any{"path": "."}}},
+			},
+			{
+				RequestID:  "req_loop_tool_call_2",
+				Provider:   "openai_responses",
+				ModelID:    "gpt-5.4",
+				OutputText: "Loop runtime finished with persisted tool calls.",
+			},
+		},
+	}
+	loopStore := storage.NewService(nil).LoopRuntimeStore()
+	toolCallStore := &stubToolCallStore{}
+	service, _ := newTestExecutionServiceWithModelClient(t, modelClient)
+	service = service.WithLoopRuntimeStore(loopStore).WithToolCallStore(toolCallStore)
+
+	_, err := service.Execute(context.Background(), Request{
+		TaskID:       "task_loop_tool_call_runtime",
+		RunID:        "run_loop_tool_call_runtime",
+		Title:        "Loop tool call persistence",
+		Intent:       map[string]any{"name": defaultAgentLoopIntentName, "arguments": map[string]any{}},
+		Snapshot:     contextsvc.TaskContextSnapshot{InputType: "text", Text: "Inspect the workspace and answer."},
+		DeliveryType: "bubble",
+		ResultTitle:  "Loop tool call result",
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if len(toolCallStore.records) != 1 {
+		t.Fatalf("expected one persisted tool_call record, got %+v", toolCallStore.records)
+	}
+	if toolCallStore.records[0].ToolName != "list_dir" {
+		t.Fatalf("expected persisted tool_call to keep list_dir, got %+v", toolCallStore.records[0])
+	}
+	if toolCallStore.records[0].TaskID != "task_loop_tool_call_runtime" || toolCallStore.records[0].RunID != "run_loop_tool_call_runtime" {
+		t.Fatalf("expected persisted tool_call to stay mapped to task/run, got %+v", toolCallStore.records[0])
+	}
+	events, total, err := loopStore.ListEvents(context.Background(), "task_loop_tool_call_runtime", "", "", 20, 0)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if total == 0 || len(events) == 0 {
+		t.Fatal("expected persisted loop events next to tool_call records")
 	}
 }
 

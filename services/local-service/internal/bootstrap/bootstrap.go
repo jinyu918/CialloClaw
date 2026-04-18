@@ -116,6 +116,7 @@ func New(cfg config.Config) (*App, error) {
 	traceEvalService := traceeval.NewService(storageService.TraceStore(), storageService.EvalStore())
 	executionService := execution.NewService(fileSystem, executionBackend, playwrightClient, ocrClient, mediaClient, screenClient, modelService, auditService, checkpointService, deliveryService, toolRegistry, toolExecutor, pluginService).
 		WithArtifactStore(storageService.ArtifactStore()).
+		WithToolCallStore(storageService.ToolCallSink()).
 		WithLoopRuntimeStore(storageService.LoopRuntimeStore())
 	inspectorService := taskinspector.NewService(fileSystem)
 	runEngine, err := runengine.NewEngineWithStore(storageService.TaskRunStore())
