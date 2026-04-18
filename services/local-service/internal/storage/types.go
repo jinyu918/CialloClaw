@@ -23,6 +23,7 @@ type CapabilitySnapshot struct {
 	SupportsFTS5           bool
 	SupportsSQLiteVecStub  bool
 	SupportsArtifactStore  bool
+	SupportsLoopRuntime    bool
 	SupportsSecretStore    bool
 	MemoryStoreBackend     string
 	ToolCallStoreBackend   string
@@ -136,6 +137,44 @@ type TodoStore interface {
 	LoadTodoState(ctx context.Context) ([]TodoItemRecord, []RecurringRuleRecord, error)
 }
 
+// TraceRecord describes one persisted execution trace snapshot.
+type TraceRecord struct {
+	TraceID          string
+	TaskID           string
+	RunID            string
+	LoopRound        int
+	LLMInputSummary  string
+	LLMOutputSummary string
+	LatencyMS        int64
+	Cost             float64
+	RuleHitsJSON     string
+	ReviewResult     string
+	CreatedAt        string
+}
+
+// EvalSnapshotRecord describes one persisted evaluation snapshot.
+type EvalSnapshotRecord struct {
+	EvalSnapshotID string
+	TraceID        string
+	TaskID         string
+	Status         string
+	MetricsJSON    string
+	CreatedAt      string
+}
+
+// TraceStore defines persistence for trace records.
+type TraceStore interface {
+	WriteTraceRecord(ctx context.Context, record TraceRecord) error
+	DeleteTraceRecord(ctx context.Context, traceID string) error
+	ListTraceRecords(ctx context.Context, taskID string, limit, offset int) ([]TraceRecord, int, error)
+}
+
+// EvalStore defines persistence for evaluation snapshots.
+type EvalStore interface {
+	WriteEvalSnapshot(ctx context.Context, record EvalSnapshotRecord) error
+	ListEvalSnapshots(ctx context.Context, taskID string, limit, offset int) ([]EvalSnapshotRecord, int, error)
+}
+
 // SecretRecord captures one secret value persisted outside the normal settings path.
 type SecretRecord struct {
 	Namespace string
@@ -205,6 +244,8 @@ type TaskRunRecord struct {
 	Notifications     []NotificationSnapshot
 	LatestEvent       map[string]any
 	LatestToolCall    map[string]any
+	LoopStopReason    string
+	SteeringMessages  []string
 	CurrentStepStatus string
 }
 
@@ -214,6 +255,15 @@ type TaskRunStore interface {
 	DeleteTaskRun(ctx context.Context, taskID string) error
 	SaveTaskRun(ctx context.Context, record TaskRunRecord) error
 	LoadTaskRuns(ctx context.Context) ([]TaskRunRecord, error)
+}
+
+// LoopRuntimeStore defines normalized run/step/event/delivery_result persistence.
+type LoopRuntimeStore interface {
+	SaveRun(ctx context.Context, record RunRecord) error
+	SaveSteps(ctx context.Context, records []StepRecord) error
+	SaveEvents(ctx context.Context, records []EventRecord) error
+	SaveDeliveryResult(ctx context.Context, record DeliveryResultRecord) error
+	ListEvents(ctx context.Context, taskID string, limit, offset int) ([]EventRecord, int, error)
 }
 
 // ToolCallStore 定义 tool_call 持久化契约。

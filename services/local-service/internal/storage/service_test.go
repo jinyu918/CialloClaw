@@ -5,7 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
@@ -155,6 +157,9 @@ func TestCapabilitiesReturnsConfiguredStructuredStorageOnly(t *testing.T) {
 	if !capabilities.SupportsMemoryStore || !capabilities.SupportsArtifactStore || !capabilities.SupportsSecretStore {
 		t.Fatalf("unexpected unsupported capabilities enabled: %+v", capabilities)
 	}
+	if service.TraceStore() == nil || service.EvalStore() == nil {
+		t.Fatalf("expected trace and eval stores to be wired: %+v", capabilities)
+	}
 	if !capabilities.SupportsRetrievalHits || !capabilities.SupportsFTS5 || !capabilities.SupportsSQLiteVecStub {
 		t.Fatalf("expected retrieval and search skeleton capabilities to be enabled: %+v", capabilities)
 	}
@@ -259,6 +264,129 @@ func TestToolCallSinkReturnsWorkingImplementation(t *testing.T) {
 		t.Fatalf("expected sqlite tool call store, got %T", service.toolCallStore)
 	}
 	assertToolCallCount(t, sqliteSink.db, 1)
+}
+
+func TestLoopRuntimeStorePersistsNormalizedRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "loop-runtime.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	store := service.LoopRuntimeStore()
+	if store == nil {
+		t.Fatal("expected loop runtime store to be available")
+	}
+	if err := store.SaveRun(context.Background(), RunRecord{
+		RunID:      "run_loop_001",
+		TaskID:     "task_loop_001",
+		SessionID:  "sess_loop_001",
+		Status:     "completed",
+		IntentName: "agent_loop",
+		StartedAt:  "2026-04-17T10:00:00Z",
+		UpdatedAt:  "2026-04-17T10:00:05Z",
+		FinishedAt: "2026-04-17T10:00:06Z",
+		StopReason: "completed",
+	}); err != nil {
+		t.Fatalf("SaveRun returned error: %v", err)
+	}
+	if err := store.SaveSteps(context.Background(), []StepRecord{{
+		StepID:        "step_loop_001",
+		RunID:         "run_loop_001",
+		TaskID:        "task_loop_001",
+		OrderIndex:    1,
+		LoopRound:     1,
+		Name:          "agent_loop_round",
+		Status:        "completed",
+		InputSummary:  "planner input",
+		OutputSummary: "planner output",
+		StopReason:    "completed",
+		StartedAt:     "2026-04-17T10:00:00Z",
+		CompletedAt:   "2026-04-17T10:00:01Z",
+		PlannerInput:  "read file",
+		PlannerOutput: "call read_file",
+		Observation:   "file contents loaded",
+		ToolName:      "read_file",
+		ToolCallID:    "tool_call_001",
+	}}); err != nil {
+		t.Fatalf("SaveSteps returned error: %v", err)
+	}
+	if err := store.SaveEvents(context.Background(), []EventRecord{{
+		EventID:     "evt_loop_001",
+		RunID:       "run_loop_001",
+		TaskID:      "task_loop_001",
+		StepID:      "step_loop_001",
+		Type:        "loop.completed",
+		Level:       "info",
+		PayloadJSON: `{"stop_reason":"completed"}`,
+		CreatedAt:   "2026-04-17T10:00:06Z",
+	}}); err != nil {
+		t.Fatalf("SaveEvents returned error: %v", err)
+	}
+	if err := store.SaveDeliveryResult(context.Background(), DeliveryResultRecord{
+		DeliveryResultID: "delivery_result_001",
+		TaskID:           "task_loop_001",
+		Type:             "bubble",
+		Title:            "Loop result",
+		PayloadJSON:      `{"task_id":"task_loop_001"}`,
+		PreviewText:      "loop preview",
+		CreatedAt:        "2026-04-17T10:00:06Z",
+	}); err != nil {
+		t.Fatalf("SaveDeliveryResult returned error: %v", err)
+	}
+
+	sqliteStore, ok := service.loopRuntimeStore.(*SQLiteLoopRuntimeStore)
+	if !ok {
+		t.Fatalf("expected sqlite loop runtime store, got %T", service.loopRuntimeStore)
+	}
+	assertTableCount(t, sqliteStore.db, "runs", 1)
+	assertTableCount(t, sqliteStore.db, "steps", 1)
+	assertTableCount(t, sqliteStore.db, "events", 1)
+	assertTableCount(t, sqliteStore.db, "delivery_results", 1)
+
+	events, total, err := store.ListEvents(context.Background(), "task_loop_001", 20, 0)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if total != 1 || len(events) != 1 || events[0].Type != "loop.completed" {
+		t.Fatalf("unexpected loop events: total=%d items=%+v", total, events)
+	}
+}
+
+func TestLoopRuntimeStoreKeepsAppendOnlyEventsAcrossRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "loop-runtime-append.db")
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+	store := service.LoopRuntimeStore()
+	if err := store.SaveEvents(context.Background(), []EventRecord{{
+		EventID:     "evt_loop_run_001_001",
+		RunID:       "run_001",
+		TaskID:      "task_001",
+		StepID:      "run_001_step_loop_01",
+		Type:        "loop.round.completed",
+		Level:       "info",
+		PayloadJSON: `{"stop_reason":"completed"}`,
+		CreatedAt:   "2026-04-17T10:00:00Z",
+	}}); err != nil {
+		t.Fatalf("save first event failed: %v", err)
+	}
+	if err := store.SaveEvents(context.Background(), []EventRecord{{
+		EventID:     "evt_loop_run_002_001",
+		RunID:       "run_002",
+		TaskID:      "task_001",
+		StepID:      "run_002_step_loop_01",
+		Type:        "loop.round.completed",
+		Level:       "info",
+		PayloadJSON: `{"stop_reason":"completed"}`,
+		CreatedAt:   "2026-04-17T10:01:00Z",
+	}}); err != nil {
+		t.Fatalf("save second event failed: %v", err)
+	}
+	events, total, err := store.ListEvents(context.Background(), "task_001", 20, 0)
+	if err != nil {
+		t.Fatalf("list append-only events failed: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("expected append-only events from multiple runs, got total=%d items=%+v", total, events)
+	}
 }
 
 func TestAuditWriterReturnsWorkingImplementation(t *testing.T) {
@@ -478,6 +606,112 @@ func TestResolveModelAPIKeyReturnsAccessFailureWhenStoreClosed(t *testing.T) {
 	}
 }
 
+func TestNewServiceFallsBackTraceAndEvalTogetherWhenEvalInitFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace-eval-fallback.db")
+	originalTraceFactory := newSQLiteTraceStoreForService
+	originalEvalFactory := newSQLiteEvalStoreForService
+	defer func() {
+		newSQLiteTraceStoreForService = originalTraceFactory
+		newSQLiteEvalStoreForService = originalEvalFactory
+	}()
+
+	traceClosed := false
+	traceStore := &stubTraceStoreWithClose{closeFn: func() error {
+		traceClosed = true
+		return nil
+	}}
+	newSQLiteTraceStoreForService = func(databasePath string) (TraceStore, error) {
+		return traceStore, nil
+	}
+	newSQLiteEvalStoreForService = func(databasePath string) (EvalStore, error) {
+		return nil, fmt.Errorf("eval init failed")
+	}
+
+	service := NewService(stubAdapter{databasePath: path})
+	defer func() { _ = service.Close() }()
+
+	if !traceClosed {
+		t.Fatal("expected trace store to close when eval init fails")
+	}
+	if _, ok := service.TraceStore().(*stubTraceStoreWithClose); ok {
+		t.Fatal("expected trace store to fall back with eval store instead of keeping sqlite trace only")
+	}
+	if _, ok := service.EvalStore().(*inMemoryEvalStore); !ok {
+		t.Fatalf("expected eval store to fall back to in-memory, got %T", service.EvalStore())
+	}
+	if err := service.Validate(); err == nil || !strings.Contains(err.Error(), "initialize sqlite trace/eval stores") {
+		t.Fatalf("expected joined trace/eval init error, got %v", err)
+	}
+	if !service.Capabilities().FallbackActive {
+		t.Fatal("expected fallback flag when trace/eval pair downgrades together")
+	}
+}
+
+func TestInitializeSQLiteTraceEvalStoresReturnsPairOnSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace-eval-success.db")
+	originalTraceFactory := newSQLiteTraceStoreForService
+	originalEvalFactory := newSQLiteEvalStoreForService
+	defer func() {
+		newSQLiteTraceStoreForService = originalTraceFactory
+		newSQLiteEvalStoreForService = originalEvalFactory
+	}()
+
+	traceStore := newInMemoryTraceStore()
+	evalStore := newInMemoryEvalStore()
+	newSQLiteTraceStoreForService = func(databasePath string) (TraceStore, error) {
+		return traceStore, nil
+	}
+	newSQLiteEvalStoreForService = func(databasePath string) (EvalStore, error) {
+		return evalStore, nil
+	}
+
+	gotTraceStore, gotEvalStore, err := initializeSQLiteTraceEvalStores(path)
+	if err != nil {
+		t.Fatalf("initializeSQLiteTraceEvalStores returned error: %v", err)
+	}
+	if gotTraceStore != traceStore || gotEvalStore != evalStore {
+		t.Fatalf("expected paired stores to be returned, got trace=%T eval=%T", gotTraceStore, gotEvalStore)
+	}
+}
+
+func TestInitializeSQLiteTraceEvalStoresReturnsTraceError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace-eval-trace-error.db")
+	originalTraceFactory := newSQLiteTraceStoreForService
+	originalEvalFactory := newSQLiteEvalStoreForService
+	defer func() {
+		newSQLiteTraceStoreForService = originalTraceFactory
+		newSQLiteEvalStoreForService = originalEvalFactory
+	}()
+
+	newSQLiteTraceStoreForService = func(databasePath string) (TraceStore, error) {
+		return nil, fmt.Errorf("trace init failed")
+	}
+	newSQLiteEvalStoreForService = func(databasePath string) (EvalStore, error) {
+		return newInMemoryEvalStore(), nil
+	}
+
+	gotTraceStore, gotEvalStore, err := initializeSQLiteTraceEvalStores(path)
+	if err == nil || !strings.Contains(err.Error(), "trace store") {
+		t.Fatalf("expected trace init error, got trace=%v eval=%v err=%v", gotTraceStore, gotEvalStore, err)
+	}
+}
+
+type stubTraceStoreWithClose struct {
+	closeFn func() error
+}
+
+func (s *stubTraceStoreWithClose) WriteTraceRecord(context.Context, TraceRecord) error { return nil }
+func (s *stubTraceStoreWithClose) DeleteTraceRecord(context.Context, string) error     { return nil }
+func (s *stubTraceStoreWithClose) ListTraceRecords(context.Context, string, int, int) ([]TraceRecord, int, error) {
+	return nil, 0, nil
+}
+func (s *stubTraceStoreWithClose) Close() error {
+	if s.closeFn != nil {
+		return s.closeFn()
+	}
+	return nil
+}
+
 func assertToolCallCount(t *testing.T, db *sql.DB, expected int) {
 	t.Helper()
 
@@ -487,6 +721,18 @@ func assertToolCallCount(t *testing.T, db *sql.DB, expected int) {
 	}
 	if count != expected {
 		t.Fatalf("expected tool call count %d, got %d", expected, count)
+	}
+}
+
+func assertTableCount(t *testing.T, db *sql.DB, table string, expected int) {
+	t.Helper()
+	var count int
+	query := "SELECT COUNT(1) FROM " + table
+	if err := db.QueryRow(query).Scan(&count); err != nil {
+		t.Fatalf("query %s count failed: %v", table, err)
+	}
+	if count != expected {
+		t.Fatalf("expected %s count %d, got %d", table, expected, count)
 	}
 }
 

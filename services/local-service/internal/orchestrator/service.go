@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
@@ -27,6 +28,7 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/storage"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/taskinspector"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/traceeval"
 )
 
 // ErrTaskNotFound indicates that the provided task_id does not exist in the
@@ -55,9 +57,14 @@ type Service struct {
 	plugin         *plugin.Service
 	audit          *audit.Service
 	recommendation *recommendation.Service
+	traceEval      *traceeval.Service
 	executor       *execution.Service
 	inspector      *taskinspector.Service
 	storage        *storage.Service
+	runtimeMu      sync.RWMutex
+	runtimeNextID  uint64
+	runtimeTaps    map[uint64]func(taskID, method string, params map[string]any)
+	taskStartTaps  map[uint64]func(taskID, sessionID, traceID string)
 }
 
 // NewService wires the main orchestration dependencies.
@@ -84,7 +91,10 @@ func NewService(
 		plugin:         plugin,
 		audit:          audit.NewService(),
 		recommendation: recommendation.NewService(),
+		traceEval:      traceeval.NewService(nil, nil),
 		inspector:      taskinspector.NewService(nil),
+		runtimeTaps:    map[uint64]func(taskID, method string, params map[string]any){},
+		taskStartTaps:  map[uint64]func(taskID, sessionID, traceID string){},
 	}
 }
 
@@ -100,7 +110,103 @@ func (s *Service) WithAudit(auditService *audit.Service) *Service {
 // WithExecutor attaches the execution service used by the main task loop.
 func (s *Service) WithExecutor(executorService *execution.Service) *Service {
 	s.executor = executorService
+	if executorService != nil {
+		executorService.WithNotificationEmitter(func(taskID, method string, params map[string]any) {
+			s.publishRuntimeNotification(taskID, method, params)
+			_, _ = s.runEngine.EmitRuntimeNotification(taskID, method, params)
+		}).WithSteeringPoller(func(taskID string) []string {
+			messages, ok := s.runEngine.DrainSteeringMessages(taskID)
+			if !ok {
+				return nil
+			}
+			return messages
+		})
+	}
 	return s
+}
+
+// SubscribeRuntimeNotifications registers a temporary tap for execution-time
+// runtime notifications so transports can mirror in-flight loop events without
+// waiting for the enclosing RPC response to finish.
+func (s *Service) SubscribeRuntimeNotifications(listener func(taskID, method string, params map[string]any)) func() {
+	if s == nil || listener == nil {
+		return func() {}
+	}
+
+	s.runtimeMu.Lock()
+	s.runtimeNextID++
+	listenerID := s.runtimeNextID
+	s.runtimeTaps[listenerID] = listener
+	s.runtimeMu.Unlock()
+
+	return func() {
+		s.runtimeMu.Lock()
+		delete(s.runtimeTaps, listenerID)
+		s.runtimeMu.Unlock()
+	}
+}
+
+// SubscribeTaskStarts registers a temporary tap that reports newly created
+// tasks before execution continues, allowing transports to associate follow-on
+// runtime notifications with requests that did not yet know their task_id.
+func (s *Service) SubscribeTaskStarts(listener func(taskID, sessionID, traceID string)) func() {
+	if s == nil || listener == nil {
+		return func() {}
+	}
+
+	s.runtimeMu.Lock()
+	s.runtimeNextID++
+	listenerID := s.runtimeNextID
+	s.taskStartTaps[listenerID] = listener
+	s.runtimeMu.Unlock()
+
+	return func() {
+		s.runtimeMu.Lock()
+		delete(s.taskStartTaps, listenerID)
+		s.runtimeMu.Unlock()
+	}
+}
+
+func (s *Service) publishRuntimeNotification(taskID, method string, params map[string]any) {
+	if s == nil {
+		return
+	}
+
+	s.runtimeMu.RLock()
+	if len(s.runtimeTaps) == 0 {
+		s.runtimeMu.RUnlock()
+		return
+	}
+	listeners := make([]func(taskID, method string, params map[string]any), 0, len(s.runtimeTaps))
+	for _, listener := range s.runtimeTaps {
+		listeners = append(listeners, listener)
+	}
+	s.runtimeMu.RUnlock()
+
+	for _, listener := range listeners {
+		listener(taskID, method, cloneMap(params))
+	}
+}
+
+func (s *Service) publishTaskStart(taskID, sessionID, traceID string) {
+	if s == nil {
+		return
+	}
+
+	s.runtimeMu.RLock()
+	if len(s.taskStartTaps) == 0 {
+		s.runtimeMu.RUnlock()
+		return
+	}
+	listeners := make([]func(taskID, sessionID, traceID string), 0, len(s.taskStartTaps))
+	for _, listener := range s.taskStartTaps {
+		listeners = append(listeners, listener)
+	}
+	s.runtimeMu.RUnlock()
+
+	for _, listener := range listeners {
+		listener(taskID, sessionID, traceID)
+	}
 }
 
 // WithTaskInspector attaches the task-inspector runtime service.
@@ -115,6 +221,16 @@ func (s *Service) WithTaskInspector(inspectorService *taskinspector.Service) *Se
 func (s *Service) WithStorage(storageService *storage.Service) *Service {
 	if storageService != nil {
 		s.storage = storageService
+	}
+	return s
+}
+
+// Snapshot returns the minimal orchestrator summary used by debug and health
+// endpoints.
+// WithTraceEval attaches the owner-5 trace/eval recording service.
+func (s *Service) WithTraceEval(traceEvalService *traceeval.Service) *Service {
+	if traceEvalService != nil {
+		s.traceEval = traceEvalService
 	}
 	return s
 }
@@ -142,6 +258,12 @@ func (s *Service) Snapshot() map[string]any {
 // SubmitInput handles agent.input.submit.
 // It captures context, derives intent suggestions, and decides whether the task
 // waits for more input, asks for confirmation, or runs immediately.
+// RunEngine exposes the attached runtime engine for transport-layer tests and
+// debug wiring that need to seed notifications or inspect task state.
+func (s *Service) RunEngine() *runengine.Engine {
+	return s.runEngine
+}
+
 func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 	snapshot := s.context.Capture(params)
 	options := mapValue(params, "options")
@@ -191,6 +313,7 @@ func (s *Service) SubmitInput(params map[string]any) (map[string]any, error) {
 		Timeline:          initialTimeline(taskStatusForSuggestion(suggestion.RequiresConfirm), currentStepForSuggestion(suggestion.RequiresConfirm, suggestion.Intent)),
 		Snapshot:          snapshot,
 	})
+	s.publishTaskStart(task.TaskID, task.SessionID, requestTraceID(params))
 	s.attachMemoryReadPlans(task.TaskID, task.RunID, snapshot, suggestion.Intent)
 
 	bubble := s.delivery.BuildBubbleMessage(task.TaskID, bubbleTypeForSuggestion(suggestion.RequiresConfirm), bubbleTextForInput(suggestion), task.StartedAt.Format(dateTimeLayout))
@@ -258,6 +381,7 @@ func (s *Service) StartTask(params map[string]any) (map[string]any, error) {
 		Timeline:          initialTimeline(taskStatusForSuggestion(suggestion.RequiresConfirm), currentStepForSuggestion(suggestion.RequiresConfirm, suggestion.Intent)),
 		Snapshot:          snapshot,
 	})
+	s.publishTaskStart(task.TaskID, task.SessionID, requestTraceID(params))
 	s.attachMemoryReadPlans(task.TaskID, task.RunID, snapshot, suggestion.Intent)
 
 	bubble := s.delivery.BuildBubbleMessage(task.TaskID, bubbleTypeForSuggestion(suggestion.RequiresConfirm), bubbleTextForStart(suggestion), task.StartedAt.Format(dateTimeLayout))
@@ -499,6 +623,9 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		securitySummary = map[string]any{}
 	}
 	approvalRequest := activeTaskDetailApprovalRequest(task)
+	if task.Status != "waiting_auth" {
+		approvalRequest = nil
+	}
 	approvalRequestValue := any(nil)
 	if approvalRequest != nil {
 		approvalRequestValue = approvalRequest
@@ -521,6 +648,67 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"mirror_references": protocolMirrorReferenceList(task.MirrorReferences),
 		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
+	}, nil
+}
+
+// TaskEventsList handles agent.task.events.list and exposes normalized runtime
+// events without leaking storage-specific row shapes across the RPC boundary.
+func (s *Service) TaskEventsList(params map[string]any) (map[string]any, error) {
+	limit := clampListLimit(intValue(params, "limit", 20))
+	offset := clampListOffset(intValue(params, "offset", 0))
+	taskID := stringValue(params, "task_id", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
+		return map[string]any{"items": []map[string]any{}, "page": pageMap(limit, offset, 0)}, nil
+	}
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
+	}
+	items := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		items = append(items, map[string]any{
+			"event_id":     record.EventID,
+			"run_id":       record.RunID,
+			"task_id":      record.TaskID,
+			"step_id":      record.StepID,
+			"type":         record.Type,
+			"level":        record.Level,
+			"payload_json": record.PayloadJSON,
+			"created_at":   record.CreatedAt,
+		})
+	}
+	return map[string]any{
+		"items": items,
+		"page":  pageMap(limit, offset, total),
+	}, nil
+}
+
+// TaskSteer handles agent.task.steer by persisting one follow-up instruction for
+// a still-active task so later execution or resume paths can consume it.
+func (s *Service) TaskSteer(params map[string]any) (map[string]any, error) {
+	taskID := stringValue(params, "task_id", "")
+	message := stringValue(params, "message", "")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("task_id is required")
+	}
+	if strings.TrimSpace(message) == "" {
+		return nil, errors.New("message is required")
+	}
+	task, ok := s.runEngine.GetTask(taskID)
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+	bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "已记录新的补充要求，后续执行会纳入该指令。", time.Now().Format(dateTimeLayout))
+	updatedTask, changed := s.runEngine.AppendSteeringMessage(task.TaskID, message, bubble)
+	if !changed {
+		return nil, ErrTaskStatusInvalid
+	}
+	return map[string]any{
+		"task":           taskMap(updatedTask),
+		"bubble_message": bubble,
 	}, nil
 }
 
@@ -730,6 +918,21 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 	if !isSupportedTaskControlAction(action) {
 		return nil, fmt.Errorf("unsupported task control action: %s", action)
 	}
+	wasHumanLoop := false
+	var reviewDecision map[string]any
+	arguments := mapValue(params, "arguments")
+	if action == "resume" {
+		if existingTask, ok := s.runEngine.GetTask(taskID); ok {
+			wasHumanLoop = taskIsBlockedHumanLoop(existingTask)
+		}
+		if wasHumanLoop {
+			decision, decisionErr := humanReviewDecisionFromParams(arguments)
+			if decisionErr != nil {
+				return nil, decisionErr
+			}
+			reviewDecision = decision
+		}
+	}
 	bubble := s.delivery.BuildBubbleMessage(taskID, "status", controlBubbleText(action), currentTimeFromTask(s.runEngine, taskID))
 	updatedTask, err := s.runEngine.ControlTask(taskID, action, bubble)
 	if err != nil {
@@ -742,6 +945,14 @@ func (s *Service) TaskControl(params map[string]any) (map[string]any, error) {
 			return nil, ErrTaskAlreadyFinished
 		default:
 			return nil, err
+		}
+	}
+	if action == "resume" && wasHumanLoop {
+		if traceResumedTask, traceBubble, _, resumed, resumeErr := s.resumeHumanLoopTask(updatedTask, reviewDecision); resumeErr != nil {
+			return nil, resumeErr
+		} else if resumed {
+			updatedTask = traceResumedTask
+			bubble = traceBubble
 		}
 	}
 	if taskIsTerminal(updatedTask.Status) {
@@ -1493,16 +1704,17 @@ func (s *Service) SettingsUpdate(params map[string]any) (map[string]any, error) 
 // taskMap converts a runengine task record into the protocol-facing task shape.
 func taskMap(record runengine.TaskRecord) map[string]any {
 	result := map[string]any{
-		"task_id":      record.TaskID,
-		"title":        record.Title,
-		"source_type":  record.SourceType,
-		"status":       record.Status,
-		"intent":       cloneMap(record.Intent),
-		"current_step": record.CurrentStep,
-		"risk_level":   record.RiskLevel,
-		"started_at":   record.StartedAt.Format(dateTimeLayout),
-		"updated_at":   record.UpdatedAt.Format(dateTimeLayout),
-		"finished_at":  nil,
+		"task_id":          record.TaskID,
+		"title":            record.Title,
+		"source_type":      record.SourceType,
+		"status":           record.Status,
+		"intent":           cloneMap(record.Intent),
+		"current_step":     record.CurrentStep,
+		"risk_level":       record.RiskLevel,
+		"loop_stop_reason": record.LoopStopReason,
+		"started_at":       record.StartedAt.Format(dateTimeLayout),
+		"updated_at":       record.UpdatedAt.Format(dateTimeLayout),
+		"finished_at":      nil,
 	}
 	if record.FinishedAt != nil {
 		result["finished_at"] = record.FinishedAt.Format(dateTimeLayout)
@@ -1956,6 +2168,8 @@ func taskRecordFromStorage(record storage.TaskRunRecord) runengine.TaskRecord {
 		ArtifactPlans:     cloneMapSlice(record.ArtifactPlans),
 		LatestEvent:       cloneMap(record.LatestEvent),
 		LatestToolCall:    cloneMap(record.LatestToolCall),
+		LoopStopReason:    record.LoopStopReason,
+		SteeringMessages:  append([]string(nil), record.SteeringMessages...),
 		CurrentStepStatus: record.CurrentStepStatus,
 	}
 }
@@ -3951,6 +4165,10 @@ func stringValue(values map[string]any, key, fallback string) string {
 	return value
 }
 
+func requestTraceID(values map[string]any) string {
+	return stringValue(mapValue(values, "request_meta"), "trace_id", "")
+}
+
 // boolValue 处理当前模块的相关逻辑。
 
 // boolValue 安全读取布尔字段。
@@ -4012,6 +4230,18 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 		artifacts := delivery.EnsureArtifactIdentifiers(processingTask.TaskID, s.delivery.BuildArtifact(processingTask.TaskID, resultTitle, deliveryResult))
 		resultBubble := s.delivery.BuildBubbleMessage(processingTask.TaskID, "result", resultBubbleText, processingTask.UpdatedAt.Format(dateTimeLayout))
 		processingTask = s.appendAuditData(processingTask, compactAuditRecords(s.audit.BuildDeliveryAudit(processingTask.TaskID, processingTask.RunID, deliveryResult)), nil)
+		traceCapture, traceErr := s.captureExecutionTrace(processingTask, snapshot, taskIntent, execution.Result{
+			Content:        previewTextForDeliveryType(deliveryType),
+			DeliveryResult: deliveryResult,
+			Artifacts:      artifacts,
+		}, nil)
+		if traceErr != nil {
+			failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, execution.Result{}, traceErr)
+			return failedTask, failureBubble, nil, nil, nil
+		}
+		if escalatedTask, escalatedBubble, ok := s.maybeEscalateHumanLoop(processingTask, traceCapture); ok {
+			return escalatedTask, escalatedBubble, nil, nil, nil
+		}
 		updatedTask, ok := s.runEngine.CompleteTask(processingTask.TaskID, deliveryResult, resultBubble, artifacts)
 		if !ok {
 			return runengine.TaskRecord{}, nil, nil, nil, ErrTaskNotFound
@@ -4027,6 +4257,7 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 		Title:                processingTask.Title,
 		Intent:               taskIntent,
 		Snapshot:             snapshot,
+		SteeringMessages:     append([]string(nil), processingTask.SteeringMessages...),
 		DeliveryType:         deliveryType,
 		ResultTitle:          resultTitle,
 		ApprovalGranted:      processingTask.Authorization != nil,
@@ -4040,6 +4271,14 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 	}
 	executionAuditRecords, executionTokenUsage := s.buildExecutionAudit(processingTask, executionResult.ToolCalls, auditDeliveryResult)
 	processingTask = s.appendAuditData(processingTask, executionAuditRecords, executionTokenUsage)
+	traceCapture, traceErr := s.captureExecutionTrace(processingTask, snapshot, taskIntent, executionResult, err)
+	if traceErr != nil {
+		failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, executionResult, traceErr)
+		return failedTask, failureBubble, nil, nil, nil
+	}
+	if escalatedTask, escalatedBubble, ok := s.maybeEscalateHumanLoop(processingTask, traceCapture, executionResult); ok {
+		return escalatedTask, escalatedBubble, nil, nil, nil
+	}
 	if err != nil {
 		failedTask, failureBubble := s.failExecutionTask(processingTask, taskIntent, executionResult, err)
 		return failedTask, failureBubble, nil, nil, nil
@@ -4058,6 +4297,174 @@ func (s *Service) executeTask(task runengine.TaskRecord, snapshot contextsvc.Tas
 	}
 	s.attachPostDeliveryHandoffs(updatedTask.TaskID, updatedTask.RunID, snapshot, taskIntent, executionResult.DeliveryResult, executionArtifacts)
 	return updatedTask, resultBubble, executionResult.DeliveryResult, executionArtifacts, nil
+}
+
+func (s *Service) captureExecutionTrace(task runengine.TaskRecord, snapshot contextsvc.TaskContextSnapshot, taskIntent map[string]any, result execution.Result, executionErr error) (traceeval.CaptureResult, error) {
+	if s.traceEval == nil {
+		return traceeval.CaptureResult{}, nil
+	}
+	capture, err := s.traceEval.Capture(traceeval.CaptureInput{
+		TaskID:          task.TaskID,
+		RunID:           task.RunID,
+		IntentName:      stringValue(taskIntent, "name", ""),
+		Snapshot:        snapshot,
+		OutputText:      result.Content,
+		DeliveryResult:  cloneMap(result.DeliveryResult),
+		Artifacts:       cloneMapSlice(result.Artifacts),
+		ModelInvocation: cloneMap(result.ModelInvocation),
+		ToolCalls:       append([]tools.ToolCallRecord(nil), result.ToolCalls...),
+		TokenUsage:      cloneMap(task.TokenUsage),
+		DurationMS:      result.DurationMS,
+		ExecutionError:  executionErr,
+	})
+	if err != nil {
+		return traceeval.CaptureResult{}, err
+	}
+	if err := s.traceEval.Record(context.Background(), capture); err != nil {
+		return traceeval.CaptureResult{}, err
+	}
+	return capture, nil
+}
+
+func (s *Service) resumeHumanLoopTask(task runengine.TaskRecord, reviewDecision map[string]any) (runengine.TaskRecord, map[string]any, map[string]any, bool, error) {
+	if !resumedFromHumanLoop(task) {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	pendingExecution, ok := s.runEngine.PendingExecutionPlan(task.TaskID)
+	if !ok {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	escalation := mapValue(pendingExecution, "escalation")
+	if len(escalation) == 0 {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	decision := strings.TrimSpace(stringValue(reviewDecision, "decision", ""))
+	if decision == "" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("review.decision is required for human review resume")
+	}
+	if decision != "approve" && decision != "replan" {
+		return runengine.TaskRecord{}, nil, nil, false, fmt.Errorf("unsupported review decision: %s", decision)
+	}
+	escalation["review_result"] = decision
+	escalation["reviewed_at"] = currentTimeFromTask(s.runEngine, task.TaskID)
+	if reviewerID := strings.TrimSpace(stringValue(reviewDecision, "reviewer_id", "")); reviewerID != "" {
+		escalation["reviewer_id"] = reviewerID
+	}
+	if notes := strings.TrimSpace(stringValue(reviewDecision, "notes", "")); notes != "" {
+		escalation["review_notes"] = notes
+	}
+	if correctedIntent := mapValue(reviewDecision, "corrected_intent"); len(correctedIntent) > 0 {
+		escalation["corrected_intent"] = cloneMap(correctedIntent)
+	}
+	suggestedAction := firstNonEmptyString(stringValue(escalation, "suggested_action", ""), "review_and_replan")
+	if suggestedAction != "review_and_replan" {
+		return runengine.TaskRecord{}, nil, nil, false, nil
+	}
+	if decision == "replan" {
+		intentValue := cloneMap(task.Intent)
+		if correctedIntent := mapValue(escalation, "corrected_intent"); len(correctedIntent) > 0 {
+			intentValue = correctedIntent
+		}
+		updatedTitle := s.intent.Suggest(snapshotFromTask(task), intentValue, false).TaskTitle
+		replanBubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "人工复核要求重新规划，请确认新的处理意图。", task.UpdatedAt.Format(dateTimeLayout))
+		replannedTask, ok := s.runEngine.ReopenIntentConfirmation(task.TaskID, updatedTitle, intentValue, replanBubble)
+		if !ok {
+			return runengine.TaskRecord{}, nil, nil, false, ErrTaskNotFound
+		}
+		return replannedTask, replanBubble, nil, true, nil
+	}
+	resultBubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "人工复核完成，任务继续执行。", task.UpdatedAt.Format(dateTimeLayout))
+	updatedTask, bubble, deliveryResult, _, err := s.executeTask(task, snapshotFromTask(task), task.Intent)
+	if err != nil {
+		return runengine.TaskRecord{}, nil, nil, false, err
+	}
+	if bubble == nil {
+		bubble = resultBubble
+	}
+	return updatedTask, bubble, deliveryResult, true, nil
+}
+
+func humanReviewDecisionFromParams(arguments map[string]any) (map[string]any, error) {
+	decision := mapValue(arguments, "review")
+	if len(decision) == 0 {
+		decision = mapValue(arguments, "human_review")
+	}
+	if len(decision) == 0 {
+		return nil, fmt.Errorf("review decision is required to resume a human review task")
+	}
+	if strings.TrimSpace(stringValue(decision, "decision", "")) == "" {
+		return nil, fmt.Errorf("review.decision is required to resume a human review task")
+	}
+	decisionValue := strings.TrimSpace(stringValue(decision, "decision", ""))
+	if decisionValue != "approve" && decisionValue != "replan" {
+		return nil, fmt.Errorf("unsupported review decision: %s", decisionValue)
+	}
+	if decisionValue == "replan" {
+		if correctedIntent := mapValue(decision, "corrected_intent"); len(correctedIntent) == 0 {
+			return nil, fmt.Errorf("review.corrected_intent is required when decision is replan")
+		}
+	}
+	return cloneMap(decision), nil
+}
+
+func (s *Service) maybeEscalateHumanLoop(task runengine.TaskRecord, capture traceeval.CaptureResult, executionResult ...execution.Result) (runengine.TaskRecord, map[string]any, bool) {
+	if capture.HumanInLoop == nil {
+		return runengine.TaskRecord{}, nil, false
+	}
+	if len(executionResult) > 0 && executionAttemptHasSideEffects(executionResult[0]) {
+		return runengine.TaskRecord{}, nil, false
+	}
+	bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", capture.HumanInLoop.Summary, task.UpdatedAt.Format(dateTimeLayout))
+	escalation := map[string]any{
+		"escalation_id":    capture.HumanInLoop.EscalationID,
+		"reason":           capture.HumanInLoop.Reason,
+		"review_result":    capture.HumanInLoop.ReviewResult,
+		"status":           capture.HumanInLoop.Status,
+		"summary":          capture.HumanInLoop.Summary,
+		"suggested_action": capture.HumanInLoop.SuggestedAction,
+		"created_at":       capture.HumanInLoop.CreatedAt,
+	}
+	updatedTask, ok := s.runEngine.EscalateHumanLoop(task.TaskID, escalation, bubble)
+	if !ok {
+		return runengine.TaskRecord{}, nil, false
+	}
+	return updatedTask, bubble, true
+}
+
+func resumedFromHumanLoop(task runengine.TaskRecord) bool {
+	if task.Status != "processing" || task.CurrentStep != executionStepName(task.Intent) {
+		return false
+	}
+	return true
+}
+
+func taskIsBlockedHumanLoop(task runengine.TaskRecord) bool {
+	if task.Status != "blocked" || task.CurrentStep != "human_in_loop" {
+		return false
+	}
+	return stringValue(task.PendingExecution, "kind", "") == "human_in_loop"
+}
+
+func executionAttemptHasSideEffects(result execution.Result) bool {
+	if len(result.ToolCalls) == 0 {
+		return false
+	}
+	for _, toolCall := range result.ToolCalls {
+		if !isMutatingToolCall(toolCall.ToolName) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isMutatingToolCall(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "write_file", "exec_command", "page_interact", "transcode_media", "normalize_recording", "extract_frames":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) recordExecutionToolCalls(task runengine.TaskRecord, toolCalls []tools.ToolCallRecord) runengine.TaskRecord {

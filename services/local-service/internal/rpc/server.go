@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	serviceconfig "github.com/cialloclaw/cialloclaw/services/local-service/internal/config"
@@ -276,6 +277,7 @@ func (s *Server) handleStreamConn(conn net.Conn) {
 
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
+	var writeMu sync.Mutex
 
 	for {
 		var request requestEnvelope
@@ -293,8 +295,73 @@ func (s *Server) handleStreamConn(conn net.Conn) {
 			return
 		}
 
+		streamedRuntimeCounts := map[string]int{}
+		requestTaskIDs, requestSessionID, requestTraceID := requestRoutingHints(request)
+		var requestTaskMu sync.RWMutex
+		addRequestTaskID := func(taskID string) {
+			trimmed := strings.TrimSpace(taskID)
+			if trimmed == "" {
+				return
+			}
+			requestTaskMu.Lock()
+			if requestTaskIDs == nil {
+				requestTaskIDs = map[string]bool{}
+			}
+			requestTaskIDs[trimmed] = true
+			requestTaskMu.Unlock()
+		}
+		hasRequestTaskID := func(taskID string) bool {
+			requestTaskMu.RLock()
+			defer requestTaskMu.RUnlock()
+			return requestTaskIDs != nil && requestTaskIDs[taskID]
+		}
+		matchesTaskStart := func(sessionID, traceID string) bool {
+			switch {
+			case requestTraceID != "":
+				return requestTraceID == traceID
+			case requestSessionID != "":
+				return requestSessionID == sessionID
+			default:
+				return false
+			}
+		}
+
+		unsubscribeRuntime := func() {}
+		if requestTaskIDs != nil || shouldTrackStartedTask(request.Method) {
+			unsubscribeRuntime = s.orchestrator.SubscribeRuntimeNotifications(func(taskID string, method string, params map[string]any) {
+				if !isLiveRuntimeMethod(method) {
+					return
+				}
+				notificationTaskID := runtimeNotificationTaskID(taskID, params)
+				if notificationTaskID == "" || !hasRequestTaskID(notificationTaskID) {
+					return
+				}
+				writeMu.Lock()
+				defer writeMu.Unlock()
+				if err := encoder.Encode(newNotificationEnvelope(method, params)); err == nil {
+					streamedRuntimeCounts[notificationKey(method, notificationTaskID, params)]++
+				}
+			})
+		}
+
+		unsubscribeTaskStart := func() {}
+		if shouldTrackStartedTask(request.Method) {
+			unsubscribeTaskStart = s.orchestrator.SubscribeTaskStarts(func(taskID, sessionID, traceID string) {
+				if !matchesTaskStart(sessionID, traceID) {
+					return
+				}
+				addRequestTaskID(taskID)
+			})
+		}
+
 		response := s.dispatch(request)
-		if err := encoder.Encode(response); err != nil {
+		unsubscribeTaskStart()
+		unsubscribeRuntime()
+
+		writeMu.Lock()
+		err := encoder.Encode(response)
+		writeMu.Unlock()
+		if err != nil {
 			return
 		}
 
@@ -307,7 +374,15 @@ func (s *Server) handleStreamConn(conn net.Conn) {
 			for _, notification := range notifications {
 				method := stringValue(notification, "method", "task.updated")
 				params := mapValue(notification, "params")
-				if err := encoder.Encode(newNotificationEnvelope(method, params)); err != nil {
+				key := notificationKey(method, taskID, params)
+				if isLiveRuntimeMethod(method) && streamedRuntimeCounts[key] > 0 {
+					streamedRuntimeCounts[key]--
+					continue
+				}
+				writeMu.Lock()
+				err := encoder.Encode(newNotificationEnvelope(method, params))
+				writeMu.Unlock()
+				if err != nil {
 					return
 				}
 			}
@@ -372,6 +447,85 @@ func taskIDsFromResponse(response any) []string {
 	}
 
 	return result
+}
+
+// collectTaskIDs walks arbitrary decoded response payloads and gathers every
+// embedded task_id.
+func requestRoutingHints(request requestEnvelope) (map[string]bool, string, string) {
+	params, rpcErr := decodeParams(request.Params)
+	if rpcErr != nil {
+		return nil, "", ""
+	}
+
+	ids := map[string]struct{}{}
+	collectTaskIDs(params, ids)
+	var result map[string]bool
+	if len(ids) > 0 {
+		result = make(map[string]bool, len(ids))
+		for taskID := range ids {
+			result[taskID] = true
+		}
+	}
+	return result, stringValue(params, "session_id", ""), stringValue(mapValue(params, "request_meta"), "trace_id", "")
+}
+
+func shouldTrackStartedTask(method string) bool {
+	return method == "agent.task.start" || method == "agent.input.submit"
+}
+
+func isLiveRuntimeMethod(method string) bool {
+	return strings.HasPrefix(method, "loop.") || method == "task.steered"
+}
+
+func runtimeNotificationTaskID(taskID string, params map[string]any) string {
+	if strings.TrimSpace(taskID) != "" {
+		return taskID
+	}
+	if params == nil {
+		return ""
+	}
+	rawTaskID, _ := params["task_id"].(string)
+	return strings.TrimSpace(rawTaskID)
+}
+
+func notificationKey(method, taskID string, params map[string]any) string {
+	encoded, err := json.Marshal(normalizeNotificationKey(method, taskID, params))
+	if err != nil {
+		return method
+	}
+	return method + ":" + string(encoded)
+}
+
+func normalizeNotificationKey(method, taskID string, params map[string]any) map[string]any {
+	if !isLiveRuntimeMethod(method) {
+		return map[string]any{
+			"task_id": strings.TrimSpace(taskID),
+			"params":  params,
+		}
+	}
+
+	normalizedTaskID := strings.TrimSpace(taskID)
+	if normalizedTaskID == "" {
+		normalizedTaskID = runtimeNotificationTaskID("", params)
+	}
+
+	payload := map[string]any{}
+	if event := mapValue(params, "event"); len(event) > 0 {
+		payload = mapValue(event, "payload")
+	} else {
+		for key, value := range params {
+			if key == "task_id" {
+				continue
+			}
+			payload[key] = value
+		}
+	}
+
+	return map[string]any{
+		"task_id": normalizedTaskID,
+		"type":    method,
+		"payload": payload,
+	}
 }
 
 // collectTaskIDs walks arbitrary decoded response payloads and gathers every

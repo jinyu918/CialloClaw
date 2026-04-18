@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/agentloop"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/audit"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/checkpoint"
 	contextsvc "github.com/cialloclaw/cialloclaw/services/local-service/internal/context"
@@ -19,28 +20,34 @@ import (
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/model"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/platform"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/plugin"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/storage"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/tools"
 )
 
 const (
 	defaultAgentLoopIntentName = "agent_loop"
+	defaultAgentLoopTimeout    = 90 * time.Second
 )
 
 // Service 负责在当前仓库代码范围内完成一条可运行的最小执行链路。
 type Service struct {
-	fileSystem platform.FileSystemAdapter
-	execution  tools.ExecutionCapability
-	playwright tools.PlaywrightSidecarClient
-	ocr        tools.OCRWorkerClient
-	media      tools.MediaWorkerClient
-	model      *model.Service
-	audit      *audit.Service
-	checkpoint *checkpoint.Service
-	delivery   *delivery.Service
-	tools      *tools.Registry
-	executor   *tools.ToolExecutor
-	plugin     *plugin.Service
-	workspace  string
+	fileSystem          platform.FileSystemAdapter
+	execution           tools.ExecutionCapability
+	playwright          tools.PlaywrightSidecarClient
+	ocr                 tools.OCRWorkerClient
+	media               tools.MediaWorkerClient
+	model               *model.Service
+	loop                *agentloop.Runtime
+	audit               *audit.Service
+	checkpoint          *checkpoint.Service
+	delivery            *delivery.Service
+	tools               *tools.Registry
+	executor            *tools.ToolExecutor
+	plugin              *plugin.Service
+	loopStore           storage.LoopRuntimeStore
+	notificationEmitter func(taskID, method string, params map[string]any)
+	steeringPoller      func(taskID string) []string
+	workspace           string
 }
 
 // Request 描述一次任务执行所需的最小输入。
@@ -50,6 +57,7 @@ type Request struct {
 	Title                string
 	Intent               map[string]any
 	Snapshot             contextsvc.TaskContextSnapshot
+	SteeringMessages     []string
 	DeliveryType         string
 	ResultTitle          string
 	ApprovalGranted      bool
@@ -122,14 +130,46 @@ func NewService(
 		ocr:        ocrClient,
 		media:      mediaClient,
 		model:      modelService,
+		loop:       agentloop.NewRuntime(),
 		audit:      auditService,
 		checkpoint: checkpointService,
 		delivery:   deliveryService,
 		tools:      toolRegistry,
 		executor:   toolExecutor,
 		plugin:     pluginService,
+		loopStore:  nil,
 		workspace:  resolveWorkspaceRoot(fileSystem),
 	}
+}
+
+// WithLoopRuntimeStore injects normalized loop persistence so execution can
+// record runs/steps/events/delivery_results without coupling to bootstrap.
+func (s *Service) WithLoopRuntimeStore(store storage.LoopRuntimeStore) *Service {
+	if s == nil {
+		return nil
+	}
+	s.loopStore = store
+	return s
+}
+
+// WithNotificationEmitter lets the execution layer publish formal runtime
+// notifications without depending directly on runengine internals.
+func (s *Service) WithNotificationEmitter(emitter func(taskID, method string, params map[string]any)) *Service {
+	if s == nil {
+		return nil
+	}
+	s.notificationEmitter = emitter
+	return s
+}
+
+// WithSteeringPoller injects a callback that drains active-run follow-up
+// guidance between loop rounds.
+func (s *Service) WithSteeringPoller(poller func(taskID string) []string) *Service {
+	if s == nil {
+		return nil
+	}
+	s.steeringPoller = poller
+	return s
 }
 
 // AssessGovernance 在真正执行前，基于将要落地的工具调用做一次统一风险判断。
@@ -882,82 +922,70 @@ func (s *Service) generateOutputWithPrompt(ctx context.Context, request Request,
 // The loop stops when the model returns a final answer or when the turn budget
 // is exhausted, in which case the normal fallback output is returned.
 func (s *Service) generateOutputWithAgentLoop(ctx context.Context, request Request, inputText string) (generationTrace, bool, error) {
-	if !isAgentLoopIntent(request.Intent) || s.model == nil || !s.model.SupportsToolCalling() {
+	if !isAgentLoopIntent(request.Intent) || s.model == nil || !s.model.SupportsToolCalling() || s.loop == nil {
 		return generationTrace{}, false, nil
 	}
-
-	toolDefs := s.agentLoopToolDefinitions()
-	if len(toolDefs) == 0 {
-		return generationTrace{}, false, nil
+	runtimeInput := inputText
+	if s.steeringPoller == nil {
+		// Without an active poller, preloaded steering must still reach the first
+		// planner round. When a poller exists it will drain the same queue before
+		// round 1, so appending here would duplicate that guidance.
+		runtimeInput = agentloopAppendSteeringInput(inputText, request.SteeringMessages)
 	}
-
-	history := []string{}
-	allToolCalls := []tools.ToolCallRecord{}
-	var latestInvocation *model.InvocationRecord
-	for turn := 0; turn < s.agentLoopMaxTurns(); turn++ {
-		planInput := buildAgentLoopPlannerInput(inputText, history, s.agentLoopCompressionChars(), s.agentLoopKeepRecent())
-		plan, err := s.model.GenerateToolCalls(ctx, model.ToolCallRequest{
-			TaskID: request.TaskID,
-			RunID:  request.RunID,
-			Input:  planInput,
-			Tools:  toolDefs,
-		})
-		if err != nil {
-			if errors.Is(err, model.ErrToolCallingNotSupported) {
-				return generationTrace{}, false, nil
+	runtimeResult, ok, err := s.loop.Run(ctx, agentloop.Request{
+		TaskID:          request.TaskID,
+		RunID:           request.RunID,
+		Intent:          request.Intent,
+		InputText:       runtimeInput,
+		ResultTitle:     request.ResultTitle,
+		FallbackOutput:  fallbackOutput(request, inputText),
+		ToolDefinitions: s.agentLoopToolDefinitions(),
+		AllowedTool:     s.isAllowedAgentLoopTool,
+		PollSteering: func(_ context.Context, taskID string) []string {
+			if s.steeringPoller == nil {
+				return nil
 			}
-			return generationTrace{}, false, fmt.Errorf("agent loop planning turn %d: %w", turn+1, err)
-		}
-
-		latestInvocation = &model.InvocationRecord{
-			TaskID:    request.TaskID,
-			RunID:     request.RunID,
-			RequestID: plan.RequestID,
-			Provider:  plan.Provider,
-			ModelID:   plan.ModelID,
-			Usage:     plan.Usage,
-			LatencyMS: plan.LatencyMS,
-		}
-
-		if len(plan.ToolCalls) == 0 {
-			outputText := strings.TrimSpace(plan.OutputText)
-			if outputText == "" {
-				outputText = fallbackOutput(request, inputText)
+			return s.steeringPoller(taskID)
+		},
+		GenerateToolCalls: s.model.GenerateToolCalls,
+		ExecuteTool: func(execCtx context.Context, call model.ToolInvocation, loopRound int) (string, tools.ToolCallRecord) {
+			return s.executeAgentLoopTool(execCtx, request, call, loopRound)
+		},
+		BuildAuditRecord: func(auditCtx context.Context, invocation *model.InvocationRecord) (map[string]any, error) {
+			return s.buildModelAuditRecord(auditCtx, request, invocation)
+		},
+		MaxTurns:           s.agentLoopMaxTurns(),
+		Timeout:            s.agentLoopTimeout(),
+		CompressChars:      s.agentLoopCompressionChars(),
+		KeepRecent:         s.agentLoopKeepRecent(),
+		RepeatedToolBudget: 2,
+		PlannerRetryBudget: s.agentLoopPlannerRetryBudget(),
+		ToolRetryBudget:    s.agentLoopToolRetryBudget(),
+		Hook:               noopAgentLoopHook{},
+		EmitEvent: func(event agentloop.LifecycleEvent) {
+			if s.notificationEmitter == nil {
+				return
 			}
-			auditRecord, err := s.buildModelAuditRecord(ctx, request, latestInvocation)
-			if err != nil {
-				return generationTrace{}, false, err
-			}
-			return generationTrace{
-				OutputText:      outputText,
-				ToolCalls:       allToolCalls,
-				ModelInvocation: invocationRecordMap(latestInvocation),
-				AuditRecord:     auditRecord,
-			}, true, nil
-		}
-
-		observations := make([]string, 0, len(plan.ToolCalls))
-		for _, call := range plan.ToolCalls {
-			observation, record := s.executeAgentLoopTool(ctx, request, call, turn+1)
-			if record.ToolName != "" {
-				allToolCalls = append(allToolCalls, record)
-			}
-			observations = append(observations, observation)
-		}
-		history = append(history, observations...)
+			s.notificationEmitter(request.TaskID, event.Type, cloneMap(event.Payload))
+		},
+		Now: time.Now,
+	})
+	if ok && shouldPersistAgentLoopRuntime(runtimeResult) {
+		s.persistAgentLoopRuntime(request, runtimeResult)
 	}
-
-	finalOutput := fallbackOutput(request, inputText)
-	auditRecord, err := s.buildModelAuditRecord(ctx, request, latestInvocation)
-	if err != nil {
-		return generationTrace{}, false, err
+	if err != nil || !ok {
+		return generationTrace{}, ok, err
 	}
 	return generationTrace{
-		OutputText:      finalOutput,
-		ToolCalls:       allToolCalls,
-		ModelInvocation: invocationRecordMap(latestInvocation),
-		AuditRecord:     auditRecord,
+		OutputText:      runtimeResult.OutputText,
+		ToolCalls:       runtimeResult.ToolCalls,
+		ModelInvocation: cloneMap(runtimeResult.ModelInvocation),
+		AuditRecord:     cloneMap(runtimeResult.AuditRecord),
 	}, true, nil
+}
+
+func shouldPersistAgentLoopRuntime(result agentloop.Result) bool {
+	return len(result.Rounds) > 0 || len(result.Events) > 0 || result.DeliveryRecord != nil
 }
 
 func (s *Service) buildModelAuditRecord(ctx context.Context, request Request, invocation *model.InvocationRecord) (map[string]any, error) {
@@ -1326,6 +1354,60 @@ func (s *Service) agentLoopKeepRecent() int {
 	return s.model.ContextKeepRecent()
 }
 
+func (s *Service) agentLoopTimeout() time.Duration {
+	return defaultAgentLoopTimeout
+}
+
+func (s *Service) agentLoopPlannerRetryBudget() int {
+	if s.model == nil {
+		return 1
+	}
+	return s.model.PlannerRetryBudget()
+}
+
+func (s *Service) agentLoopToolRetryBudget() int {
+	if s.model == nil {
+		return 1
+	}
+	return s.model.ToolRetryBudget()
+}
+
+type noopAgentLoopHook struct{}
+
+func (noopAgentLoopHook) BeforeRound(_ context.Context, round agentloop.PersistedRound, plannerInput string) (string, error) {
+	return plannerInput, nil
+}
+
+func (noopAgentLoopHook) AfterRound(_ context.Context, _ agentloop.PersistedRound) error {
+	return nil
+}
+
+func (noopAgentLoopHook) BeforeTool(_ context.Context, _ agentloop.PersistedRound, call model.ToolInvocation) (model.ToolInvocation, error) {
+	return call, nil
+}
+
+func (noopAgentLoopHook) AfterTool(_ context.Context, _ agentloop.PersistedRound, _ tools.ToolCallRecord, _ string) error {
+	return nil
+}
+
+func agentloopAppendSteeringInput(inputText string, steeringMessages []string) string {
+	if len(steeringMessages) == 0 {
+		return inputText
+	}
+	steeringLines := make([]string, 0, len(steeringMessages))
+	for _, item := range steeringMessages {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		steeringLines = append(steeringLines, "- "+trimmed)
+	}
+	if len(steeringLines) == 0 {
+		return inputText
+	}
+	return strings.TrimSpace(inputText) + "\n\nFollow-up steering:\n" + strings.Join(steeringLines, "\n")
+}
+
 // isAgentLoopIntent reports whether the current task should execute through the
 // generic agent loop instead of the legacy single-shot prompt path.
 func isAgentLoopIntent(taskIntent map[string]any) bool {
@@ -1528,6 +1610,128 @@ func (s *Service) executeAgentLoopTool(ctx context.Context, request Request, cal
 		return fmt.Sprintf("Tool %s succeeded, but its summary could not be serialized.", toolName), annotateLoopRound(toolResult.ToolCall, loopRound)
 	}
 	return fmt.Sprintf("Tool %s succeeded. Summary: %s", toolName, string(summaryJSON)), annotateLoopRound(toolResult.ToolCall, loopRound)
+}
+
+func (s *Service) persistAgentLoopRuntime(request Request, result agentloop.Result) {
+	if s.loopStore == nil {
+		return
+	}
+	updatedAt := time.Now().UTC().Format(time.RFC3339)
+	runRecord := storage.RunRecord{
+		RunID:      request.RunID,
+		TaskID:     request.TaskID,
+		SessionID:  "",
+		Status:     runStatusFromStopReason(result.StopReason),
+		IntentName: effectiveIntentName(request.Intent),
+		StartedAt:  updatedAt,
+		UpdatedAt:  updatedAt,
+		StopReason: string(result.StopReason),
+	}
+	if result.StopReason == agentloop.StopReasonCompleted || result.StopReason == agentloop.StopReasonMaxIterations || result.StopReason == agentloop.StopReasonRepeatedToolChoice || result.StopReason == agentloop.StopReasonToolRetryExhausted || result.StopReason == agentloop.StopReasonPlannerError {
+		runRecord.FinishedAt = updatedAt
+	}
+	_ = s.loopStore.SaveRun(context.Background(), runRecord)
+	if s.notificationEmitter != nil && result.StopReason != "" {
+		s.notificationEmitter(request.TaskID, "task.updated", map[string]any{
+			"task_id":          request.TaskID,
+			"loop_stop_reason": string(result.StopReason),
+		})
+	}
+
+	stepRecords := make([]storage.StepRecord, 0, len(result.Rounds))
+	for _, round := range result.Rounds {
+		stepRecords = append(stepRecords, storage.StepRecord{
+			StepID:        fmt.Sprintf("%s_%s", request.RunID, round.StepID),
+			RunID:         round.RunID,
+			TaskID:        round.TaskID,
+			OrderIndex:    round.LoopRound,
+			LoopRound:     round.LoopRound,
+			Name:          round.Name,
+			Status:        round.Status,
+			InputSummary:  round.InputSummary,
+			OutputSummary: round.OutputSummary,
+			StopReason:    string(round.StopReason),
+			StartedAt:     round.StartedAt.UTC().Format(time.RFC3339),
+			CompletedAt:   formatOptionalTime(round.CompletedAt),
+			PlannerInput:  round.PlannerInput,
+			PlannerOutput: round.PlannerOutput,
+			Observation:   round.Observation,
+			ToolName:      round.ToolName,
+			ToolCallID:    round.ToolCallRecord.ToolCallID,
+		})
+	}
+	if len(stepRecords) > 0 {
+		_ = s.loopStore.SaveSteps(context.Background(), stepRecords)
+	}
+
+	eventRecords := make([]storage.EventRecord, 0, len(result.Events))
+	for index, event := range result.Events {
+		eventRecords = append(eventRecords, storage.EventRecord{
+			EventID:     fmt.Sprintf("evt_loop_%s_%03d", request.RunID, index+1),
+			RunID:       request.RunID,
+			TaskID:      request.TaskID,
+			StepID:      stepEventID(request.RunID, event.StepID),
+			Type:        event.Type,
+			Level:       firstNonEmpty(event.Level, "info"),
+			PayloadJSON: marshalEventPayload(event.Payload),
+			CreatedAt:   event.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	if len(eventRecords) > 0 {
+		_ = s.loopStore.SaveEvents(context.Background(), eventRecords)
+	}
+
+	if result.DeliveryRecord != nil {
+		_ = s.loopStore.SaveDeliveryResult(context.Background(), storage.DeliveryResultRecord{
+			DeliveryResultID: result.DeliveryRecord.DeliveryResultID,
+			TaskID:           result.DeliveryRecord.TaskID,
+			Type:             result.DeliveryRecord.Type,
+			Title:            result.DeliveryRecord.Title,
+			PayloadJSON:      marshalEventPayload(result.DeliveryRecord.Payload),
+			PreviewText:      result.DeliveryRecord.PreviewText,
+			CreatedAt:        result.DeliveryRecord.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+}
+
+func runStatusFromStopReason(reason agentloop.StopReason) string {
+	switch reason {
+	case agentloop.StopReasonCompleted:
+		return "completed"
+	case agentloop.StopReasonNeedAuthorization:
+		return "waiting_auth"
+	case agentloop.StopReasonNeedUserInput:
+		return "confirming_intent"
+	case agentloop.StopReasonPlannerError, agentloop.StopReasonRepeatedToolChoice, agentloop.StopReasonMaxIterations, agentloop.StopReasonToolRetryExhausted:
+		return "failed"
+	default:
+		return "processing"
+	}
+}
+
+func stepEventID(runID, stepID string) string {
+	if strings.TrimSpace(stepID) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s_%s", runID, stepID)
+}
+
+func formatOptionalTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func marshalEventPayload(value map[string]any) string {
+	if len(value) == 0 {
+		return "{}"
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(payload)
 }
 
 // isAllowedAgentLoopTool guards the first loop implementation so only

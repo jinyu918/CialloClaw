@@ -45,6 +45,8 @@ export const RPC_METHODS_STABLE = {
   AGENT_RECOMMENDATION_FEEDBACK_SUBMIT: "agent.recommendation.feedback.submit",
   AGENT_TASK_LIST: "agent.task.list",
   AGENT_TASK_DETAIL_GET: "agent.task.detail.get",
+  AGENT_TASK_EVENTS_LIST: "agent.task.events.list",
+  AGENT_TASK_STEER: "agent.task.steer",
   AGENT_TASK_ARTIFACT_LIST: "agent.task.artifact.list",
   AGENT_TASK_ARTIFACT_OPEN: "agent.task.artifact.open",
   AGENT_TASK_CONTROL: "agent.task.control",
@@ -85,6 +87,14 @@ export const NOTIFICATION_METHODS = {
   TASK_UPDATED: "task.updated",
   DELIVERY_READY: "delivery.ready",
   APPROVAL_PENDING: "approval.pending",
+  TASK_STEERED: "task.steered",
+  LOOP_STARTED: "loop.started",
+  LOOP_ROUND_STARTED: "loop.round.started",
+  LOOP_RETRYING: "loop.retrying",
+  LOOP_COMPACTED: "loop.compacted",
+  LOOP_ROUND_COMPLETED: "loop.round.completed",
+  LOOP_COMPLETED: "loop.completed",
+  LOOP_FAILED: "loop.failed",
   TASK_SESSION_QUEUED: "task.session_queued",
   TASK_SESSION_RESUMED: "task.session_resumed",
   MIRROR_OVERVIEW_UPDATED: "mirror.overview.updated",
@@ -280,6 +290,45 @@ export interface AgentTaskDetailGetResult {
   mirror_references: MirrorReference[];
   approval_request: ApprovalRequest | null;
   security_summary: SecuritySummary;
+}
+
+// TaskEvent defines one persisted compatibility event exposed through task-centric queries.
+export interface TaskEvent {
+  event_id: string;
+  run_id: string;
+  task_id: string;
+  step_id?: string;
+  type: string;
+  level: string;
+  payload_json: string;
+  created_at: string;
+}
+
+// AgentTaskEventsListParams defines the parameters for agent.task.events.list.
+export interface AgentTaskEventsListParams {
+  request_meta: RequestMeta;
+  task_id: string;
+  limit?: number;
+  offset?: number;
+}
+
+// AgentTaskEventsListResult defines the result for agent.task.events.list.
+export interface AgentTaskEventsListResult {
+  items: TaskEvent[];
+  page: JsonRpcPage;
+}
+
+// AgentTaskSteerParams defines the parameters for agent.task.steer.
+export interface AgentTaskSteerParams {
+  request_meta: RequestMeta;
+  task_id: string;
+  message: string;
+}
+
+// AgentTaskSteerResult defines the result for agent.task.steer.
+export interface AgentTaskSteerResult {
+  task: Task;
+  bubble_message: BubbleMessage | null;
 }
 
 // AgentTaskArtifactListParams defines the parameters for agent.task.artifact.list.

@@ -487,13 +487,20 @@ CREATE TABLE steps (
     step_id TEXT PRIMARY KEY,                    -- 执行步骤ID
     run_id TEXT NOT NULL,                        -- 所属run
     task_id TEXT NOT NULL,                       -- 所属task
+    loop_round INTEGER NOT NULL DEFAULT 0,       -- ReAct/Agent Loop 轮次
     name TEXT NOT NULL,                          -- 步骤名
     status TEXT NOT NULL,                        -- 步骤状态
     order_index INTEGER NOT NULL,                -- 顺序
     input_summary TEXT,                          -- 输入摘要
     output_summary TEXT,                         -- 输出摘要
-    created_at TEXT NOT NULL,                    -- 创建时间
-    updated_at TEXT NOT NULL,                    -- 更新时间
+    stop_reason TEXT,                            -- 当前步骤停止原因
+    started_at TEXT NOT NULL,                    -- 开始时间
+    completed_at TEXT,                           -- 完成时间
+    planner_input TEXT,                          -- planner 输入摘要/原文
+    planner_output TEXT,                         -- planner 输出摘要/原文
+    observation TEXT,                            -- 最近观测
+    tool_name TEXT,                              -- 本步主要工具
+    tool_call_id TEXT,                           -- 关联 tool_call
     FOREIGN KEY(run_id) REFERENCES runs(run_id),
     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
