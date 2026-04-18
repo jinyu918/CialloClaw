@@ -1584,6 +1584,7 @@ func newTestServerWithModelClient(client model.Client) *Server {
 		sidecarclient.NewNoopPlaywrightSidecarClient(),
 		sidecarclient.NewNoopOCRWorkerClient(),
 		sidecarclient.NewNoopMediaWorkerClient(),
+		sidecarclient.NewNoopScreenCaptureClient(),
 		model.NewService(serviceconfig.ModelConfig{Provider: "openai_responses", ModelID: "gpt-5.4", Endpoint: "https://api.openai.com/v1/responses"}, client),
 		audit.NewService(),
 		checkpoint.NewService(),
