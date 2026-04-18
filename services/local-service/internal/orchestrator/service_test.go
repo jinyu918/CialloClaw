@@ -192,12 +192,73 @@ type failingEvalSnapshotStore struct {
 	err error
 }
 
+type failingApprovalRequestStore struct {
+	base storage.ApprovalRequestStore
+	err  error
+}
+
+type failingAuthorizationRecordStore struct {
+	base storage.AuthorizationRecordStore
+	err  error
+}
+
 func (s failingEvalSnapshotStore) WriteEvalSnapshot(context.Context, storage.EvalSnapshotRecord) error {
 	return s.err
 }
 
 func (s failingEvalSnapshotStore) ListEvalSnapshots(context.Context, string, int, int) ([]storage.EvalSnapshotRecord, int, error) {
 	return nil, 0, s.err
+}
+
+func (s failingApprovalRequestStore) WriteApprovalRequest(ctx context.Context, record storage.ApprovalRequestRecord) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.base == nil {
+		return nil
+	}
+	return s.base.WriteApprovalRequest(ctx, record)
+}
+
+func (s failingApprovalRequestStore) UpdateApprovalRequestStatus(ctx context.Context, approvalID string, status string, updatedAt string) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.base == nil {
+		return nil
+	}
+	return s.base.UpdateApprovalRequestStatus(ctx, approvalID, status, updatedAt)
+}
+
+func (s failingApprovalRequestStore) ListApprovalRequests(ctx context.Context, taskID string, limit, offset int) ([]storage.ApprovalRequestRecord, int, error) {
+	if s.base == nil {
+		return nil, 0, nil
+	}
+	return s.base.ListApprovalRequests(ctx, taskID, limit, offset)
+}
+
+func (s failingApprovalRequestStore) ListPendingApprovalRequests(ctx context.Context, limit, offset int) ([]storage.ApprovalRequestRecord, int, error) {
+	if s.base == nil {
+		return nil, 0, nil
+	}
+	return s.base.ListPendingApprovalRequests(ctx, limit, offset)
+}
+
+func (s failingAuthorizationRecordStore) WriteAuthorizationRecord(ctx context.Context, record storage.AuthorizationRecordRecord) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.base == nil {
+		return nil
+	}
+	return s.base.WriteAuthorizationRecord(ctx, record)
+}
+
+func (s failingAuthorizationRecordStore) ListAuthorizationRecords(ctx context.Context, taskID string, limit, offset int) ([]storage.AuthorizationRecordRecord, int, error) {
+	if s.base == nil {
+		return nil, 0, nil
+	}
+	return s.base.ListAuthorizationRecords(ctx, taskID, limit, offset)
 }
 
 type countingTaskRunStore struct {
@@ -386,6 +447,22 @@ func replaceTaskRunStore(t *testing.T, service *storage.Service, store storage.T
 
 	serviceValue := reflect.ValueOf(service).Elem()
 	field := serviceValue.FieldByName("taskRunStore")
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
+}
+
+func replaceApprovalRequestStore(t *testing.T, service *storage.Service, store storage.ApprovalRequestStore) {
+	t.Helper()
+
+	serviceValue := reflect.ValueOf(service).Elem()
+	field := serviceValue.FieldByName("approvalRequestStore")
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
+}
+
+func replaceAuthorizationRecordStore(t *testing.T, service *storage.Service, store storage.AuthorizationRecordStore) {
+	t.Helper()
+
+	serviceValue := reflect.ValueOf(service).Elem()
+	field := serviceValue.FieldByName("authorizationRecordStore")
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
 }
 
@@ -2791,6 +2868,45 @@ func TestServiceConfirmWaitingAuthPersistsApprovalRequestRecord(t *testing.T) {
 	}
 }
 
+func TestServiceConfirmTaskReturnsStorageErrorWhenApprovalPersistenceFails(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "approval persistence failure output")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	originalStore := service.storage.ApprovalRequestStore()
+	defer replaceApprovalRequestStore(t, service.storage, originalStore)
+	replaceApprovalRequestStore(t, service.storage, failingApprovalRequestStore{base: originalStore, err: errors.New("approval store unavailable")})
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_approval_store_failure",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "persist approval request before execution",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	_, err = service.ConfirmTask(map[string]any{
+		"task_id":   taskID,
+		"confirmed": false,
+		"corrected_intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+				"target_path":           "workspace_document",
+			},
+		},
+	})
+	if err == nil || !errors.Is(err, ErrStorageQueryFailed) {
+		t.Fatalf("expected ErrStorageQueryFailed from approval persistence, got %v", err)
+	}
+}
+
 // TestServiceSecurityRespondAllowOnceResumesAndCompletes verifies allow-once
 // resumes execution and completes delivery.
 func TestServiceSecurityRespondAllowOnceResumesAndCompletes(t *testing.T) {
@@ -3087,6 +3203,54 @@ func TestServiceSecurityRespondPersistsAuthorizationRecord(t *testing.T) {
 	}
 	if approvalItems[0].Status != "approved" {
 		t.Fatalf("expected resolved approval request to be marked approved, got %+v", approvalItems[0])
+	}
+}
+
+func TestServiceSecurityRespondReturnsStorageErrorWhenAuthorizationPersistenceFails(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "authorization persistence failure output")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	originalStore := service.storage.AuthorizationRecordStore()
+	defer replaceAuthorizationRecordStore(t, service.storage, originalStore)
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_authorization_store_failure",
+		"source":     "floating_ball",
+		"trigger":    "text_selected_click",
+		"input": map[string]any{
+			"type": "text_selection",
+			"text": "persist authorization decision after approval",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	_, err = service.ConfirmTask(map[string]any{
+		"task_id":   taskID,
+		"confirmed": false,
+		"corrected_intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"require_authorization": true,
+				"target_path":           "workspace_document",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm task failed: %v", err)
+	}
+
+	replaceAuthorizationRecordStore(t, service.storage, failingAuthorizationRecordStore{base: originalStore, err: errors.New("authorization store unavailable")})
+	_, err = service.SecurityRespond(map[string]any{
+		"task_id":       taskID,
+		"decision":      "allow_once",
+		"remember_rule": true,
+	})
+	if err == nil || !errors.Is(err, ErrStorageQueryFailed) {
+		t.Fatalf("expected ErrStorageQueryFailed from authorization persistence, got %v", err)
 	}
 }
 
@@ -5391,6 +5555,59 @@ func TestServiceSecurityPendingListIgnoresResolvedApprovalStoreRecords(t *testin
 	page := result["page"].(map[string]any)
 	if page["total"] != 0 || page["has_more"] != false {
 		t.Fatalf("expected empty page metadata after filtering resolved approvals, got %+v", page)
+	}
+}
+
+func TestServiceSecurityRestoreApplyReturnsStorageErrorWhenApprovalPersistenceFails(t *testing.T) {
+	service, workspaceRoot := newTestServiceWithExecution(t, "restore approval persistence failure output")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	originalStore := service.storage.ApprovalRequestStore()
+	defer replaceApprovalRequestStore(t, service.storage, originalStore)
+	originalPath := filepath.Join("notes", "output.md")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "notes"), 0o755); err != nil {
+		t.Fatalf("mkdir notes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, originalPath), []byte("old content"), 0o644); err != nil {
+		t.Fatalf("seed output file: %v", err)
+	}
+
+	startResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_restore_store_failure",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请覆盖该文件",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"target_path": originalPath,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start task failed: %v", err)
+	}
+	taskID := startResult["task"].(map[string]any)["task_id"].(string)
+	if _, err := service.SecurityRespond(map[string]any{"task_id": taskID, "decision": "allow_once"}); err != nil {
+		t.Fatalf("security respond failed: %v", err)
+	}
+	pointsResult, err := service.SecurityRestorePointsList(map[string]any{"task_id": taskID, "limit": 20, "offset": 0})
+	if err != nil {
+		t.Fatalf("security restore points list failed: %v", err)
+	}
+	points := pointsResult["items"].([]map[string]any)
+	if len(points) == 0 {
+		t.Fatal("expected restore point to exist")
+	}
+
+	replaceApprovalRequestStore(t, service.storage, failingApprovalRequestStore{base: originalStore, err: errors.New("approval store unavailable")})
+	_, err = service.SecurityRestoreApply(map[string]any{"task_id": taskID, "recovery_point_id": points[0]["recovery_point_id"]})
+	if err == nil || !errors.Is(err, ErrStorageQueryFailed) {
+		t.Fatalf("expected ErrStorageQueryFailed from restore apply persistence, got %v", err)
 	}
 }
 

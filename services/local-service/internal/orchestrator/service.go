@@ -465,6 +465,9 @@ func (s *Service) handleScreenAnalyzeStart(params map[string]any, snapshot conte
 	if !ok {
 		return nil, false, ErrTaskNotFound
 	}
+	if err := s.persistApprovalRequestState(updatedTask.TaskID, approvalRequest, mapValue(pendingExecution, "impact_scope")); err != nil {
+		return nil, false, err
+	}
 	return map[string]any{
 		"task":            taskMap(updatedTask),
 		"bubble_message":  bubble,
@@ -525,10 +528,30 @@ func (s *Service) resumeQueuedControlledTask(task runengine.TaskRecord) (runengi
 	if !ok {
 		return runengine.TaskRecord{}, true, ErrTaskNotFound
 	}
-	if s.storage != nil {
-		_ = s.persistApprovalRequest(updatedTask.TaskID, approvalRequest, mapValue(pendingExecution, "impact_scope"))
+	if err := s.persistApprovalRequestState(updatedTask.TaskID, approvalRequest, mapValue(pendingExecution, "impact_scope")); err != nil {
+		return runengine.TaskRecord{}, true, err
 	}
 	return updatedTask, true, nil
+}
+
+func (s *Service) persistApprovalRequestState(taskID string, approvalRequest map[string]any, impactScope map[string]any) error {
+	if s.storage == nil {
+		return nil
+	}
+	if err := s.persistApprovalRequest(taskID, approvalRequest, impactScope); err != nil {
+		return fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
+	}
+	return nil
+}
+
+func (s *Service) persistAuthorizationState(taskID string, authorizationRecord map[string]any) error {
+	if s.storage == nil {
+		return nil
+	}
+	if err := s.persistAuthorizationRecord(taskID, authorizationRecord); err != nil {
+		return fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
+	}
+	return nil
 }
 
 func (s *Service) persistApprovalRequest(taskID string, approvalRequest map[string]any, impactScope map[string]any) error {
@@ -1629,8 +1652,8 @@ func (s *Service) SecurityRestoreApply(params map[string]any) (map[string]any, e
 	if !ok {
 		return nil, ErrTaskNotFound
 	}
-	if s.storage != nil {
-		_ = s.persistApprovalRequest(updatedTask.TaskID, approvalRequest, assessment.ImpactScope)
+	if err := s.persistApprovalRequestState(updatedTask.TaskID, approvalRequest, assessment.ImpactScope); err != nil {
+		return nil, err
 	}
 	return map[string]any{
 		"applied":        false,
@@ -1768,8 +1791,8 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 		"operator":                "user",
 		"created_at":              time.Now().Format(dateTimeLayout),
 	}
-	if s.storage != nil {
-		_ = s.persistAuthorizationRecord(task.TaskID, authorizationRecord)
+	if err := s.persistAuthorizationState(task.TaskID, authorizationRecord); err != nil {
+		return nil, err
 	}
 	pendingExecution, ok := s.runEngine.PendingExecutionPlan(task.TaskID)
 	if !ok {
@@ -4004,8 +4027,8 @@ func (s *Service) handleTaskGovernanceDecision(task runengine.TaskRecord, taskIn
 	if !changed {
 		return task, nil, false, ErrTaskNotFound
 	}
-	if s.storage != nil {
-		_ = s.persistApprovalRequest(updatedTask.TaskID, approvalRequest, assessment.ImpactScope)
+	if err := s.persistApprovalRequestState(updatedTask.TaskID, approvalRequest, assessment.ImpactScope); err != nil {
+		return task, nil, false, err
 	}
 	return updatedTask, map[string]any{
 		"task":            taskMap(updatedTask),
