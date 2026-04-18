@@ -4,6 +4,7 @@ package orchestrator
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -879,6 +880,94 @@ func TestServiceSecurityRespondResumesQueuedSessionTask(t *testing.T) {
 	}
 	if secondTask.CurrentStep != "return_result" {
 		t.Fatalf("expected resumed task to finish through return_result, got %+v", secondTask)
+	}
+}
+
+func TestServiceSecurityRespondResumesQueuedScreenAnalyzeTaskThroughApproval(t *testing.T) {
+	ocrStub := stubOCRWorkerClient{result: tools.OCRTextResult{Path: "temp/screen_local_0001/frame_0001.png", Text: "fatal build error", Language: "eng", Source: "ocr_worker_text"}}
+	service, workspaceRoot := newTestServiceWithExecutionWorkers(t, "unused", platform.LocalExecutionBackend{}, nil, sidecarclient.NewNoopPlaywrightSidecarClient(), ocrStub, sidecarclient.NewNoopMediaWorkerClient())
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "inputs"), 0o755); err != nil {
+		t.Fatalf("mkdir inputs failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "inputs", "screen.png"), []byte("fake screen capture"), 0o644); err != nil {
+		t.Fatalf("write screen input failed: %v", err)
+	}
+
+	firstResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_screen_queue",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "Please write this into a file after authorization.",
+		},
+		"intent": map[string]any{
+			"name": "write_file",
+			"arguments": map[string]any{
+				"target_path":           "workspace_document",
+				"require_authorization": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("first start task failed: %v", err)
+	}
+	firstTaskID := firstResult["task"].(map[string]any)["task_id"].(string)
+
+	secondResult, err := service.StartTask(map[string]any{
+		"session_id": "sess_screen_queue",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": "请分析屏幕中的错误",
+		},
+		"intent": map[string]any{
+			"name": "screen_analyze",
+			"arguments": map[string]any{
+				"path": "inputs/screen.png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second start task failed: %v", err)
+	}
+	secondTaskID := secondResult["task"].(map[string]any)["task_id"].(string)
+	if secondResult["task"].(map[string]any)["status"] != "blocked" {
+		t.Fatalf("expected queued screen task to stay blocked before approval is created, got %+v", secondResult["task"])
+	}
+
+	if _, err := service.SecurityRespond(map[string]any{
+		"task_id":       firstTaskID,
+		"approval_id":   "appr_screen_queue_first",
+		"decision":      "allow_once",
+		"remember_rule": false,
+	}); err != nil {
+		t.Fatalf("security respond failed for first task: %v", err)
+	}
+
+	secondTask, ok := service.runEngine.GetTask(secondTaskID)
+	if !ok {
+		t.Fatal("expected queued screen task to remain available in runtime")
+	}
+	if secondTask.Status != "waiting_auth" || secondTask.CurrentStep != "waiting_authorization" {
+		t.Fatalf("expected queued screen task to re-enter waiting authorization, got %+v", secondTask)
+	}
+	if len(secondTask.ApprovalRequest) == 0 || stringValue(secondTask.PendingExecution, "kind", "") != "screen_analysis" {
+		t.Fatalf("expected queued screen task to rebuild approval state, got %+v", secondTask)
+	}
+
+	screenResult, err := service.SecurityRespond(map[string]any{
+		"task_id":       secondTaskID,
+		"approval_id":   "appr_screen_queue_second",
+		"decision":      "allow_once",
+		"remember_rule": false,
+	})
+	if err != nil {
+		t.Fatalf("security respond failed for queued screen task: %v", err)
+	}
+	if screenResult["task"].(map[string]any)["status"] != "completed" {
+		t.Fatalf("expected queued screen task to complete after approval, got %+v", screenResult["task"])
 	}
 }
 
@@ -4293,6 +4382,20 @@ func TestServiceStartTaskHandlesControlledScreenAnalyzeIntent(t *testing.T) {
 	}
 	if record.Authorization == nil || record.Authorization["decision"] != "allow_once" {
 		t.Fatalf("expected authorization record to be stored, got %+v", record.Authorization)
+	}
+	artifacts, total, err := service.storage.ArtifactStore().ListArtifacts(context.Background(), task["task_id"].(string), 20, 0)
+	if err != nil {
+		t.Fatalf("list persisted artifacts failed: %v", err)
+	}
+	if total != 1 || len(artifacts) != 1 {
+		t.Fatalf("expected one persisted screen artifact, total=%d len=%d", total, len(artifacts))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(artifacts[0].DeliveryPayloadJSON), &payload); err != nil {
+		t.Fatalf("decode persisted screen payload failed: %v", err)
+	}
+	if payload["screen_session_id"] == "" || payload["capture_mode"] != "screenshot" || payload["retention_policy"] == "" || payload["evidence_role"] != "error_evidence" {
+		t.Fatalf("expected persisted artifact payload to retain screen metadata, got %+v", payload)
 	}
 }
 

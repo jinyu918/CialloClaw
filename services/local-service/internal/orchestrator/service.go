@@ -443,11 +443,6 @@ func (s *Service) handleScreenAnalyzeStart(params map[string]any, snapshot conte
 	if stringValue(explicitIntent, "name", "") != "screen_analyze" || s.executor == nil || s.executor.ScreenCapabilitySnapshot().Available == false {
 		return nil, false, nil
 	}
-	arguments := mapValue(explicitIntent, "arguments")
-	sourcePath := stringValue(arguments, "path", "")
-	if strings.TrimSpace(sourcePath) == "" {
-		return nil, false, fmt.Errorf("screen_analyze requires intent.arguments.path")
-	}
 	task := s.runEngine.CreateTask(runengine.CreateTaskInput{
 		SessionID:         stringValue(params, "session_id", ""),
 		Title:             firstNonEmptyString(stringValue(explicitIntent, "title", ""), "分析屏幕截图"),
@@ -469,6 +464,30 @@ func (s *Service) handleScreenAnalyzeStart(params map[string]any, snapshot conte
 			"bubble_message":  queueBubble,
 			"delivery_result": nil,
 		}, true, nil
+	}
+	approvalRequest, pendingExecution, bubble, err := s.buildScreenAnalysisApprovalState(task)
+	if err != nil {
+		return nil, false, err
+	}
+	updatedTask, ok := s.runEngine.MarkWaitingApprovalWithPlan(task.TaskID, approvalRequest, pendingExecution, bubble)
+	if !ok {
+		return nil, false, ErrTaskNotFound
+	}
+	return map[string]any{
+		"task":            taskMap(updatedTask),
+		"bubble_message":  bubble,
+		"delivery_result": nil,
+	}, true, nil
+}
+
+// buildScreenAnalysisApprovalState reconstructs the controlled approval plan
+// from the task intent so queued resumes can re-enter the same authorization
+// path instead of falling through to the generic executor.
+func (s *Service) buildScreenAnalysisApprovalState(task runengine.TaskRecord) (map[string]any, map[string]any, map[string]any, error) {
+	arguments := mapValue(task.Intent, "arguments")
+	sourcePath := stringValue(arguments, "path", "")
+	if strings.TrimSpace(sourcePath) == "" {
+		return nil, nil, nil, fmt.Errorf("screen_analyze requires intent.arguments.path")
 	}
 	approvalRequest := map[string]any{
 		"approval_id":    fmt.Sprintf("appr_%s", task.TaskID),
@@ -498,15 +517,23 @@ func (s *Service) handleScreenAnalyzeStart(params map[string]any, snapshot conte
 		},
 	}
 	bubble := s.delivery.BuildBubbleMessage(task.TaskID, "status", "屏幕截图分析属于敏感能力，请先确认授权。", task.UpdatedAt.Format(dateTimeLayout))
+	return approvalRequest, pendingExecution, bubble, nil
+}
+
+func (s *Service) resumeQueuedControlledTask(task runengine.TaskRecord) (runengine.TaskRecord, bool, error) {
+	if stringValue(task.Intent, "name", "") != "screen_analyze" {
+		return task, false, nil
+	}
+	approvalRequest, pendingExecution, bubble, err := s.buildScreenAnalysisApprovalState(task)
+	if err != nil {
+		failedTask, _ := s.failExecutionTask(task, map[string]any{"name": "screen_analyze"}, execution.Result{}, err)
+		return failedTask, true, nil
+	}
 	updatedTask, ok := s.runEngine.MarkWaitingApprovalWithPlan(task.TaskID, approvalRequest, pendingExecution, bubble)
 	if !ok {
-		return nil, false, ErrTaskNotFound
+		return runengine.TaskRecord{}, true, ErrTaskNotFound
 	}
-	return map[string]any{
-		"task":            taskMap(updatedTask),
-		"bubble_message":  bubble,
-		"delivery_result": nil,
-	}, true, nil
+	return updatedTask, true, nil
 }
 
 // ConfirmTask handles agent.task.confirm.
@@ -1925,6 +1952,16 @@ func (s *Service) drainSessionQueue(sessionID string) error {
 		resumedTask, changed := s.runEngine.ResumeQueuedTask(nextTask.TaskID, executionStepName(nextTask.Intent), bubble)
 		if !changed {
 			return ErrTaskNotFound
+		}
+		resumedTask, handled, controlledErr := s.resumeQueuedControlledTask(resumedTask)
+		if controlledErr != nil {
+			return controlledErr
+		}
+		if handled {
+			if taskIsTerminal(resumedTask.Status) {
+				continue
+			}
+			return nil
 		}
 
 		governedTask, _, handled, governanceErr := s.handleTaskGovernanceDecision(resumedTask, resumedTask.Intent)
@@ -3954,8 +3991,12 @@ func attachDeliveryResultToArtifacts(deliveryResult map[string]any, artifacts []
 		if cloned == nil {
 			continue
 		}
-		cloned["delivery_type"] = stringValue(deliveryResult, "type", "")
-		cloned["delivery_payload"] = cloneMap(mapValue(deliveryResult, "payload"))
+		if stringValue(cloned, "delivery_type", "") == "" {
+			cloned["delivery_type"] = stringValue(deliveryResult, "type", "")
+		}
+		if len(mapValue(cloned, "delivery_payload")) == 0 {
+			cloned["delivery_payload"] = cloneMap(mapValue(deliveryResult, "payload"))
+		}
 		if stringValue(cloned, "created_at", "") == "" {
 			cloned["created_at"] = time.Now().UTC().Format(time.RFC3339)
 		}
