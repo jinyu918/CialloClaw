@@ -342,7 +342,7 @@ func TestLoopRuntimeStorePersistsNormalizedRecords(t *testing.T) {
 	assertTableCount(t, sqliteStore.db, "events", 1)
 	assertTableCount(t, sqliteStore.db, "delivery_results", 1)
 
-	events, total, err := store.ListEvents(context.Background(), "task_loop_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_loop_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListEvents returned error: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestLoopRuntimeStoreKeepsAppendOnlyEventsAcrossRuns(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save second event failed: %v", err)
 	}
-	events, total, err := store.ListEvents(context.Background(), "task_001", 20, 0)
+	events, total, err := store.ListEvents(context.Background(), "task_001", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("list append-only events failed: %v", err)
 	}

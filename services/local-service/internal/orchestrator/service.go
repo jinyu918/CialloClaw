@@ -740,6 +740,7 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 	} else {
 		securitySummary["latest_restore_point"] = latestRestorePoint
 	}
+	runtimeSummary := s.buildTaskRuntimeSummary(task)
 
 	return map[string]any{
 		"task":              taskMap(task),
@@ -748,7 +749,37 @@ func (s *Service) TaskDetailGet(params map[string]any) (map[string]any, error) {
 		"mirror_references": protocolMirrorReferenceList(task.MirrorReferences),
 		"approval_request":  approvalRequestValue,
 		"security_summary":  securitySummary,
+		"runtime_summary":   runtimeSummary,
 	}, nil
+}
+
+func (s *Service) buildTaskRuntimeSummary(task runengine.TaskRecord) map[string]any {
+	summary := map[string]any{
+		"loop_stop_reason":      nil,
+		"events_count":          0,
+		"latest_event_type":     nil,
+		"active_steering_count": len(task.SteeringMessages),
+	}
+	if strings.TrimSpace(task.LoopStopReason) != "" {
+		summary["loop_stop_reason"] = task.LoopStopReason
+	}
+	if task.LatestEvent != nil {
+		latestType := strings.TrimSpace(stringValue(task.LatestEvent, "type", ""))
+		if latestType != "" {
+			summary["latest_event_type"] = latestType
+		}
+	}
+	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
+		return summary
+	}
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), task.TaskID, task.RunID, "", 1, 0)
+	if err == nil {
+		summary["events_count"] = total
+		if len(records) > 0 && strings.TrimSpace(records[0].Type) != "" {
+			summary["latest_event_type"] = records[0].Type
+		}
+	}
+	return summary
 }
 
 // TaskEventsList handles agent.task.events.list and exposes normalized runtime
@@ -763,7 +794,7 @@ func (s *Service) TaskEventsList(params map[string]any) (map[string]any, error) 
 	if s.storage == nil || s.storage.LoopRuntimeStore() == nil {
 		return map[string]any{"items": []map[string]any{}, "page": pageMap(limit, offset, 0)}, nil
 	}
-	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, limit, offset)
+	records, total, err := s.storage.LoopRuntimeStore().ListEvents(context.Background(), taskID, "", "", limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrStorageQueryFailed, err)
 	}
