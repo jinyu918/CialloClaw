@@ -134,19 +134,19 @@ func (s *SQLiteTaskRunStore) DeleteTaskRun(ctx context.Context, taskID string) e
 	if taskID == "" {
 		return ErrTaskRunTaskIDRequired
 	}
-
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM task_runs WHERE task_id = ?`, taskID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin task run delete transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := deleteStructuredTaskStateWithSQLiteTx(ctx, tx, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_runs WHERE task_id = ?`, taskID); err != nil {
 		return fmt.Errorf("delete task run %s: %w", taskID, err)
 	}
-	if s.taskStore != nil {
-		if err := s.taskStore.DeleteTask(ctx, taskID); err != nil {
-			return err
-		}
-	}
-	if s.stepStore != nil {
-		if err := s.stepStore.ReplaceTaskSteps(ctx, taskID, nil); err != nil {
-			return err
-		}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit task run delete transaction: %w", err)
 	}
 
 	return nil
@@ -168,7 +168,12 @@ func (s *SQLiteTaskRunStore) SaveTaskRun(ctx context.Context, record TaskRunReco
 		finishedAt = record.FinishedAt.Format(time.RFC3339Nano)
 	}
 
-	if _, err := s.db.ExecContext(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin task run save transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT OR REPLACE INTO task_runs (
 			task_id,
@@ -191,8 +196,11 @@ func (s *SQLiteTaskRunStore) SaveTaskRun(ctx context.Context, record TaskRunReco
 	); err != nil {
 		return fmt.Errorf("save task run %s: %w", record.TaskID, err)
 	}
-	if err := writeStructuredTaskState(ctx, s.taskStore, s.stepStore, record); err != nil {
+	if err := writeStructuredTaskStateWithSQLiteTx(ctx, tx, record); err != nil {
 		return fmt.Errorf("save structured task state %s: %w", record.TaskID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit task run save transaction: %w", err)
 	}
 
 	return nil
@@ -371,6 +379,51 @@ func cloneTaskRunRecord(record TaskRunRecord) TaskRunRecord {
 		clone.FinishedAt = &finishedAt
 	}
 	return clone
+}
+
+func writeStructuredTaskStateWithSQLiteTx(ctx context.Context, tx *sql.Tx, record TaskRunRecord) error {
+	taskRecord, err := taskRecordFromSnapshot(record)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR REPLACE INTO tasks (
+			task_id, session_id, run_id, title, source_type, status, intent_name, intent_arguments_json,
+			preferred_delivery, fallback_delivery, current_step, current_step_status, risk_level,
+			started_at, updated_at, finished_at, snapshot_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskRecord.TaskID, taskRecord.SessionID, taskRecord.RunID, taskRecord.Title, taskRecord.SourceType, taskRecord.Status, taskRecord.IntentName, taskRecord.IntentArgumentsJSON, taskRecord.PreferredDelivery, taskRecord.FallbackDelivery, taskRecord.CurrentStep, taskRecord.CurrentStepStatus, taskRecord.RiskLevel, taskRecord.StartedAt, taskRecord.UpdatedAt, nullableText(taskRecord.FinishedAt), taskRecord.SnapshotJSON); err != nil {
+		return fmt.Errorf("write task: %w", err)
+	}
+	if err := deleteStructuredTaskStepsWithSQLiteTx(ctx, tx, record.TaskID); err != nil {
+		return err
+	}
+	for _, step := range taskStepRecordsFromSnapshot(record) {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO task_steps (step_id, task_id, name, status, order_index, input_summary, output_summary, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, step.StepID, step.TaskID, step.Name, step.Status, step.OrderIndex, step.InputSummary, step.OutputSummary, step.CreatedAt, step.UpdatedAt); err != nil {
+			return fmt.Errorf("insert task step: %w", err)
+		}
+	}
+	return nil
+}
+
+func deleteStructuredTaskStateWithSQLiteTx(ctx context.Context, tx *sql.Tx, taskID string) error {
+	if err := deleteStructuredTaskStepsWithSQLiteTx(ctx, tx, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE task_id = ?`, taskID); err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	return nil
+}
+
+func deleteStructuredTaskStepsWithSQLiteTx(ctx context.Context, tx *sql.Tx, taskID string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_steps WHERE task_id = ?`, taskID); err != nil {
+		return fmt.Errorf("delete task steps: %w", err)
+	}
+	return nil
 }
 
 func cloneTaskStepSnapshots(values []TaskStepSnapshot) []TaskStepSnapshot {

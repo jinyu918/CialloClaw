@@ -209,6 +209,35 @@ func TestSQLiteTaskRunStoreRejectsInvalidRecord(t *testing.T) {
 	}
 }
 
+func TestSQLiteTaskRunStoreSaveTaskRunRollsBackStructuredTaskStateOnFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task-runs-rollback.db")
+	store, err := NewSQLiteTaskRunStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteTaskRunStore returned error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if _, err := store.db.Exec(`DROP TABLE task_steps;`); err != nil {
+		t.Fatalf("drop task_steps table: %v", err)
+	}
+	record := sampleTaskRunRecord()
+	err = store.SaveTaskRun(context.Background(), record)
+	if err == nil {
+		t.Fatal("expected SaveTaskRun to fail when structured step table is missing")
+	}
+	records, loadErr := store.LoadTaskRuns(context.Background())
+	if loadErr != nil {
+		t.Fatalf("LoadTaskRuns returned error: %v", loadErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("expected task_runs write to rollback on structured write failure, got %+v", records)
+	}
+	taskItems, taskTotal, err := store.taskStore.ListTasks(context.Background(), 10, 0)
+	if err == nil && (taskTotal != 0 || len(taskItems) != 0) {
+		t.Fatalf("expected structured task rows to rollback too, got total=%d items=%+v", taskTotal, taskItems)
+	}
+}
+
 func sampleTaskRunRecord() TaskRunRecord {
 	startedAt := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
 	updatedAt := startedAt.Add(2 * time.Minute)
