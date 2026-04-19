@@ -509,6 +509,10 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 - `agent.settings.get`
 - `agent.settings.update`
 
+#### E. 插件运行态
+
+- `agent.plugin.runtime.list`
+
 ### 7.2 planned
 
 - `agent.mirror.memory.manage`
@@ -3325,6 +3329,88 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
       "server_time": "2026-04-07T11:06:01+08:00"
     },
     "warnings": []
+  }
+}
+```
+
+---
+
+### 8.4.3 `agent.plugin.runtime.list`
+
+- **请求方式**：JSON-RPC 2.0
+- **接口调用时机**：仪表盘或工作台需要查看插件运行态时
+- **系统处理**：返回当前 worker / sidecar 的运行态、指标快照和最近事件
+- **入参**：当前阶段可为空对象
+- **出参**：插件运行态列表、指标快照、最近事件
+
+### agent.plugin.runtime.list 入参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_plugin_runtime_list_001",
+  "method": "agent.plugin.runtime.list",
+  "params": {}
+}
+```
+
+### agent.plugin.runtime.list 出参说明
+
+| 字段 | 中文说明 |
+| --- | --- |
+| `data.items` | 插件运行态列表，包含 `name / kind / status / transport / health / last_seen_at / last_error / capabilities` |
+| `data.metrics` | 插件指标快照列表，包含 `start_count / success_count / failure_count / last_started_at / last_failed_at / last_seen_at` |
+| `data.events` | 最近运行态事件，包含 `event_type / payload / created_at` |
+
+### agent.plugin.runtime.list 出参示例
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_plugin_runtime_list_001",
+  "result": {
+    "data": {
+      "items": [
+        {
+          "name": "playwright_sidecar",
+          "kind": "sidecar",
+          "status": "running",
+          "transport": "named_pipe",
+          "health": "healthy",
+          "last_seen_at": "2026-04-19T20:18:01Z",
+          "last_error": "",
+          "capabilities": [
+            "page_read",
+            "page_search",
+            "page_interact",
+            "structured_dom"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "name": "playwright_sidecar",
+          "kind": "sidecar",
+          "start_count": 1,
+          "success_count": 1,
+          "failure_count": 0,
+          "last_started_at": "2026-04-19T20:18:00Z",
+          "last_failed_at": "",
+          "last_seen_at": "2026-04-19T20:18:01Z"
+        }
+      ],
+      "events": [
+        {
+          "name": "playwright_sidecar",
+          "kind": "sidecar",
+          "event_type": "plugin.runtime.healthy",
+          "payload": {
+            "health": "healthy"
+          },
+          "created_at": "2026-04-19T20:18:01Z"
+        }
+      ]
+    }
   }
 }
 ```

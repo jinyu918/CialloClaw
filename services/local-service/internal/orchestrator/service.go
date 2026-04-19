@@ -256,6 +256,12 @@ func (s *Service) WithTraceEval(traceEvalService *traceeval.Service) *Service {
 // endpoints.
 func (s *Service) Snapshot() map[string]any {
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(100, 0)
+	primaryWorker := ""
+	if s.plugin != nil {
+		if workers := s.plugin.Workers(); len(workers) > 0 {
+			primaryWorker = workers[0]
+		}
+	}
 	return map[string]any{
 		"context_source":          s.context.Snapshot()["source"],
 		"intent_state":            s.intent.Analyze("bootstrap"),
@@ -266,7 +272,7 @@ func (s *Service) Snapshot() map[string]any {
 		"risk_level":              s.risk.DefaultLevel(),
 		"model":                   s.model.Descriptor(),
 		"tool_count":              len(s.tools.Names()),
-		"primary_worker":          s.plugin.Workers()[0],
+		"primary_worker":          primaryWorker,
 		"pending_approvals":       pendingTotal,
 		"latest_approval_request": firstMapOrNil(pendingApprovals),
 	}
@@ -1559,6 +1565,7 @@ func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, err
 	if latestAudit == nil {
 		latestAudit = s.latestAuditRecordFromStorage("")
 	}
+	pluginSummary := s.pluginRuntimeSummary()
 	return map[string]any{
 		"module": module,
 		"tab":    tab,
@@ -1567,6 +1574,7 @@ func (s *Service) DashboardModuleGet(params map[string]any) (map[string]any, err
 			"generated_outputs":   countGeneratedOutputs(finishedTasks),
 			"authorizations_used": countAuthorizedTasks(unfinishedTasks, finishedTasks),
 			"exceptions":          countExceptionTasks(unfinishedTasks, finishedTasks),
+			"plugin_runtime":      pluginSummary,
 		},
 		"highlights": buildDashboardModuleHighlightsWithAudit(unfinishedTasks, finishedTasks, pendingTotal, latestAudit),
 	}, nil
@@ -1586,6 +1594,24 @@ func (s *Service) MirrorOverviewGet(params map[string]any) (map[string]any, erro
 		},
 		"profile":           buildMirrorProfile(finishedTasks),
 		"memory_references": memoryReferences,
+	}, nil
+}
+
+// PluginRuntimeList exposes the smallest backend query surface for runtime
+// plugin visibility so dashboard work can consume health and metric snapshots
+// without depending on static worker declarations only.
+func (s *Service) PluginRuntimeList(params map[string]any) (map[string]any, error) {
+	_ = params
+	if s.plugin == nil {
+		return map[string]any{"items": []map[string]any{}, "metrics": []map[string]any{}, "events": []map[string]any{}}, nil
+	}
+	runtimes := s.plugin.RuntimeStates()
+	metrics := s.plugin.MetricSnapshots()
+	events := s.plugin.RuntimeEvents()
+	return map[string]any{
+		"items":   pluginRuntimeItems(runtimes),
+		"metrics": pluginMetricItems(metrics),
+		"events":  pluginEventItems(events),
 	}, nil
 }
 
@@ -1610,6 +1636,83 @@ func (s *Service) SecuritySummaryGet() (map[string]any, error) {
 			"token_cost_summary":     aggregateTokenCostSummary(unfinishedTasks, finishedTasks, boolValue(dataLogSettings, "budget_auto_downgrade", true)),
 		},
 	}, nil
+}
+
+func (s *Service) pluginRuntimeSummary() map[string]any {
+	if s.plugin == nil {
+		return map[string]any{
+			"total":       0,
+			"healthy":     0,
+			"failed":      0,
+			"unavailable": 0,
+		}
+	}
+	runtimes := s.plugin.RuntimeStates()
+	summary := map[string]any{
+		"total":       len(runtimes),
+		"healthy":     0,
+		"failed":      0,
+		"unavailable": 0,
+	}
+	for _, runtime := range runtimes {
+		switch runtime.Health {
+		case plugin.RuntimeHealthHealthy:
+			summary["healthy"] = intValue(summary, "healthy", 0) + 1
+		case plugin.RuntimeHealthFailed:
+			summary["failed"] = intValue(summary, "failed", 0) + 1
+		case plugin.RuntimeHealthUnavailable:
+			summary["unavailable"] = intValue(summary, "unavailable", 0) + 1
+		}
+	}
+	return summary
+}
+
+func pluginRuntimeItems(items []plugin.RuntimeState) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, map[string]any{
+			"name":         item.Name,
+			"kind":         item.Kind,
+			"status":       item.Status,
+			"transport":    item.Transport,
+			"health":       item.Health,
+			"last_seen_at": item.LastSeenAt,
+			"last_error":   item.LastError,
+			"capabilities": append([]string(nil), item.Capabilities...),
+		})
+	}
+	return result
+}
+
+func pluginMetricItems(items []plugin.MetricSnapshot) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, map[string]any{
+			"name":            item.Name,
+			"kind":            item.Kind,
+			"start_count":     item.StartCount,
+			"success_count":   item.SuccessCount,
+			"failure_count":   item.FailureCount,
+			"last_started_at": item.LastStartedAt,
+			"last_failed_at":  item.LastFailedAt,
+			"last_seen_at":    item.LastSeenAt,
+		})
+	}
+	return result
+}
+
+func pluginEventItems(items []plugin.RuntimeEvent) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, map[string]any{
+			"name":       item.Name,
+			"kind":       item.Kind,
+			"event_type": item.EventType,
+			"payload":    cloneMap(item.Payload),
+			"created_at": item.CreatedAt,
+		})
+	}
+	return result
 }
 
 // SecurityPendingList handles `agent.security.pending.list` and keeps the
@@ -1998,12 +2101,14 @@ func (s *Service) SecurityRespond(params map[string]any) (map[string]any, error)
 // SettingsGet handles agent.settings.get.
 func (s *Service) SettingsGet(params map[string]any) (map[string]any, error) {
 	settings := s.runEngine.Settings()
-	settingsWithSecrets, err := s.attachSensitiveSettingAvailability(settings)
-	if err != nil {
-		return nil, err
-	}
-	settings = settingsWithSecrets
 	scope := stringValue(params, "scope", "all")
+	if scope == "all" || scope == "data_log" {
+		settingsWithSecrets, err := s.attachSensitiveSettingAvailability(settings)
+		if err != nil {
+			return nil, err
+		}
+		settings = settingsWithSecrets
+	}
 	if scope == "all" {
 		return map[string]any{"settings": settings}, nil
 	}
@@ -2038,11 +2143,13 @@ func (s *Service) SettingsUpdate(params map[string]any) (map[string]any, error) 
 		}
 	}
 	effectiveSettings, updatedKeys, applyMode, needRestart := s.runEngine.UpdateSettings(params)
-	effectiveSettingsWithSecrets, err := s.attachSensitiveSettingAvailability(effectiveSettings)
-	if err != nil {
-		return nil, err
+	if _, ok := effectiveSettings["data_log"]; ok {
+		effectiveSettingsWithSecrets, err := s.attachSensitiveSettingAvailability(effectiveSettings)
+		if err != nil {
+			return nil, err
+		}
+		effectiveSettings = effectiveSettingsWithSecrets
 	}
-	effectiveSettings = effectiveSettingsWithSecrets
 	return map[string]any{
 		"updated_keys":       updatedKeys,
 		"effective_settings": effectiveSettings,
@@ -2545,7 +2652,13 @@ func (s *Service) deleteModelSecret(provider string) error {
 
 func strongholdStatusFromStorage(store *storage.Service) map[string]any {
 	if store == nil || store.Stronghold() == nil {
-		return nil
+		return map[string]any{
+			"backend":      "none",
+			"available":    false,
+			"fallback":     false,
+			"initialized":  false,
+			"formal_store": false,
+		}
 	}
 	descriptor := store.Stronghold().Descriptor()
 	return map[string]any{
