@@ -7986,6 +7986,14 @@ func TestServicePluginRuntimeListReturnsStructuredState(t *testing.T) {
 	}
 }
 
+func TestServiceSnapshotUsesStablePrimaryWorker(t *testing.T) {
+	service := newTestService()
+	snapshot := service.Snapshot()
+	if snapshot["primary_worker"] != "playwright_worker" {
+		t.Fatalf("expected snapshot primary_worker to use stable declaration order, got %+v", snapshot)
+	}
+}
+
 func TestDashboardModuleGetIncludesPluginRuntimeSummary(t *testing.T) {
 	service := newTestService()
 	service.plugin.MarkRuntimeHealthy(plugin.RuntimeKindWorker, "ocr_worker")

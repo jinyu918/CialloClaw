@@ -87,6 +87,7 @@ const maxRuntimeEvents = 50
 // Service keeps static declarations plus the current runtime state cache.
 type Service struct {
 	mu       sync.Mutex
+	order    []string
 	runtimes map[string]RuntimeState
 	metrics  map[string]MetricSnapshot
 	events   []RuntimeEvent
@@ -95,19 +96,21 @@ type Service struct {
 // NewService creates the plugin runtime registry with declared workers and sidecars.
 func NewService() *Service {
 	service := &Service{
+		order:    make([]string, 0),
 		runtimes: map[string]RuntimeState{},
 		metrics:  map[string]MetricSnapshot{},
 		events:   make([]RuntimeEvent, 0),
 	}
 	service.declareRuntime(RuntimeState{Name: "playwright_worker", Kind: RuntimeKindWorker, Status: RuntimeStatusDeclared, Transport: "worker_process", Health: RuntimeHealthUnknown, Capabilities: []string{"page_read", "page_search", "page_interact", "structured_dom"}})
-	service.declareRuntime(RuntimeState{Name: "ocr_worker", Kind: RuntimeKindWorker, Status: RuntimeStatusDeclared, Transport: "worker_process", Health: RuntimeHealthUnknown, Capabilities: []string{"extract_text", "ocr_image", "ocr_pdf"}})
-	service.declareRuntime(RuntimeState{Name: "media_worker", Kind: RuntimeKindWorker, Status: RuntimeStatusDeclared, Transport: "worker_process", Health: RuntimeHealthUnknown, Capabilities: []string{"transcode_media", "normalize_recording", "extract_frames"}})
+	service.declareRuntime(RuntimeState{Name: "ocr_worker", Kind: RuntimeKindWorker, Status: RuntimeStatusDeclared, Transport: "named_pipe", Health: RuntimeHealthUnknown, Capabilities: []string{"extract_text", "ocr_image", "ocr_pdf"}})
+	service.declareRuntime(RuntimeState{Name: "media_worker", Kind: RuntimeKindWorker, Status: RuntimeStatusDeclared, Transport: "named_pipe", Health: RuntimeHealthUnknown, Capabilities: []string{"transcode_media", "normalize_recording", "extract_frames"}})
 	service.declareRuntime(RuntimeState{Name: "playwright_sidecar", Kind: RuntimeKindSidecar, Status: RuntimeStatusDeclared, Transport: "named_pipe", Health: RuntimeHealthUnknown, Capabilities: []string{"page_read", "page_search", "page_interact", "structured_dom"}})
 	return service
 }
 
 func (s *Service) declareRuntime(state RuntimeState) {
 	key := runtimeKey(state.Kind, state.Name)
+	s.order = append(s.order, key)
 	s.runtimes[key] = state
 	s.metrics[key] = MetricSnapshot{Name: state.Name, Kind: state.Kind}
 }
@@ -124,7 +127,11 @@ func (s *Service) runtimeNamesByKind(kind RuntimeKind) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := make([]string, 0)
-	for _, runtime := range s.runtimes {
+	for _, key := range s.order {
+		runtime, ok := s.runtimes[key]
+		if !ok {
+			continue
+		}
 		if runtime.Kind == kind {
 			result = append(result, runtime.Name)
 		}
@@ -174,7 +181,11 @@ func (s *Service) RuntimeStates() []RuntimeState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := make([]RuntimeState, 0, len(s.runtimes))
-	for _, runtime := range s.runtimes {
+	for _, key := range s.order {
+		runtime, ok := s.runtimes[key]
+		if !ok {
+			continue
+		}
 		result = append(result, cloneRuntimeState(runtime))
 	}
 	return result
@@ -185,7 +196,11 @@ func (s *Service) MetricSnapshots() []MetricSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := make([]MetricSnapshot, 0, len(s.metrics))
-	for _, metric := range s.metrics {
+	for _, key := range s.order {
+		metric, ok := s.metrics[key]
+		if !ok {
+			continue
+		}
 		result = append(result, metric)
 	}
 	return result

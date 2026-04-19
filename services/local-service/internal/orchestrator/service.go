@@ -256,6 +256,12 @@ func (s *Service) WithTraceEval(traceEvalService *traceeval.Service) *Service {
 // endpoints.
 func (s *Service) Snapshot() map[string]any {
 	pendingApprovals, pendingTotal := s.runEngine.PendingApprovalRequests(100, 0)
+	primaryWorker := ""
+	if s.plugin != nil {
+		if workers := s.plugin.Workers(); len(workers) > 0 {
+			primaryWorker = workers[0]
+		}
+	}
 	return map[string]any{
 		"context_source":          s.context.Snapshot()["source"],
 		"intent_state":            s.intent.Analyze("bootstrap"),
@@ -266,7 +272,7 @@ func (s *Service) Snapshot() map[string]any {
 		"risk_level":              s.risk.DefaultLevel(),
 		"model":                   s.model.Descriptor(),
 		"tool_count":              len(s.tools.Names()),
-		"primary_worker":          s.plugin.Workers()[0],
+		"primary_worker":          primaryWorker,
 		"pending_approvals":       pendingTotal,
 		"latest_approval_request": firstMapOrNil(pendingApprovals),
 	}

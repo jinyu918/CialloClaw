@@ -7,6 +7,12 @@ func TestServiceRuntimeLifecycleAndSnapshots(t *testing.T) {
 	if len(service.Workers()) != 3 || len(service.Sidecars()) != 1 {
 		t.Fatalf("expected declared workers and sidecars, got workers=%+v sidecars=%+v", service.Workers(), service.Sidecars())
 	}
+	if got := service.Workers(); got[0] != "playwright_worker" || got[1] != "ocr_worker" || got[2] != "media_worker" {
+		t.Fatalf("expected worker order to stay stable, got %+v", got)
+	}
+	if got := service.Sidecars(); got[0] != "playwright_sidecar" {
+		t.Fatalf("expected sidecar order to stay stable, got %+v", got)
+	}
 	if !service.HasSidecar("playwright_sidecar") {
 		t.Fatal("expected declared sidecar to be discoverable")
 	}
@@ -27,9 +33,20 @@ func TestServiceRuntimeLifecycleAndSnapshots(t *testing.T) {
 	if !ok || failedRuntime.Health != RuntimeHealthFailed || failedRuntime.LastError == "" {
 		t.Fatalf("expected sidecar failure state, got %+v ok=%v", failedRuntime, ok)
 	}
+	ocrRuntime, ok := service.RuntimeState(RuntimeKindWorker, "ocr_worker")
+	if !ok || ocrRuntime.Transport != "named_pipe" {
+		t.Fatalf("expected ocr worker transport to reflect named pipe runtime, got %+v ok=%v", ocrRuntime, ok)
+	}
+	mediaRuntime, ok := service.RuntimeState(RuntimeKindWorker, "media_worker")
+	if !ok || mediaRuntime.Transport != "named_pipe" {
+		t.Fatalf("expected media worker transport to reflect named pipe runtime, got %+v ok=%v", mediaRuntime, ok)
+	}
 	metrics := service.MetricSnapshots()
 	if len(metrics) == 0 {
 		t.Fatal("expected metric snapshots to be available")
+	}
+	if metrics[0].Name != "playwright_worker" || metrics[1].Name != "ocr_worker" || metrics[2].Name != "media_worker" {
+		t.Fatalf("expected metric snapshots to follow declaration order, got %+v", metrics)
 	}
 	events := service.RuntimeEvents()
 	if len(events) < 4 {
