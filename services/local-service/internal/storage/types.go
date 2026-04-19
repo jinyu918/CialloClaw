@@ -190,6 +190,23 @@ type SecretStore interface {
 	DeleteSecret(ctx context.Context, namespace, key string) error
 }
 
+// StrongholdProvider defines the formal Stronghold lifecycle boundary. The
+// backend can bind a real Stronghold runtime here while keeping SQLite as a
+// development fallback instead of pretending it is the formal secret source.
+type StrongholdProvider interface {
+	Open(ctx context.Context) (SecretStore, error)
+	Descriptor() StrongholdDescriptor
+}
+
+// StrongholdDescriptor exposes the current Stronghold lifecycle status without
+// leaking secrets into settings snapshots or normal task state payloads.
+type StrongholdDescriptor struct {
+	Backend     string
+	Available   bool
+	Fallback    bool
+	Initialized bool
+}
+
 // TaskStepSnapshot describes the storage snapshot for one task timeline entry.
 type TaskStepSnapshot struct {
 	StepID        string

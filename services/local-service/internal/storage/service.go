@@ -64,6 +64,7 @@ type Service struct {
 	traceStore               TraceStore
 	evalStore                EvalStore
 	secretStore              SecretStore
+	stronghold               StrongholdProvider
 	auditStore               AuditStore
 	recoveryPointStore       RecoveryPointStore
 	approvalRequestStore     ApprovalRequestStore
@@ -91,6 +92,7 @@ func NewService(adapter platform.StorageAdapter) *Service {
 	traceStore := TraceStore(newInMemoryTraceStore())
 	evalStore := EvalStore(newInMemoryEvalStore())
 	secretStore := SecretStore(newInMemorySecretStore())
+	strongholdProvider := StrongholdProvider(nil)
 	auditStore := AuditStore(newInMemoryAuditStore())
 	recoveryPointStore := RecoveryPointStore(newInMemoryRecoveryPointStore())
 	governanceState := &inMemoryGovernanceState{
@@ -198,12 +200,15 @@ func NewService(adapter platform.StorageAdapter) *Service {
 			}
 
 			if secretPath := strings.TrimSpace(adapter.SecretStorePath()); secretPath != "" {
-				sqliteSecretStore, err := NewSQLiteSecretStore(secretPath)
+				strongholdProvider = NewStrongholdSQLiteFallbackProvider(secretPath)
+				strongholdStore, err := strongholdProvider.Open(context.Background())
 				if err == nil {
-					secretStore = sqliteSecretStore
-					secretStoreName = memoryStoreBackendSQLite
+					secretStore = strongholdStore
+					secretStoreName = strongholdProvider.Descriptor().Backend
 				}
 				if err != nil {
+					secretStore = SecretStore(UnavailableSecretStore{})
+					secretStoreName = strongholdProvider.Descriptor().Backend
 					storeInitErrors = append(storeInitErrors, fmt.Errorf("initialize stronghold secret store: %w", err))
 					fallbackActive = true
 				}
@@ -262,6 +267,7 @@ func NewService(adapter platform.StorageAdapter) *Service {
 		traceStore:               traceStore,
 		evalStore:                evalStore,
 		secretStore:              secretStore,
+		stronghold:               strongholdProvider,
 		auditStore:               auditStore,
 		recoveryPointStore:       recoveryPointStore,
 		approvalRequestStore:     approvalRequestStore,
@@ -275,6 +281,11 @@ func NewService(adapter platform.StorageAdapter) *Service {
 		storeInitErr:             storeInitErr,
 		fallbackActive:           fallbackActive,
 	}
+}
+
+// Stronghold returns the configured formal secret backend lifecycle provider.
+func (s *Service) Stronghold() StrongholdProvider {
+	return s.stronghold
 }
 
 func initializeSQLiteTraceEvalStores(databasePath string) (TraceStore, EvalStore, error) {

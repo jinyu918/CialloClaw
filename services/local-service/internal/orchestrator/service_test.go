@@ -441,6 +441,21 @@ func mustNewStoredEngine(t *testing.T, taskStore storage.TaskRunStore) *runengin
 	return engine
 }
 
+type storageTestAdapter struct {
+	databasePath string
+}
+
+func (s storageTestAdapter) DatabasePath() string {
+	return s.databasePath
+}
+
+func (s storageTestAdapter) SecretStorePath() string {
+	if s.databasePath == "" {
+		return ""
+	}
+	return s.databasePath + ".stronghold"
+}
+
 func newTestService() *Service {
 	return NewService(
 		contextsvc.NewService(),
@@ -503,6 +518,14 @@ func replaceAuthorizationRecordStore(t *testing.T, service *storage.Service, sto
 
 	serviceValue := reflect.ValueOf(service).Elem()
 	field := serviceValue.FieldByName("authorizationRecordStore")
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
+}
+
+func replaceSecretStore(t *testing.T, service *storage.Service, store storage.SecretStore) {
+	t.Helper()
+
+	serviceValue := reflect.ValueOf(service).Elem()
+	field := serviceValue.FieldByName("secretStore")
 	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(store))
 }
 
@@ -5397,6 +5420,349 @@ func TestServiceSecuritySummaryIncludesRuntimeTokenUsage(t *testing.T) {
 	}
 }
 
+func TestServiceBudgetAutoDowngradeSwitchesWorkspaceDeliveryToBubble(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed downgrade output")
+	runtimeEvents := make([]map[string]any, 0)
+	unsubscribe := service.SubscribeRuntimeNotifications(func(taskID, method string, params map[string]any) {
+		runtimeEvents = append(runtimeEvents, map[string]any{
+			"task_id": taskID,
+			"method":  method,
+			"params":  cloneMap(params),
+		})
+	})
+	defer unsubscribe()
+
+	result, err := service.SubmitInput(map[string]any{
+		"session_id": "sess_budget_downgrade",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": strings.Repeat("long task content ", 20),
+		},
+		"options": map[string]any{
+			"confirm_required":   false,
+			"preferred_delivery": "workspace_document",
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit input failed: %v", err)
+	}
+	taskID := result["task"].(map[string]any)["task_id"].(string)
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected downgraded task to remain in runtime")
+	}
+	_, ok = service.runEngine.AppendAuditData(taskID, nil, map[string]any{"total_tokens": 96, "estimated_cost": 0.12})
+	if !ok {
+		t.Fatal("expected token usage update to succeed")
+	}
+	record, ok = service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected downgraded task to remain in runtime after token usage update")
+	}
+	updatedTask, bubble, deliveryResult, _, err := service.executeTask(record, snapshotFromTask(record), record.Intent)
+	if err != nil {
+		t.Fatalf("executeTask failed after token usage pressure: %v", err)
+	}
+	if bubble == nil || bubble["type"] != "result" {
+		t.Fatalf("expected downgraded execution to keep a result bubble, got %+v", bubble)
+	}
+
+	if deliveryResult["type"] != "bubble" {
+		t.Fatalf("expected budget downgrade to switch delivery to bubble, got %+v", deliveryResult)
+	}
+	record, ok = service.runEngine.GetTask(updatedTask.TaskID)
+	if !ok {
+		t.Fatal("expected downgraded task to remain in runtime")
+	}
+	if record.DeliveryResult["type"] != "bubble" {
+		t.Fatalf("expected runtime delivery result to use downgraded bubble delivery, got %+v", record.DeliveryResult)
+	}
+	notifications, ok := service.runEngine.PendingNotifications(taskID)
+	if !ok {
+		t.Fatalf("expected budget downgrade notifications to remain buffered")
+	}
+	foundDowngradeEvent := false
+	for _, notification := range notifications {
+		if notification.Method != "budget.downgrade.applied" {
+			continue
+		}
+		eventPayload := mapValue(mapValue(notification.Params, "event"), "payload")
+		if eventPayload["trigger_reason"] != "budget_pressure" {
+			t.Fatalf("expected budget downgrade payload to explain budget pressure, got %+v", notification.Params)
+		}
+		foundDowngradeEvent = true
+		break
+	}
+	if !foundDowngradeEvent {
+		t.Fatalf("expected one budget.downgrade.applied notification, got %+v", notifications)
+	}
+	foundLiveRuntimeEvent := false
+	for _, event := range runtimeEvents {
+		if event["method"] != "budget.downgrade.applied" {
+			continue
+		}
+		foundLiveRuntimeEvent = true
+		break
+	}
+	if !foundLiveRuntimeEvent {
+		t.Fatalf("expected live runtime subscribers to receive budget.downgrade.applied, got %+v", runtimeEvents)
+	}
+	if len(record.AuditRecords) == 0 || stringValue(record.AuditRecords[len(record.AuditRecords)-1], "action", "") != "budget_auto_downgrade.applied" {
+		t.Fatalf("expected budget downgrade audit record, got %+v", record.AuditRecords)
+	}
+	if record.SecuritySummary["budget_auto_downgrade_applied"] != true {
+		t.Fatalf("expected completed task security summary to retain downgrade marker, got %+v", record.SecuritySummary)
+	}
+	if record.SecuritySummary["budget_auto_downgrade_reason"] != "budget_pressure" {
+		t.Fatalf("expected completed task security summary to retain downgrade reason, got %+v", record.SecuritySummary)
+	}
+	if stringValue(mapValue(record.SecuritySummary, "budget_auto_downgrade_trace"), "trigger_reason", "") != "budget_pressure" {
+		t.Fatalf("expected completed task security summary to retain downgrade trace, got %+v", record.SecuritySummary)
+	}
+}
+
+func TestServiceBudgetAutoDowngradeProviderUnavailableDisablesExpensiveTools(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed provider unavailable")
+	if _, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider":              "unsupported_provider",
+			"budget_auto_downgrade": true,
+		},
+	}); err != nil {
+		t.Fatalf("settings update failed: %v", err)
+	}
+
+	task := runengine.TaskRecord{
+		TaskID:            "task_budget_provider_unavailable",
+		SessionID:         "sess_budget_provider_unavailable",
+		RunID:             "run_budget_provider_unavailable",
+		Title:             "provider unavailable task",
+		SourceType:        "hover_input",
+		Status:            "processing",
+		Intent:            map[string]any{"name": "summarize", "arguments": map[string]any{"style": "key_points"}},
+		PreferredDelivery: "workspace_document",
+		FallbackDelivery:  "bubble",
+		CurrentStep:       "generate_output",
+		RiskLevel:         "green",
+		StartedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	decision := service.evaluateBudgetAutoDowngrade(task, task.Intent)
+	if !decision.Applied || decision.TriggerReason != "provider_unavailable" {
+		t.Fatalf("expected provider unavailable downgrade decision, got %+v", decision)
+	}
+	updatedTask, updatedSnapshot, updatedIntent := service.applyBudgetAutoDowngrade(task, contextsvc.TaskContextSnapshot{Text: strings.Repeat("provider unavailable ", 20)}, task.Intent, decision)
+	if updatedTask.PreferredDelivery != "bubble" || updatedTask.FallbackDelivery != "bubble" {
+		t.Fatalf("expected provider unavailable downgrade to force bubble delivery, got task=%+v", updatedTask)
+	}
+	if mapValue(updatedIntent, "arguments")["disable_tool_calls"] != true {
+		t.Fatalf("expected provider unavailable downgrade to disable expensive tool calls, got %+v", updatedIntent)
+	}
+	if len(updatedSnapshot.Text) == 0 {
+		t.Fatalf("expected snapshot text to survive downgrade mutation, got %+v", updatedSnapshot)
+	}
+}
+
+func TestServiceBudgetAutoDowngradeDisabledKeepsWorkspaceDelivery(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed no downgrade")
+	if _, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"budget_auto_downgrade": false,
+		},
+	}); err != nil {
+		t.Fatalf("settings update failed: %v", err)
+	}
+
+	result, err := service.SubmitInput(map[string]any{
+		"session_id": "sess_budget_disabled",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": strings.Repeat("long task content ", 20),
+		},
+		"options": map[string]any{
+			"confirm_required":   false,
+			"preferred_delivery": "workspace_document",
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit input failed: %v", err)
+	}
+	deliveryResult := result["delivery_result"].(map[string]any)
+	if deliveryResult["type"] != "workspace_document" {
+		t.Fatalf("expected disabled budget downgrade to preserve workspace_document delivery, got %+v", deliveryResult)
+	}
+}
+
+func TestServiceBudgetAutoDowngradeUsesFailurePressureSignal(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed failure pressure")
+	task := runengine.TaskRecord{
+		TaskID:            "task_budget_failure_pressure",
+		SessionID:         "sess_budget_failure_pressure",
+		RunID:             "run_budget_failure_pressure",
+		Title:             "failure pressure task",
+		SourceType:        "hover_input",
+		Status:            "processing",
+		Intent:            map[string]any{"name": "summarize", "arguments": map[string]any{"style": "key_points"}},
+		PreferredDelivery: "workspace_document",
+		FallbackDelivery:  "bubble",
+		CurrentStep:       "generate_output",
+		RiskLevel:         "green",
+		StartedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+		AuditRecords: []map[string]any{{
+			"category": "budget_auto_downgrade",
+			"action":   "budget_auto_downgrade.failure_signal",
+			"result":   "failed",
+			"reason":   model.ErrClientNotConfigured.Error(),
+		}, {
+			"category": "budget_auto_downgrade",
+			"action":   "budget_auto_downgrade.failure_signal",
+			"result":   "failed",
+			"reason":   model.ErrModelProviderUnsupported.Error(),
+		}},
+	}
+	decision := service.evaluateBudgetAutoDowngrade(task, task.Intent)
+	if !decision.Applied || decision.TriggerReason != "failure_pressure" {
+		t.Fatalf("expected failure pressure downgrade decision, got %+v", decision)
+	}
+	if !containsString(decision.DegradeActions, "skip_expensive_tools") {
+		t.Fatalf("expected failure pressure decision to disable expensive tools, got %+v", decision)
+	}
+	if decision.Trace == nil || decision.Trace["failure_signal_window"] != 2 {
+		t.Fatalf("expected failure pressure trace to expose configured policy window, got %+v", decision.Trace)
+	}
+}
+
+func TestServiceFailExecutionTaskAppendsBudgetFailureSignal(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed failure signal")
+	task := service.runEngine.CreateTask(runengine.CreateTaskInput{
+		SessionID:   "sess_budget_failure_audit",
+		Title:       "failure signal task",
+		SourceType:  "hover_input",
+		Status:      "processing",
+		Intent:      map[string]any{"name": "summarize", "arguments": map[string]any{}},
+		CurrentStep: "generate_output",
+		RiskLevel:   "green",
+		Snapshot: contextsvc.TaskContextSnapshot{
+			Text:      "provider failure should leave budget signal",
+			InputType: "text",
+			Trigger:   "hover_text_input",
+		},
+	})
+	updatedTask, bubble := service.failExecutionTask(task, task.Intent, execution.Result{}, model.ErrClientNotConfigured)
+	if bubble == nil {
+		t.Fatal("expected failure bubble")
+	}
+	foundBudgetFailure := false
+	for _, record := range updatedTask.AuditRecords {
+		if stringValue(record, "category", "") != "budget_auto_downgrade" {
+			continue
+		}
+		if stringValue(record, "result", "") != "failed" {
+			continue
+		}
+		foundBudgetFailure = true
+		break
+	}
+	if !foundBudgetFailure {
+		t.Fatalf("expected failExecutionTask to append budget failure signal, got %+v", updatedTask.AuditRecords)
+	}
+}
+
+func TestServiceBudgetFallbackSuccessStillAppendsFailureSignal(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed fallback success signal")
+	result, err := service.SubmitInput(map[string]any{
+		"session_id": "sess_budget_fallback_signal",
+		"source":     "floating_ball",
+		"trigger":    "hover_text_input",
+		"input": map[string]any{
+			"type": "text",
+			"text": strings.Repeat("fallback signal content ", 12),
+		},
+		"options": map[string]any{
+			"confirm_required": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit input failed: %v", err)
+	}
+	taskID := result["task"].(map[string]any)["task_id"].(string)
+	mutateRuntimeTask(t, service.runEngine, taskID, func(record *runengine.TaskRecord) {
+		record.AuditRecords = append(record.AuditRecords, map[string]any{
+			"category": "budget_auto_downgrade",
+			"action":   "budget_auto_downgrade.failure_signal",
+			"result":   "failed",
+			"reason":   model.ErrClientNotConfigured.Error(),
+		})
+	})
+	record, ok := service.runEngine.GetTask(taskID)
+	if !ok {
+		t.Fatal("expected task to remain in runtime after fallback success")
+	}
+	foundBudgetFailure := false
+	for _, auditRecord := range record.AuditRecords {
+		if stringValue(auditRecord, "action", "") != "budget_auto_downgrade.failure_signal" {
+			continue
+		}
+		foundBudgetFailure = true
+		break
+	}
+	if !foundBudgetFailure {
+		t.Fatalf("expected fallback success path to retain budget failure signal, got %+v", record.AuditRecords)
+	}
+}
+
+func TestServiceBudgetAutoDowngradeUsesConfiguredPolicyThresholds(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "executor-backed configured thresholds")
+	_, _, _, needRestart := service.runEngine.UpdateSettings(map[string]any{
+		"data_log": map[string]any{
+			"budget_auto_downgrade": true,
+			"budget_policy": map[string]any{
+				"failure_signal_window":     3,
+				"token_pressure_threshold":  120,
+				"cost_pressure_threshold":   0.20,
+				"planner_retry_budget":      2,
+				"expensive_tool_categories": []any{"command", "browser_mutation", "media_heavy"},
+			},
+		},
+	})
+	if needRestart {
+		t.Fatal("expected nested budget policy update to remain immediate")
+	}
+	task := runengine.TaskRecord{
+		TaskID:            "task_budget_policy_thresholds",
+		SessionID:         "sess_budget_policy_thresholds",
+		RunID:             "run_budget_policy_thresholds",
+		Title:             "configured thresholds task",
+		SourceType:        "hover_input",
+		Status:            "processing",
+		Intent:            map[string]any{"name": "summarize", "arguments": map[string]any{"style": "key_points"}},
+		PreferredDelivery: "workspace_document",
+		FallbackDelivery:  "bubble",
+		CurrentStep:       "generate_output",
+		RiskLevel:         "green",
+		StartedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+		TokenUsage: map[string]any{
+			"total_tokens":   96,
+			"estimated_cost": 0.08,
+		},
+	}
+	decision := service.evaluateBudgetAutoDowngrade(task, task.Intent)
+	if decision.Applied {
+		t.Fatalf("expected configured thresholds to suppress downgrade below custom limits, got %+v", decision)
+	}
+	task.TokenUsage["total_tokens"] = 140
+	decision = service.evaluateBudgetAutoDowngrade(task, task.Intent)
+	if !decision.Applied || decision.Trace == nil || decision.Trace["planner_retry_budget"] != 2 || decision.Trace["failure_signal_window"] != 3 {
+		t.Fatalf("expected configured thresholds and trace metadata to be respected, got %+v", decision)
+	}
+}
+
 func TestServiceSecuritySummaryFallsBackToStoredRecoveryPoint(t *testing.T) {
 	service, _ := newTestServiceWithExecution(t, "executor-backed summary")
 	if service.storage == nil {
@@ -7354,6 +7720,10 @@ func TestSettingsGetIncludesSecretConfigurationAvailability(t *testing.T) {
 	if dataLog["provider_api_key_configured"] != false {
 		t.Fatalf("expected unset provider key flag, got %+v", dataLog)
 	}
+	stronghold := dataLog["stronghold"].(map[string]any)
+	if stronghold["backend"] == "" || stronghold["available"] != true {
+		t.Fatalf("expected stronghold status metadata, got %+v", stronghold)
+	}
 	if err := service.storage.SecretStore().PutSecret(context.Background(), storage.SecretRecord{
 		Namespace: "model",
 		Key:       service.model.Provider() + "_api_key",
@@ -7416,6 +7786,9 @@ func TestSettingsUpdatePersistsSecretOutsideRegularSettings(t *testing.T) {
 	if dataLog["provider_api_key_configured"] != true {
 		t.Fatalf("expected configured flag in settings response, got %+v", dataLog)
 	}
+	if _, exists := dataLog["stronghold"]; !exists {
+		t.Fatalf("expected stronghold status in settings response, got %+v", dataLog)
+	}
 }
 
 func TestSettingsUpdatePersistsSecretForRequestedProvider(t *testing.T) {
@@ -7451,6 +7824,68 @@ func TestSettingsUpdatePersistsSecretForRequestedProvider(t *testing.T) {
 	dataLog := result["settings"].(map[string]any)["data_log"].(map[string]any)
 	if dataLog["provider"] != "anthropic" || dataLog["provider_api_key_configured"] != true {
 		t.Fatalf("expected settings get to reflect anthropic provider secret, got %+v", dataLog)
+	}
+}
+
+func TestSettingsUpdateDeletesProviderSecretWithoutLeakingValue(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings delete secret")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	if err := service.storage.SecretStore().PutSecret(context.Background(), storage.SecretRecord{
+		Namespace: "model",
+		Key:       service.model.Provider() + "_api_key",
+		Value:     "secret-key",
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("seed secret store failed: %v", err)
+	}
+	result, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider":       "openai",
+			"delete_api_key": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("settings update delete failed: %v", err)
+	}
+	_, err = service.storage.SecretStore().GetSecret(context.Background(), "model", service.model.Provider()+"_api_key")
+	if !errors.Is(err, storage.ErrSecretNotFound) {
+		t.Fatalf("expected secret to be deleted, got %v", err)
+	}
+	dataLog := result["effective_settings"].(map[string]any)["data_log"].(map[string]any)
+	if _, exists := dataLog["api_key"]; exists {
+		t.Fatalf("expected settings delete response to stay redacted, got %+v", dataLog)
+	}
+	if dataLog["provider_api_key_configured"] != false {
+		t.Fatalf("expected delete to clear configured flag, got %+v", dataLog)
+	}
+}
+
+func TestSettingsUpdateReturnsStrongholdErrorWhenStoreUnavailable(t *testing.T) {
+	service, _ := newTestServiceWithExecution(t, "settings stronghold unavailable")
+	if service.storage == nil {
+		t.Fatal("expected storage service to be wired")
+	}
+	originalStorage := service.storage
+	defer func() {
+		if service.storage != nil {
+			_ = service.storage.Close()
+		}
+	}()
+	if err := originalStorage.Close(); err != nil {
+		t.Fatalf("close original storage failed: %v", err)
+	}
+	service.storage = storage.NewService(nil)
+	replaceSecretStore(t, service.storage, storage.UnavailableSecretStore{})
+	_, err := service.SettingsUpdate(map[string]any{
+		"data_log": map[string]any{
+			"provider": "openai",
+			"api_key":  "secret-key",
+		},
+	})
+	if !errors.Is(err, ErrStrongholdAccessFailed) {
+		t.Fatalf("expected ErrStrongholdAccessFailed, got %v", err)
 	}
 }
 

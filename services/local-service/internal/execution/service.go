@@ -109,6 +109,7 @@ type Request struct {
 	ApprovalGranted      bool
 	ApprovedOperation    string
 	ApprovedTargetObject string
+	BudgetDowngrade      map[string]any
 }
 
 // Result 描述执行完成后需要回填给 orchestrator 的交付与痕迹。
@@ -121,6 +122,7 @@ type Result struct {
 	ModelInvocation map[string]any
 	AuditRecord     map[string]any
 	ToolCalls       []tools.ToolCallRecord
+	BudgetFailure   map[string]any
 	ToolName        string
 	ToolInput       map[string]any
 	ToolOutput      map[string]any
@@ -148,6 +150,7 @@ type generationTrace struct {
 	ModelInvocation  map[string]any
 	AuditRecord      map[string]any
 	GenerationOutput map[string]any
+	BudgetFailure    map[string]any
 }
 
 // NewService 创建执行服务。
@@ -307,6 +310,7 @@ func (s *Service) Execute(ctx context.Context, request Request) (Result, error) 
 		ModelInvocation: cloneMap(trace.ModelInvocation),
 		AuditRecord:     cloneMap(trace.AuditRecord),
 		ToolCalls:       append([]tools.ToolCallRecord(nil), trace.ToolCalls...),
+		BudgetFailure:   cloneMap(trace.BudgetFailure),
 		ToolInput: map[string]any{
 			"intent_name":     effectiveIntentName(request.Intent),
 			"delivery_type":   deliveryType,
@@ -636,6 +640,9 @@ func (s *Service) executeDirectBuiltinTool(ctx context.Context, request Request)
 	if intentName == "" || intentName == "write_file" {
 		return Result{}, false, nil
 	}
+	if budgetDowngradeDisallowsDirectTool(request, intentName) {
+		return Result{}, false, nil
+	}
 	if s.executor == nil || s.tools == nil {
 		return Result{}, false, nil
 	}
@@ -757,6 +764,9 @@ func (s *Service) resolveToolExecution(request Request, deliveryResult map[strin
 	}
 
 	if s.tools == nil || intentName == "" {
+		return "", nil, false
+	}
+	if budgetDowngradeDisallowsDirectTool(request, intentName) {
 		return "", nil, false
 	}
 	if _, err := s.tools.Get(intentName); err != nil {
@@ -1335,23 +1345,57 @@ func (s *Service) fileSection(filePath string) string {
 
 func (s *Service) generateOutput(ctx context.Context, request Request, inputText string) (generationTrace, error) {
 	if trace, ok, err := s.generateOutputWithAgentLoop(ctx, request, inputText); err != nil {
+		if fallbackTrace, fallbackOK := budgetDowngradeGenerationFallback(request, inputText, err); fallbackOK {
+			fallbackTrace.BudgetFailure = budgetFailureSignal(request, err)
+			return fallbackTrace, nil
+		}
 		return generationTrace{}, err
 	} else if ok {
 		return trace, nil
 	}
 
-	return s.generateOutputWithPrompt(ctx, request, inputText)
+	trace, err := s.generateOutputWithPrompt(ctx, request, inputText)
+	if err != nil {
+		if fallbackTrace, fallbackOK := budgetDowngradeGenerationFallback(request, inputText, err); fallbackOK {
+			fallbackTrace.BudgetFailure = budgetFailureSignal(request, err)
+			return fallbackTrace, nil
+		}
+		return generationTrace{}, err
+	}
+	return trace, nil
 }
 
 func (s *Service) generateOutputWithPrompt(ctx context.Context, request Request, inputText string) (generationTrace, error) {
 	prompt := buildPrompt(request, inputText)
+	fallbackText := fallbackOutput(request, inputText)
+	if boolValue(request.BudgetDowngrade, "applied") {
+		fallbackText = budgetDowngradeFallbackText(request, inputText)
+	}
 	toolResult, _, err := s.executeTool(ctx, request, s.workspace, "generate_text", map[string]any{
 		"prompt":        prompt,
-		"fallback_text": fallbackOutput(request, inputText),
+		"fallback_text": fallbackText,
 		"intent_name":   effectiveIntentName(request.Intent),
 	})
 	if err != nil {
 		return generationTrace{}, fmt.Errorf("generate text: %w", err)
+	}
+	if boolValue(toolResult.RawOutput, "fallback") && boolValue(request.BudgetDowngrade, "applied") {
+		auditRecord := mapValue(toolResult.RawOutput, "audit_record")
+		failureReason := stringValue(toolResult.RawOutput, "fallback_reason", model.ErrClientNotConfigured.Error())
+		return generationTrace{
+			OutputText: budgetDowngradeFallbackText(request, inputText),
+			ToolCalls:  []tools.ToolCallRecord{toolResult.ToolCall},
+			ModelInvocation: map[string]any{
+				"provider":   "budget_downgrade_fallback",
+				"model_id":   "lightweight_delivery",
+				"request_id": fmt.Sprintf("budget_fallback_%s", request.TaskID),
+				"fallback":   true,
+				"reason":     stringValue(request.BudgetDowngrade, "trigger_reason", "execution_fallback"),
+			},
+			AuditRecord:      cloneMap(auditRecord),
+			GenerationOutput: cloneMap(toolResult.RawOutput),
+			BudgetFailure:    budgetFailureSignal(request, errors.New(failureReason)),
+		}, nil
 	}
 
 	outputText, ok := toolResult.RawOutput["content"].(string)
@@ -1399,7 +1443,9 @@ func (s *Service) generateOutputWithAgentLoop(ctx context.Context, request Reque
 		ResultTitle:     request.ResultTitle,
 		FallbackOutput:  fallbackOutput(request, inputText),
 		ToolDefinitions: s.agentLoopToolDefinitions(),
-		AllowedTool:     s.isAllowedAgentLoopTool,
+		AllowedTool: func(name string) bool {
+			return s.isAllowedAgentLoopTool(name) && !budgetDowngradeDisallowsDirectTool(request, name)
+		},
 		PollSteering: func(_ context.Context, taskID string) []string {
 			if s.steeringPoller == nil {
 				return nil
@@ -1418,7 +1464,7 @@ func (s *Service) generateOutputWithAgentLoop(ctx context.Context, request Reque
 		CompressChars:      s.agentLoopCompressionChars(),
 		KeepRecent:         s.agentLoopKeepRecent(),
 		RepeatedToolBudget: 2,
-		PlannerRetryBudget: s.agentLoopPlannerRetryBudget(),
+		PlannerRetryBudget: budgetPlannerRetryBudget(request, s.agentLoopPlannerRetryBudget()),
 		ToolRetryBudget:    s.agentLoopToolRetryBudget(),
 		Hook:               noopAgentLoopHook{},
 		EmitEvent: func(event agentloop.LifecycleEvent) {
@@ -1506,6 +1552,142 @@ func invocationRecordMap(record *model.InvocationRecord) map[string]any {
 		return nil
 	}
 	return record.Map()
+}
+
+func budgetDowngradeDisablesToolCalls(request Request) bool {
+	return boolValue(request.BudgetDowngrade, "applied") && containsExecutionString(stringSliceValue(request.BudgetDowngrade, "degrade_actions"), "skip_expensive_tools") && budgetDowngradeBlocksAgentLoopTools(request)
+}
+
+func budgetDowngradeBlocksAgentLoopTools(request Request) bool {
+	for _, category := range budgetExpensiveToolCategories(request) {
+		switch category {
+		case "filesystem_mutation", "browser_mutation", "command", "media_heavy":
+			return true
+		}
+	}
+	return false
+}
+
+func budgetDowngradeDisallowsDirectTool(request Request, toolName string) bool {
+	if !budgetDowngradeDisablesToolCalls(request) {
+		return false
+	}
+	category := budgetToolCategory(toolName)
+	if category == "" {
+		return false
+	}
+	return containsExecutionString(budgetExpensiveToolCategories(request), category)
+}
+
+func budgetPlannerRetryBudget(request Request, fallback int) int {
+	if fallback <= 0 {
+		fallback = 1
+	}
+	trace := mapValue(request.BudgetDowngrade, "trace")
+	override := intValue(trace, "planner_retry_budget")
+	if override <= 0 {
+		return fallback
+	}
+	if override < fallback {
+		return override
+	}
+	return fallback
+}
+
+func budgetExpensiveToolCategories(request Request) []string {
+	trace := mapValue(request.BudgetDowngrade, "trace")
+	if categories := stringSliceValue(trace, "expensive_tool_categories"); len(categories) > 0 {
+		return categories
+	}
+	return []string{"command", "browser_mutation", "media_heavy"}
+}
+
+func budgetToolCategory(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "exec_command":
+		return "command"
+	case "write_file":
+		return "filesystem_mutation"
+	case "page_interact":
+		return "browser_mutation"
+	case "transcode_media", "normalize_recording", "extract_frames":
+		return "media_heavy"
+	default:
+		return ""
+	}
+}
+
+func budgetDowngradeGenerationFallback(request Request, inputText string, generationErr error) (generationTrace, bool) {
+	if !boolValue(request.BudgetDowngrade, "applied") {
+		return generationTrace{}, false
+	}
+	summary := firstNonEmpty(stringValue(request.BudgetDowngrade, "summary", ""), "Budget downgrade fallback applied.")
+	triggerReason := stringValue(request.BudgetDowngrade, "trigger_reason", "execution_fallback")
+	fallbackText := fallbackOutput(request, inputText)
+	output := strings.TrimSpace(summary + "\n\n" + fallbackText)
+	return generationTrace{
+		OutputText: output,
+		ModelInvocation: map[string]any{
+			"provider":   "budget_downgrade_fallback",
+			"model_id":   "lightweight_delivery",
+			"request_id": fmt.Sprintf("budget_fallback_%s", request.TaskID),
+			"fallback":   true,
+			"reason":     triggerReason,
+		},
+		GenerationOutput: map[string]any{
+			"content":  output,
+			"fallback": true,
+			"reason":   triggerReason,
+		},
+	}, true
+}
+
+func budgetFailureSignal(request Request, generationErr error) map[string]any {
+	if !boolValue(request.BudgetDowngrade, "applied") || generationErr == nil {
+		return nil
+	}
+	reason := strings.TrimSpace(generationErr.Error())
+	if !errors.Is(generationErr, model.ErrClientNotConfigured) && !errors.Is(generationErr, model.ErrToolCallingNotSupported) && !errors.Is(generationErr, model.ErrModelProviderUnsupported) && !errors.Is(generationErr, model.ErrSecretNotFound) && !errors.Is(generationErr, model.ErrSecretSourceFailed) && !isBudgetFailureReason(reason) {
+		return nil
+	}
+	return map[string]any{
+		"category": "budget_auto_downgrade",
+		"action":   "budget_auto_downgrade.failure_signal",
+		"result":   "failed",
+		"reason":   normalizeBudgetFailureReason(reason),
+	}
+}
+
+func isBudgetFailureReason(reason string) bool {
+	trimmed := strings.TrimSpace(reason)
+	switch trimmed {
+	case model.ErrClientNotConfigured.Error(), model.ErrToolCallingNotSupported.Error(), model.ErrModelProviderUnsupported.Error(), model.ErrSecretNotFound.Error(), model.ErrSecretSourceFailed.Error():
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeBudgetFailureReason(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return "execution fallback"
+	}
+	return trimmed
+}
+
+func budgetDowngradeFallbackText(request Request, inputText string) string {
+	summary := firstNonEmpty(stringValue(request.BudgetDowngrade, "summary", ""), "Budget downgrade fallback applied.")
+	return strings.TrimSpace(summary + "\n\n" + fallbackOutput(request, inputText))
+}
+
+func containsExecutionString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func buildPrompt(request Request, inputText string) string {
@@ -2355,6 +2537,9 @@ func (s *Service) resolveGovernanceToolExecution(request Request) (string, map[s
 	)
 	if s.tools != nil && intentName != "" && intentName != "write_file" {
 		if _, err := s.tools.Get(intentName); err == nil {
+			if budgetDowngradeDisallowsDirectTool(request, intentName) {
+				return "", nil, nil, false, nil
+			}
 			switch intentName {
 			case "read_file":
 				pathValue := stringValue(args, "path", stringValue(args, "target_path", ""))

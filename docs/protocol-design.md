@@ -3136,6 +3136,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | `data.settings.memory`          | 记忆设置         |
 | `data.settings.task_automation` | 任务与自动化设置 |
 | `data.settings.data_log`        | 数据与日志设置（包含脱敏机密状态） |
+| `data.settings.data_log.provider_api_key_configured` | 当前 provider 的 API Key 是否已配置（脱敏状态） |
+| `data.settings.data_log.stronghold` | Stronghold 生命周期状态（只返回 backend/available/fallback/initialized/formal_store，不返回 secret） |
 
 ### agent.settings.get 出参示例
 
@@ -3191,7 +3193,14 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
         "data_log": {
           "provider": "openai",
           "budget_auto_downgrade": true,
-          "provider_api_key_configured": true
+          "provider_api_key_configured": true,
+          "stronghold": {
+            "backend": "stronghold_sqlite_fallback",
+            "available": true,
+            "fallback": true,
+            "initialized": true,
+            "formal_store": false
+          }
         }
       }
     },
@@ -3221,7 +3230,7 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | `task_automation` | 任务自动化设置变更 |
 | `general`         | 通用设置变更       |
 | `floating_ball`   | 悬浮球设置变更     |
-| `data_log`        | 数据与日志设置变更；允许携带临时写入 Stronghold 的 `api_key` |
+| `data_log`        | 数据与日志设置变更；允许携带临时写入 Stronghold 的 `api_key`，也允许用 `delete_api_key=true` 删除当前 provider secret |
 
 ### agent.settings.update 入参示例
 
@@ -3263,6 +3272,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
 | `data.effective_settings` | 生效后的设置   |
 | `data.apply_mode`         | 生效方式       |
 | `data.need_restart`       | 是否需要重启   |
+| `data.effective_settings.data_log.provider_api_key_configured` | 当前 provider secret 是否已配置（脱敏状态） |
+| `data.effective_settings.data_log.stronghold` | Stronghold 生命周期状态（脱敏） |
 
 ### agent.settings.update 出参示例
 
@@ -3293,7 +3304,14 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
         "data_log": {
           "provider": "openai",
           "budget_auto_downgrade": true,
-          "provider_api_key_configured": true
+          "provider_api_key_configured": true,
+          "stronghold": {
+            "backend": "stronghold_sqlite_fallback",
+            "available": true,
+            "fallback": true,
+            "initialized": true,
+            "formal_store": false
+          }
         }
       },
       "apply_mode": "immediate",
