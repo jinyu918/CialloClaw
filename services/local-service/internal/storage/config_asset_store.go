@@ -181,6 +181,9 @@ func (s *SQLiteSkillManifestStore) Close() error {
 }
 
 func (s *SQLiteSkillManifestStore) initialize(ctx context.Context) error {
+	if err := configureConfigAssetSQLiteDatabase(ctx, s.db); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS skill_manifests (skill_manifest_id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, source TEXT NOT NULL, summary TEXT NOT NULL, manifest_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("create skill_manifests table: %w", err)
 	}
@@ -231,6 +234,9 @@ func (s *SQLiteBlueprintDefinitionStore) Close() error {
 }
 
 func (s *SQLiteBlueprintDefinitionStore) initialize(ctx context.Context) error {
+	if err := configureConfigAssetSQLiteDatabase(ctx, s.db); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS blueprint_definitions (blueprint_definition_id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, source TEXT NOT NULL, summary TEXT NOT NULL, definition_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("create blueprint_definitions table: %w", err)
 	}
@@ -281,8 +287,25 @@ func (s *SQLitePromptTemplateVersionStore) Close() error {
 }
 
 func (s *SQLitePromptTemplateVersionStore) initialize(ctx context.Context) error {
+	if err := configureConfigAssetSQLiteDatabase(ctx, s.db); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS prompt_template_versions (prompt_template_version_id TEXT PRIMARY KEY, template_name TEXT NOT NULL, version TEXT NOT NULL, source TEXT NOT NULL, summary TEXT NOT NULL, template_body TEXT NOT NULL, variables_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("create prompt_template_versions table: %w", err)
+	}
+	return nil
+}
+
+// configureConfigAssetSQLiteDatabase aligns config-asset stores with the same
+// busy-timeout and WAL behavior used by the rest of the SQLite storage layer so
+// future concurrent reads/writes do not fail immediately with locked database
+// errors.
+func configureConfigAssetSQLiteDatabase(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode=WAL;`); err != nil {
+		return fmt.Errorf("enable sqlite wal mode: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout=5000;`); err != nil {
+		return fmt.Errorf("set sqlite busy timeout: %w", err)
 	}
 	return nil
 }

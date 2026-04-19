@@ -97,4 +97,38 @@ func TestSQLiteConfigAssetStoresPersistRecords(t *testing.T) {
 	if err != nil || promptTotal != 1 || len(promptItems) != 1 {
 		t.Fatalf("unexpected sqlite prompt listing: total=%d items=%+v err=%v", promptTotal, promptItems, err)
 	}
+	assertSQLiteConfigAssetPragmas(t, skillStore.db)
+	assertSQLiteConfigAssetPragmas(t, blueprintStore.db)
+	assertSQLiteConfigAssetPragmas(t, promptStore.db)
+}
+
+func TestConfigureConfigAssetSQLiteDatabaseSetsBusyTimeoutAndWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config-asset-pragmas.db")
+	db, err := openSQLiteDatabase(path)
+	if err != nil {
+		t.Fatalf("open sqlite database failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := configureConfigAssetSQLiteDatabase(context.Background(), db); err != nil {
+		t.Fatalf("configure sqlite config asset pragmas failed: %v", err)
+	}
+	assertSQLiteConfigAssetPragmas(t, db)
+}
+
+func assertSQLiteConfigAssetPragmas(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode;`).Scan(&journalMode); err != nil {
+		t.Fatalf("read journal_mode pragma failed: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("expected journal_mode=wal, got %s", journalMode)
+	}
+	var busyTimeout int
+	if err := db.QueryRow(`PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("read busy_timeout pragma failed: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("expected busy_timeout=5000, got %d", busyTimeout)
+	}
 }
