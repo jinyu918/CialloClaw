@@ -72,8 +72,6 @@
 
 说明：这一层保存执行前的配置资产、版本和来源，方便审计和回放。
 
-当前 owner-5 的实现只补后端最小预留：`skill_manifests / blueprint_definitions / prompt_template_versions` 的正式存储边界与版本对象已进入 storage 层，但仍不提前扩展社区 skill 安装、多 provider 模型路由或 blueprint 产品流。
-
 ### 3.4 Trace / Eval 结果层
 
 用于存储：
