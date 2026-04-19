@@ -200,9 +200,52 @@ func TestRunStopsPlannerRetriesForNonRetryableErrors(t *testing.T) {
 	}
 }
 
+func TestRunRetriesPlannerForRateLimitAndProviderFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "rate_limit", err: &model.OpenAIHTTPStatusError{StatusCode: 429, Message: "rate limited"}},
+		{name: "provider_5xx", err: &model.OpenAIHTTPStatusError{StatusCode: 503, Message: "service unavailable"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := NewRuntime()
+			request := testRuntimeRequest()
+			request.PlannerRetryBudget = 2
+			attempts := 0
+			request.ToolDefinitions = []model.ToolDefinition{{Name: "read_file"}}
+			request.AllowedTool = func(string) bool { return true }
+			request.ExecuteTool = func(context.Context, model.ToolInvocation, int) (string, tools.ToolCallRecord) {
+				return "unused", tools.ToolCallRecord{ToolName: "read_file", Status: tools.ToolCallStatusSucceeded}
+			}
+			request.GenerateToolCalls = func(_ context.Context, _ model.ToolCallRequest) (model.ToolCallResult, error) {
+				attempts++
+				return model.ToolCallResult{}, test.err
+			}
+
+			result, handled, err := runtime.Run(context.Background(), request)
+			if err == nil {
+				t.Fatalf("expected planner error to be returned, got result=%+v handled=%v", result, handled)
+			}
+			if !handled {
+				t.Fatal("expected request to be handled")
+			}
+			if attempts != 3 {
+				t.Fatalf("expected retryable planner error to use full retry budget, got %d attempts", attempts)
+			}
+			if countEventType(result.Events, "loop.retrying") != 2 {
+				t.Fatalf("expected retry events for retryable planner error, got %+v", result.Events)
+			}
+		})
+	}
+}
+
 func TestRunRetriesTimedOutToolUpToConfiguredBudget(t *testing.T) {
 	runtime := NewRuntime()
 	request := testRuntimeRequest()
+	request.MaxTurns = 1
 	request.ToolRetryBudget = 2
 	request.GenerateToolCalls = func(_ context.Context, _ model.ToolCallRequest) (model.ToolCallResult, error) {
 		return model.ToolCallResult{
@@ -247,6 +290,59 @@ func TestRunRetriesTimedOutToolUpToConfiguredBudget(t *testing.T) {
 	}
 	if result.OutputText != request.FallbackOutput {
 		t.Fatalf("expected fallback output after timeout exhaustion, got %+v", result)
+	}
+}
+
+func TestRunDoesNotRetryNonTimeoutToolFailures(t *testing.T) {
+	runtime := NewRuntime()
+	request := testRuntimeRequest()
+	request.MaxTurns = 1
+	request.ToolRetryBudget = 2
+	request.GenerateToolCalls = func(_ context.Context, _ model.ToolCallRequest) (model.ToolCallResult, error) {
+		return model.ToolCallResult{
+			RequestID: "req_tool_failure",
+			Provider:  "openai_responses",
+			ModelID:   "gpt-5.4",
+			ToolCalls: []model.ToolInvocation{{Name: "read_file", Arguments: map[string]any{"path": "notes/fail.txt"}}},
+		}, nil
+	}
+	attempts := 0
+	executionCode := tools.ToolErrorCodeExecutionFailed
+	request.ExecuteTool = func(_ context.Context, call model.ToolInvocation, round int) (string, tools.ToolCallRecord) {
+		attempts++
+		return "tool failed", tools.ToolCallRecord{
+			ToolCallID: "tool_call_failed",
+			TaskID:     request.TaskID,
+			RunID:      request.RunID,
+			StepID:     "step_loop_failed",
+			ToolName:   call.Name,
+			Status:     tools.ToolCallStatusFailed,
+			ErrorCode:  &executionCode,
+			Output:     map[string]any{"loop_round": round, "attempt": attempts},
+		}
+	}
+
+	result, handled, err := runtime.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected request to be handled")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected non-timeout tool failure to avoid in-round retries, got %d attempts", attempts)
+	}
+	if countEventType(result.Events, "loop.retrying") != 0 {
+		t.Fatalf("expected no retry event for non-timeout tool failure, got %+v", result.Events)
+	}
+	if len(result.Rounds) != 1 || result.Rounds[0].LoopRound != 1 {
+		t.Fatalf("expected one persisted round snapshot, got %+v", result.Rounds)
+	}
+	if result.Rounds[0].ToolCallRecord.Status != tools.ToolCallStatusFailed {
+		t.Fatalf("expected failed tool record to remain in round history, got %+v", result.Rounds[0])
+	}
+	if result.StopReason != StopReasonMaxIterations {
+		t.Fatalf("expected single-round failure path to end with max_iterations_reached, got %+v", result.StopReason)
 	}
 }
 
@@ -343,6 +439,35 @@ func TestToolRetryReasonOnlyRetriesTimeouts(t *testing.T) {
 				t.Fatalf("shouldRetryToolRecord() = %v, want %v", got, test.wantRetry)
 			}
 		})
+	}
+}
+
+func TestCompactHistoryKeepsRecentItemsWhenThresholdExceeded(t *testing.T) {
+	history := []string{
+		"first observation with alpha alpha alpha alpha",
+		"second observation with beta beta beta beta",
+		"third observation with gamma gamma gamma gamma",
+	}
+	compacted := compactHistory(history, 60, 1)
+	if len(compacted) != 2 {
+		t.Fatalf("expected summary plus one recent item, got %+v", compacted)
+	}
+	if !strings.Contains(compacted[0], "Compressed earlier observations") {
+		t.Fatalf("expected compacted head summary, got %+v", compacted)
+	}
+	if compacted[1] != history[2] {
+		t.Fatalf("expected most recent history item to remain verbatim, got %+v", compacted)
+	}
+}
+
+func TestCompactHistoryReturnsOriginalWhenWithinThreshold(t *testing.T) {
+	history := []string{"alpha", "beta"}
+	compacted := compactHistory(history, 200, 1)
+	if len(compacted) != len(history) {
+		t.Fatalf("expected original history length, got %+v", compacted)
+	}
+	if compacted[0] != "alpha" || compacted[1] != "beta" {
+		t.Fatalf("expected original history to stay unchanged, got %+v", compacted)
 	}
 }
 
