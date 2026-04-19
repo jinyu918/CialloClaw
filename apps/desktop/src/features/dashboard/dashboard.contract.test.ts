@@ -436,6 +436,12 @@ function createDetail(overrides: Partial<AgentTaskDetailGetResult> = {}): AgentT
     approval_request: createApprovalRequest(),
     artifacts: [],
     mirror_references: [],
+    runtime_summary: {
+      active_steering_count: 0,
+      events_count: 0,
+      latest_event_type: null,
+      loop_stop_reason: null,
+    },
     security_summary: {
       latest_restore_point: createRecoveryPoint(),
       pending_authorizations: 1,
@@ -1594,6 +1600,12 @@ test("task detail normalization rejects string restore points in rpc mode and ke
     });
 
     assert.equal(fallback.detail.approval_request, null);
+    assert.deepEqual(fallback.detail.runtime_summary, {
+      active_steering_count: 0,
+      events_count: 0,
+      latest_event_type: null,
+      loop_stop_reason: null,
+    });
     assert.equal(fallback.detail.security_summary.pending_authorizations, 0);
     assert.equal(fallback.detail.security_summary.security_status, "normal");
   });
@@ -1623,6 +1635,16 @@ test("task detail normalization recovers invalid artifacts but still rejects bro
           approval_request: undefined as never,
         }),
       /approval_request/i,
+    );
+
+    assert.throws(
+      () =>
+        service.normalizeTaskDetailResult(
+          createDetail({
+            runtime_summary: null as never,
+          }),
+        ),
+      /runtime summary/i,
     );
 
     assert.throws(

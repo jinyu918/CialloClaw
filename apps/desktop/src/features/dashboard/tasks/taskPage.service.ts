@@ -1,4 +1,4 @@
-import type { AgentTaskDetailGetResult, AgentTaskControlParams, RequestMeta, Task, TaskControlAction, TaskListGroup } from "@cialloclaw/protocol";
+import type { AgentTaskDetailGetResult, AgentTaskControlParams, RequestMeta, Task, TaskControlAction, TaskListGroup, TaskRuntimeSummary } from "@cialloclaw/protocol";
 import { controlTask, getTaskDetail, listTasks } from "@/rpc/methods";
 import { isActiveApprovalRequest, isApprovalRequest, isArtifact, isBinaryPendingAuthorizations, isMirrorReference, isRecoveryPoint, isTask, isTaskStep, normalizeArray, normalizeNullable } from "../shared/dashboardContractValidators";
 import { RISK_LEVELS, SECURITY_STATUSES, TASK_STEP_STATUSES } from "@/rpc/protocolEnumerations";
@@ -79,6 +79,12 @@ function createFallbackTaskDetail(task: Task): AgentTaskDetailGetResult {
     approval_request: null,
     artifacts: [],
     mirror_references: [],
+    runtime_summary: {
+      active_steering_count: 0,
+      events_count: 0,
+      latest_event_type: null,
+      loop_stop_reason: null,
+    },
     security_summary: {
       latest_restore_point: null,
       pending_authorizations: 0,
@@ -93,6 +99,18 @@ function createFallbackTaskDetail(task: Task): AgentTaskDetailGetResult {
 const riskLevels = new Set<string>(RISK_LEVELS);
 const securityStatuses = new Set<string>(SECURITY_STATUSES);
 const taskStepStatuses = new Set<string>(TASK_STEP_STATUSES);
+
+function isValidRuntimeSummary(summary: Partial<TaskRuntimeSummary> | null | undefined): summary is TaskRuntimeSummary {
+  return Boolean(
+    summary &&
+      typeof summary.events_count === "number" &&
+      Number.isFinite(summary.events_count) &&
+      typeof summary.active_steering_count === "number" &&
+      Number.isFinite(summary.active_steering_count) &&
+      (typeof summary.latest_event_type === "string" || summary.latest_event_type === null || typeof summary.latest_event_type === "undefined") &&
+      (typeof summary.loop_stop_reason === "string" || summary.loop_stop_reason === null || typeof summary.loop_stop_reason === "undefined"),
+  );
+}
 
 function hasValidSecuritySummary(detail: AgentTaskDetailGetResult): boolean {
   const summary = detail.security_summary as Partial<AgentTaskDetailGetResult["security_summary"]> | null | undefined;
@@ -116,6 +134,10 @@ export function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): Age
 
   if (!hasValidSecuritySummary(detail)) {
     throw new Error("task detail payload is missing security summary");
+  }
+
+  if (!isValidRuntimeSummary(detail.runtime_summary)) {
+    throw new Error("task detail payload is missing runtime summary");
   }
 
   const approvalRequest = normalizeNullable(detail.approval_request, isApprovalRequest, "task detail payload approval_request");
@@ -152,6 +174,7 @@ export function normalizeTaskDetailResult(detail: AgentTaskDetailGetResult): Age
     approval_request: approvalRequest,
     artifacts,
     mirror_references: mirrorReferences,
+    runtime_summary: detail.runtime_summary,
     security_summary: {
       ...detail.security_summary,
       latest_restore_point: latestRestorePoint,
