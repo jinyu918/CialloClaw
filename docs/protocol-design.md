@@ -718,6 +718,8 @@ Notification 只负责“状态变化推送”，不承载复杂业务命令。
       "type": "text_selection",
       "text": "这里放用户选中的文本内容",
       "page_context": {
+        "app_name": "Chrome",
+        "url": "https://example.com/release",
         "image_url": "xxx.png"
       }
     },
