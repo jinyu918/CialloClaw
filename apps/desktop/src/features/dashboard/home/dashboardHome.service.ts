@@ -73,6 +73,18 @@ export type DashboardHomeData = {
   voiceSequences: DashboardVoiceSequence[];
 };
 
+type DashboardTaskRuntimeSummary = {
+  processingTasks: number;
+  waitingAuthTasks: number;
+  blockedTasks: number;
+  focusRuntimeSummary: {
+    active_steering_count: number;
+    events_count: number;
+    latest_event_type: string | null;
+    loop_stop_reason: string | null;
+  };
+};
+
 function createRequestMeta(scope: string): RequestMeta {
   return {
     client_time: new Date().toISOString(),
@@ -212,6 +224,23 @@ function getModuleSummaryNumber(result: AgentDashboardModuleGetResult | null | u
   return typeof value === "number" ? value : 0;
 }
 
+function getTaskModuleRuntimeSummary(result: AgentDashboardModuleGetResult | null | undefined): DashboardTaskRuntimeSummary {
+  const candidate = result?.summary?.focus_runtime_summary;
+  const focusRuntimeSummary = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>) : null;
+
+  return {
+    blockedTasks: getModuleSummaryNumber(result, "blocked_tasks"),
+    processingTasks: getModuleSummaryNumber(result, "processing_tasks"),
+    waitingAuthTasks: getModuleSummaryNumber(result, "waiting_auth_tasks"),
+    focusRuntimeSummary: {
+      active_steering_count: typeof focusRuntimeSummary?.active_steering_count === "number" ? focusRuntimeSummary.active_steering_count : 0,
+      events_count: typeof focusRuntimeSummary?.events_count === "number" ? focusRuntimeSummary.events_count : 0,
+      latest_event_type: typeof focusRuntimeSummary?.latest_event_type === "string" ? focusRuntimeSummary.latest_event_type : null,
+      loop_stop_reason: typeof focusRuntimeSummary?.loop_stop_reason === "string" ? focusRuntimeSummary.loop_stop_reason : null,
+    },
+  };
+}
+
 function inferModuleFromRecommendation(item: RecommendationItem): DashboardHomeModuleKey {
   const corpus = `${item.intent.name} ${item.text}`.toLowerCase();
 
@@ -254,6 +283,7 @@ function inferModuleFromRecommendation(item: RecommendationItem): DashboardHomeM
 
 function getTaskStateKey(overview: AgentDashboardOverviewGetResult, taskModule: AgentDashboardModuleGetResult) {
   const status = overview.overview.focus_summary?.status;
+  const runtimeSummary = getTaskModuleRuntimeSummary(taskModule).focusRuntimeSummary;
   if (status === "confirming_intent") {
     return "task_completing";
   }
@@ -272,6 +302,10 @@ function getTaskStateKey(overview: AgentDashboardOverviewGetResult, taskModule: 
 
   if (status === "completed") {
     return "task_done";
+  }
+
+  if (runtimeSummary.active_steering_count > 0 || runtimeSummary.latest_event_type === "loop.retrying") {
+    return "task_highlight";
   }
 
   if (getModuleHighlights(taskModule).length > 1) {
@@ -311,6 +345,8 @@ function buildTaskContext(
 ): DashboardHomeContextItem[] {
   const focusSummary = overview.overview.focus_summary;
   const highlights = getModuleHighlights(taskModule);
+  const taskRuntime = getTaskModuleRuntimeSummary(taskModule);
+  const runtimeSummary = taskRuntime.focusRuntimeSummary;
 
   if (!focusSummary) {
     return highlights.slice(0, 3).map((item, index) => ({
@@ -320,7 +356,7 @@ function buildTaskContext(
     }));
   }
 
-  return [
+  const context: DashboardHomeContextItem[] = [
     {
       iconKey: focusSummary.status === "processing" ? "loader" : "check",
       text: `当前步骤：${focusSummary.current_step}`,
@@ -332,16 +368,45 @@ function buildTaskContext(
       text: `下一步：${focusSummary.next_action}`,
       type: "hint",
     },
-    ...(highlights[0]
-      ? [
-          {
-            iconKey: "sparkles",
-            text: highlights[0],
-            type: "normal" as const,
-          },
-        ]
-      : []),
   ];
+
+  if (runtimeSummary.latest_event_type) {
+    context.push({
+      iconKey: runtimeSummary.latest_event_type === "loop.retrying" ? "refresh" : "sparkles",
+      text: `最近运行事件：${runtimeSummary.latest_event_type}`,
+      type: runtimeSummary.latest_event_type === "loop.retrying" ? "warn" : "normal",
+    });
+  }
+  if (runtimeSummary.active_steering_count > 0) {
+    context.push({
+      iconKey: "send",
+      text: `待消费追加要求：${runtimeSummary.active_steering_count} 条`,
+      type: "active",
+    });
+  }
+  if (runtimeSummary.loop_stop_reason) {
+    context.push({
+      iconKey: "alert",
+      text: `最近停止原因：${runtimeSummary.loop_stop_reason}`,
+      type: "warn",
+    });
+  }
+  if (taskRuntime.waitingAuthTasks > 0 && focusSummary.status !== "waiting_auth") {
+    context.push({
+      iconKey: "lock",
+      text: `仍有 ${taskRuntime.waitingAuthTasks} 条任务等待授权`,
+      type: "warn",
+    });
+  }
+  if (context.length < 4 && highlights[0]) {
+    context.push({
+      iconKey: "sparkles",
+      text: highlights[0],
+      type: "normal",
+    });
+  }
+
+  return context.slice(0, 4);
 }
 
 function buildTaskState(
@@ -351,6 +416,7 @@ function buildTaskState(
 ) {
   const state = cloneStateData(dashboardHomeStates[stateKey]);
   const focusSummary = overview.overview.focus_summary;
+  const runtimeSummary = getTaskModuleRuntimeSummary(taskModule).focusRuntimeSummary;
 
   if (!focusSummary) {
     const highlights = getModuleHighlights(taskModule);
@@ -365,10 +431,14 @@ function buildTaskState(
   }
 
   state.headline = focusSummary.title;
-  state.subline = `${formatTaskStatusLabel(focusSummary.status)} · ${focusSummary.current_step} · 下一步：${focusSummary.next_action}`;
+  state.subline = [
+    formatTaskStatusLabel(focusSummary.status),
+    focusSummary.current_step,
+    runtimeSummary.latest_event_type ? `最近事件：${runtimeSummary.latest_event_type}` : `下一步：${focusSummary.next_action}`,
+  ].join(" · ");
   state.label = formatTaskStatusLabel(focusSummary.status);
   state.tag = formatTaskTag(focusSummary.status);
-  state.progressLabel = focusSummary.next_action;
+  state.progressLabel = runtimeSummary.active_steering_count > 0 ? `待消费要求 ${runtimeSummary.active_steering_count} 条` : focusSummary.next_action;
   state.context = buildTaskContext(overview, taskModule);
 
   if (focusSummary.status === "confirming_intent") {
@@ -636,12 +706,20 @@ function buildVoiceSequences(
 
 function buildFocusLine(
   overview: AgentDashboardOverviewGetResult,
+  taskModule: AgentDashboardModuleGetResult,
   summonTemplates: Array<Omit<DashboardHomeSummonEvent, "id">>,
 ) {
   if (overview.overview.focus_summary) {
+    const runtimeSummary = getTaskModuleRuntimeSummary(taskModule).focusRuntimeSummary;
     return {
       headline: overview.overview.focus_summary.title,
-      reason: `${overview.overview.focus_summary.current_step} · ${overview.overview.focus_summary.next_action}`,
+      reason: [
+        overview.overview.focus_summary.current_step,
+        overview.overview.focus_summary.next_action,
+        runtimeSummary.latest_event_type ?? runtimeSummary.loop_stop_reason,
+      ]
+        .filter(Boolean)
+        .join(" · "),
     };
   }
 
@@ -674,7 +752,7 @@ function buildDashboardHomeData(input: {
   const summonTemplates = buildRecommendationSummons(input.recommendations.items, stateKeys, input.moduleResults);
 
   return {
-    focusLine: buildFocusLine(input.overview, summonTemplates),
+    focusLine: buildFocusLine(input.overview, input.moduleResults.tasks, summonTemplates),
     stateGroups: buildStateGroups(stateKeys),
     stateMap,
     summonTemplates,
