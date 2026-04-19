@@ -169,7 +169,7 @@ func TestCapabilitiesReturnsConfiguredStructuredStorageOnly(t *testing.T) {
 	if capabilities.MemoryRetrievalBackend != memoryRetrievalBackendSQLite {
 		t.Fatalf("unexpected retrieval backend: %+v", capabilities)
 	}
-	if capabilities.SecretStoreBackend != memoryStoreBackendSQLite {
+	if capabilities.SecretStoreBackend != "stronghold_sqlite_fallback" {
 		t.Fatalf("unexpected secret backend: %+v", capabilities)
 	}
 }
@@ -866,6 +866,22 @@ func TestResolveModelAPIKeyReturnsAccessFailureWhenStoreClosed(t *testing.T) {
 	_, err := service.ResolveModelAPIKey("openai_responses")
 	if !errors.Is(err, ErrSecretStoreAccessFailed) {
 		t.Fatalf("expected ErrSecretStoreAccessFailed, got %v", err)
+	}
+}
+
+func TestServiceUsesUnavailableSecretStoreWhenStrongholdCannotOpen(t *testing.T) {
+	service := NewService(stubAdapter{databasePath: ""})
+	defer func() { _ = service.Close() }()
+	if service.Stronghold() != nil {
+		t.Fatalf("expected no Stronghold provider when secret path missing, got %+v", service.Stronghold().Descriptor())
+	}
+	if err := service.SecretStore().PutSecret(context.Background(), SecretRecord{Namespace: "model", Key: "openai_responses_api_key", Value: "secret", UpdatedAt: "2026-04-15T10:00:00Z"}); err != nil {
+		t.Fatalf("expected in-memory fallback store when Stronghold path missing, got %v", err)
+	}
+
+	store := SecretStore(UnavailableSecretStore{})
+	if err := store.PutSecret(context.Background(), SecretRecord{Namespace: "model", Key: "openai_responses_api_key", Value: "secret", UpdatedAt: "2026-04-15T10:00:00Z"}); !errors.Is(err, ErrStrongholdUnavailable) {
+		t.Fatalf("expected unavailable formal store to reject writes, got %v", err)
 	}
 }
 
