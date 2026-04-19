@@ -102,10 +102,10 @@ pub fn read_active_window_context() -> Result<Option<ActiveWindowContextPayload>
     }
 
     if is_shell_ball_cluster_window(hwnd) {
-        return Ok(read_cached_window_context());
+        return Ok(read_cached_window_context_with_url());
     }
 
-    let context = read_lightweight_window_context_for_hwnd(hwnd)?;
+    let context = read_window_context_for_hwnd(hwnd);
     cache_window_context(hwnd, &context);
     schedule_window_context_url_refresh(hwnd, &context);
     Ok(Some(context))
@@ -179,6 +179,19 @@ fn read_lightweight_window_context_for_hwnd(hwnd: HWND) -> Result<ActiveWindowCo
     })
 }
 
+fn read_window_context_for_hwnd(hwnd: HWND) -> ActiveWindowContextPayload {
+    let mut context = read_lightweight_window_context_for_hwnd(hwnd).unwrap_or(ActiveWindowContextPayload {
+        app_name: "unknown".to_string(),
+        process_path: None,
+        title: None,
+        url: None,
+        browser_kind: BROWSER_KIND_NON_BROWSER.to_string(),
+    });
+
+    context.url = read_url_for_window_context(hwnd, &context);
+    context
+}
+
 fn cache_window_context(hwnd: HWND, context: &ActiveWindowContextPayload) {
     if let Ok(mut cached_context) = LAST_EXTERNAL_WINDOW_CONTEXT.lock() {
         *cached_context = Some(CachedWindowContext {
@@ -193,6 +206,22 @@ fn read_cached_window_context() -> Option<ActiveWindowContextPayload> {
         .lock()
         .ok()
         .and_then(|cached| cached.as_ref().map(|value| value.context.clone()))
+}
+
+fn read_cached_window_context_with_url() -> Option<ActiveWindowContextPayload> {
+    let cached = LAST_EXTERNAL_WINDOW_CONTEXT
+        .lock()
+        .ok()
+        .and_then(|cached| cached.clone())?;
+
+    let hwnd = HWND(cached.hwnd as *mut core::ffi::c_void);
+    if hwnd.0.is_null() {
+        return Some(cached.context);
+    }
+
+    let context = read_window_context_for_hwnd(hwnd);
+    cache_window_context(hwnd, &context);
+    Some(context)
 }
 
 fn is_shell_ball_cluster_window(hwnd: HWND) -> bool {
