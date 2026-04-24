@@ -507,24 +507,40 @@ func (s *Service) continuePendingTask(task runengine.TaskRecord, snapshot contex
 
 	suggestion := s.intent.Suggest(mergedSnapshot, explicitIntent, false)
 	suggestion = s.normalizeSuggestedIntentForAvailability(mergedSnapshot, suggestion, false)
+	preferredDelivery := task.PreferredDelivery
+	fallbackDelivery := task.FallbackDelivery
+	if !suggestion.RequiresConfirm {
+		preferredDelivery, fallbackDelivery = mergeSuggestedDeliveryPreference(preferredDelivery, fallbackDelivery, suggestion.DirectDeliveryType)
+	}
 	bubble := s.delivery.BuildBubbleMessage(task.TaskID, bubbleTypeForSuggestion(suggestion.RequiresConfirm), bubbleTextForInput(suggestion), time.Now().Format(dateTimeLayout))
 	updatedTask, changed := s.runEngine.ContinueTask(task.TaskID, runengine.ContinuationUpdate{
-		Snapshot:      snapshot,
-		Title:         suggestion.TaskTitle,
-		Intent:        suggestion.Intent,
-		Status:        taskStatusForSuggestion(suggestion.RequiresConfirm),
-		CurrentStep:   currentStepForSuggestion(suggestion.RequiresConfirm, suggestion.Intent),
-		BubbleMessage: bubble,
+		Snapshot:          snapshot,
+		Title:             suggestion.TaskTitle,
+		Intent:            suggestion.Intent,
+		PreferredDelivery: preferredDelivery,
+		FallbackDelivery:  fallbackDelivery,
+		Status:            taskStatusForSuggestion(suggestion.RequiresConfirm),
+		CurrentStep:       currentStepForSuggestion(suggestion.RequiresConfirm, suggestion.Intent),
+		BubbleMessage:     bubble,
 	})
 	if !changed {
 		return nil, ErrTaskNotFound
 	}
 	if suggestion.RequiresConfirm {
+		s.attachMemoryReadPlans(updatedTask.TaskID, updatedTask.RunID, mergedSnapshot, suggestion.Intent)
 		return map[string]any{
 			"task":            taskMap(updatedTask),
 			"bubble_message":  bubble,
 			"delivery_result": nil,
 		}, nil
+	}
+	s.attachMemoryReadPlans(updatedTask.TaskID, updatedTask.RunID, mergedSnapshot, suggestion.Intent)
+	if stringValue(suggestion.Intent, "name", "") == "screen_analyze" {
+		waitingTask, waitingBubble, err := s.markTaskWaitingScreenApproval(updatedTask)
+		if err != nil {
+			return nil, err
+		}
+		return taskScreenAnalyzeResponse(waitingTask, waitingBubble), nil
 	}
 
 	governedTask, governedResponse, handled, governanceErr := s.handleTaskGovernanceDecision(updatedTask, suggestion.Intent)

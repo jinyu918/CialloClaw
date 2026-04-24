@@ -132,13 +132,15 @@ type CreateTaskInput struct {
 // ContinuationUpdate captures the minimum runtime state changes required when a
 // later desktop input should stay on the same task instead of opening a new one.
 type ContinuationUpdate struct {
-	Snapshot        contextsvc.TaskContextSnapshot
-	Title           string
-	Intent          map[string]any
-	Status          string
-	CurrentStep     string
-	BubbleMessage   map[string]any
-	SteeringMessage string
+	Snapshot          contextsvc.TaskContextSnapshot
+	Title             string
+	Intent            map[string]any
+	PreferredDelivery string
+	FallbackDelivery  string
+	Status            string
+	CurrentStep       string
+	BubbleMessage     map[string]any
+	SteeringMessage   string
 }
 
 // InspectorConfig stores the current task-inspector runtime settings.
@@ -785,6 +787,12 @@ func (e *Engine) ContinueTask(taskID string, update ContinuationUpdate) (TaskRec
 	}
 	if len(update.Intent) > 0 {
 		record.Intent = cloneMap(update.Intent)
+	}
+	if strings.TrimSpace(update.PreferredDelivery) != "" {
+		record.PreferredDelivery = strings.TrimSpace(update.PreferredDelivery)
+	}
+	if strings.TrimSpace(update.FallbackDelivery) != "" {
+		record.FallbackDelivery = strings.TrimSpace(update.FallbackDelivery)
 	}
 	if strings.TrimSpace(update.Status) != "" {
 		record.Status = strings.TrimSpace(update.Status)
