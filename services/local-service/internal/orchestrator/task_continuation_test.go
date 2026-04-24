@@ -6,6 +6,7 @@ import (
 	"time"
 
 	contextsvc "github.com/cialloclaw/cialloclaw/services/local-service/internal/context"
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/platform"
 	"github.com/cialloclaw/cialloclaw/services/local-service/internal/runengine"
 )
 
@@ -273,6 +274,88 @@ func TestClassifyTaskContinuationContinuesProcessingTaskOnStrongAttachmentEviden
 
 	if decision.Decision != "continue" || decision.TaskID != "task_001" {
 		t.Fatalf("expected strong context plus attachment evidence to continue the processing task, got %+v", decision)
+	}
+}
+
+func TestContinuePendingTaskPromotesScreenAnalyzeToWaitingAuth(t *testing.T) {
+	service, _ := newTestServiceWithExecutionOptions(t, "unused", platform.LocalExecutionBackend{}, nil)
+	task := service.runEngine.CreateTask(runengine.CreateTaskInput{
+		SessionID:   "sess_continue_screen",
+		Title:       "等待补充输入",
+		SourceType:  "hover_input",
+		Status:      "waiting_input",
+		CurrentStep: "collect_input",
+		RiskLevel:   "green",
+		Snapshot: contextsvc.TaskContextSnapshot{
+			PageTitle:   "Build Dashboard",
+			WindowTitle: "Build Dashboard",
+			AppName:     "Chrome",
+		},
+	})
+
+	result, err := service.continuePendingTask(task, contextsvc.TaskContextSnapshot{
+		InputType:     "text",
+		Text:          "请查看当前页面报错",
+		PageTitle:     "Build Dashboard",
+		WindowTitle:   "Build Dashboard",
+		AppName:       "Chrome",
+		VisibleText:   "fatal build error",
+		ScreenSummary: "build failed on current page",
+	}, nil)
+	if err != nil {
+		t.Fatalf("continue pending task with inferred screen analyze failed: %v", err)
+	}
+
+	updatedTask := result["task"].(map[string]any)
+	if updatedTask["task_id"] != task.TaskID {
+		t.Fatalf("expected continuation to reuse task identity, got %+v", updatedTask)
+	}
+	if updatedTask["status"] != "waiting_auth" {
+		t.Fatalf("expected inferred screen continuation to enter waiting_auth, got %+v", updatedTask)
+	}
+	if result["delivery_result"] != nil {
+		t.Fatalf("expected inferred screen continuation to wait for authorization, got %+v", result)
+	}
+	approvalRequests, total := service.runEngine.PendingApprovalRequests(20, 0)
+	if total != 1 || len(approvalRequests) != 1 {
+		t.Fatalf("expected one pending approval request after continuation, got total=%d items=%+v", total, approvalRequests)
+	}
+	if approvalRequests[0]["task_id"] != task.TaskID {
+		t.Fatalf("expected approval request to target continued task, got %+v", approvalRequests[0])
+	}
+}
+
+func TestContinuePendingTaskUpdatesDeliveryPreferenceAndMemoryPlans(t *testing.T) {
+	service, _ := newTestServiceWithExecutionOptions(t, "continuation output", platform.LocalExecutionBackend{}, nil)
+	task := service.runEngine.CreateTask(runengine.CreateTaskInput{
+		SessionID:   "sess_continue_delivery",
+		Title:       "等待补充输入",
+		SourceType:  "hover_input",
+		Status:      "waiting_input",
+		CurrentStep: "collect_input",
+		RiskLevel:   "green",
+	})
+
+	longText := strings.Repeat("需要整理成本周的进展摘要，并且保留关键风险与后续计划。", 4)
+	result, err := service.continuePendingTask(task, contextsvc.TaskContextSnapshot{
+		InputType: "text",
+		Text:      longText,
+	}, nil)
+	if err != nil {
+		t.Fatalf("continue pending task for delivery hints failed: %v", err)
+	}
+	if result["delivery_result"] == nil {
+		t.Fatalf("expected actionable continuation to complete delivery, got %+v", result)
+	}
+	storedTask, ok := service.runEngine.GetTask(task.TaskID)
+	if !ok {
+		t.Fatalf("expected continued task %s to remain queryable", task.TaskID)
+	}
+	if storedTask.PreferredDelivery != "workspace_document" {
+		t.Fatalf("expected continuation to persist suggested workspace delivery, got %q", storedTask.PreferredDelivery)
+	}
+	if len(storedTask.MemoryReadPlans) == 0 {
+		t.Fatalf("expected continuation to attach memory read plans, got %+v", storedTask)
 	}
 }
 
