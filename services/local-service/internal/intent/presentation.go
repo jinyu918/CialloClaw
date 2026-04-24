@@ -1,0 +1,233 @@
+package intent
+
+import (
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
+
+	contextsvc "github.com/cialloclaw/cialloclaw/services/local-service/internal/context"
+)
+
+// buildTaskTitle creates the user-facing task title that appears in task lists,
+// dashboard modules, and later memory summaries.
+func (s *Service) buildTaskTitle(snapshot contextsvc.TaskContextSnapshot, intentName string) string {
+	subject := subjectText(snapshot)
+	switch intentName {
+	case "":
+		return "确认处理方式：" + subject
+	case defaultAgentLoopIntent:
+		return "处理：" + subject
+	case "screen_analyze":
+		return "查看屏幕：" + screenSubjectText(snapshot)
+	case "rewrite":
+		return "改写：" + subject
+	case "translate":
+		return "翻译：" + subject
+	case "explain":
+		if snapshot.ErrorText != "" || snapshot.InputType == "error" {
+			return "解释错误：" + subject
+		}
+		return "解释：" + subject
+	case "summarize":
+		if len(snapshot.Files) > 0 || snapshot.InputType == "file" {
+			return "总结文件：" + subject
+		}
+		return "总结：" + subject
+	default:
+		return "处理：" + subject
+	}
+}
+
+// buildResultTitle creates the formal delivery title used by delivery_result
+// and artifact views.
+func (s *Service) buildResultTitle(intentName string) string {
+	switch intentName {
+	case "":
+		return "待确认处理方式"
+	case defaultAgentLoopIntent:
+		return "处理结果"
+	case "screen_analyze":
+		return "屏幕分析结果"
+	case "rewrite":
+		return "改写结果"
+	case "translate":
+		return "翻译结果"
+	case "explain":
+		return "解释结果"
+	default:
+		return "处理结果"
+	}
+}
+
+// buildResultBubbleText generates the completion bubble text shown after
+// delivery is ready.
+func (s *Service) buildResultBubbleText(intentName string) string {
+	switch intentName {
+	case "":
+		return "请先告诉我希望如何处理这段内容。"
+	case defaultAgentLoopIntent:
+		return "结果已经生成，可直接查看。"
+	case "screen_analyze":
+		return "已准备查看当前屏幕，等待授权后继续分析。"
+	case "rewrite":
+		return "内容已经按要求改写完成，可直接查看。"
+	case "translate":
+		return "翻译结果已经生成，可直接查看。"
+	case "explain":
+		return "这段内容的意思已经整理好了。"
+	default:
+		return "结果已经生成，可直接查看。"
+	}
+}
+
+func directDeliveryTypeForSnapshot(snapshot contextsvc.TaskContextSnapshot, intentName string) string {
+	switch intentName {
+	case defaultAgentLoopIntent:
+		if len(snapshot.Files) > 0 || isLongContent(snapshot.SelectionText) || isLongContent(snapshot.Text) {
+			return "workspace_document"
+		}
+	case "rewrite":
+		return "workspace_document"
+	case "summarize":
+		if len(snapshot.Files) > 0 || isLongContent(snapshot.SelectionText) || isLongContent(snapshot.Text) {
+			return "workspace_document"
+		}
+	case "translate":
+		if len(snapshot.Files) > 0 {
+			return "workspace_document"
+		}
+	case "screen_analyze":
+		return "bubble"
+	}
+	return "bubble"
+}
+
+func previewForDeliveryType(deliveryType string) string {
+	if deliveryType == "workspace_document" {
+		return "已为你写入文档并打开"
+	}
+	return "结果已通过气泡返回"
+}
+
+func intentPayload(name string) map[string]any {
+	switch name {
+	case defaultAgentLoopIntent:
+		return map[string]any{
+			"name":      defaultAgentLoopIntent,
+			"arguments": map[string]any{},
+		}
+	case "rewrite":
+		return map[string]any{
+			"name": "rewrite",
+			"arguments": map[string]any{
+				"tone": "professional",
+			},
+		}
+	case "translate":
+		return map[string]any{
+			"name": "translate",
+			"arguments": map[string]any{
+				"target_language": "en",
+			},
+		}
+	case "explain":
+		return map[string]any{
+			"name":      "explain",
+			"arguments": map[string]any{},
+		}
+	case "screen_analyze":
+		return map[string]any{
+			"name": "screen_analyze",
+			"arguments": map[string]any{
+				"language":      "eng",
+				"evidence_role": "error_evidence",
+			},
+		}
+	default:
+		return map[string]any{
+			"name": "summarize",
+			"arguments": map[string]any{
+				"style": "key_points",
+			},
+		}
+	}
+}
+
+func subjectText(snapshot contextsvc.TaskContextSnapshot) string {
+	switch {
+	case len(snapshot.Files) > 0:
+		return filepath.Base(snapshot.Files[0])
+	case strings.TrimSpace(snapshot.SelectionText) != "":
+		return truncateText(snapshot.SelectionText, 18)
+	case strings.TrimSpace(snapshot.Text) != "":
+		return truncateText(snapshot.Text, 18)
+	case strings.TrimSpace(snapshot.ErrorText) != "":
+		return truncateText(snapshot.ErrorText, 18)
+	case strings.TrimSpace(snapshot.PageTitle) != "":
+		return truncateText(snapshot.PageTitle, 18)
+	case strings.TrimSpace(snapshot.WindowTitle) != "":
+		return truncateText(snapshot.WindowTitle, 18)
+	default:
+		return "当前内容"
+	}
+}
+
+func screenSubjectText(snapshot contextsvc.TaskContextSnapshot) string {
+	switch {
+	case strings.TrimSpace(snapshot.PageTitle) != "":
+		return truncateText(snapshot.PageTitle, 18)
+	case strings.TrimSpace(snapshot.WindowTitle) != "":
+		return truncateText(snapshot.WindowTitle, 18)
+	default:
+		return subjectText(snapshot)
+	}
+}
+
+func containsAny(text string, markers ...string) bool {
+	for _, marker := range markers {
+		if marker != "" && strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isQuestionText(text string) bool {
+	value := strings.TrimSpace(strings.ToLower(text))
+	switch {
+	case strings.Contains(value, "?"), strings.Contains(value, "？"),
+		strings.Contains(value, "why"), strings.Contains(value, "how"),
+		strings.Contains(value, "什么"), strings.Contains(value, "为什么"), strings.Contains(value, "怎么"):
+		return true
+	default:
+		return false
+	}
+}
+
+func isLongContent(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.Contains(trimmed, "\n") || utf8.RuneCountInString(trimmed) >= 80
+}
+
+func truncateText(value string, maxLength int) string {
+	if utf8.RuneCountInString(value) <= maxLength {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:maxLength]) + "..."
+}
+
+// stringValue safely reads a string field from an intent payload.
+func stringValue(values map[string]any, key string) string {
+	rawValue, ok := values[key]
+	if !ok {
+		return ""
+	}
+
+	value, ok := rawValue.(string)
+	if !ok {
+		return ""
+	}
+
+	return value
+}
