@@ -1,16 +1,19 @@
-import type {
-  ApprovalDecision,
-  ApprovalRequest,
-  BubbleMessage,
-  DeliveryResult,
-  InputContext,
-  TaskRuntimeNotification,
-  TaskSteeredNotification,
-  TaskUpdatedNotification,
+import {
+  ERROR_CODES,
+  type AgentTaskSteerResult,
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type BubbleMessage,
+  type DeliveryResult,
+  type InputContext,
+  type TaskRuntimeNotification,
+  type TaskSteeredNotification,
+  type TaskUpdatedNotification,
 } from "@cialloclaw/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getTaskDetail, respondSecurityDetailed } from "@/rpc/methods";
+import { JsonRpcClientError } from "@/rpc/client";
+import { getTaskDetail, respondSecurityDetailed, steerTask } from "@/rpc/methods";
 import { subscribeAllTaskRuntime, subscribeApprovalPending, subscribeDeliveryReady, subscribeTaskUpdated } from "@/rpc/subscriptions";
 import { submitTextInput } from "@/services/agentInputService";
 import {
@@ -29,6 +32,7 @@ import type { ShellBallVoicePreview } from "./shellBall.interaction";
 import type { ShellBallSelectionSnapshot } from "./selection/selection.types";
 import type { ShellBallVisualState, ShellBallVoiceHintMode } from "./shellBall.types";
 import type { ShellBallInputSubmitResult } from "./useShellBallInteraction";
+import { submitShellBallInput } from "./shellBallSubmit";
 import { isRpcChannelUnavailable } from "@/rpc/fallback";
 import { readClipboardText } from "@/services/clipboardService";
 import { startTaskFromSelectedText } from "@/services/taskService";
@@ -48,7 +52,7 @@ import {
   type ShellBallPrimaryAction,
 } from "./shellBall.windowSync";
 import { getShellBallBubbleAnchor } from "./useShellBallWindowMetrics";
-import { getShellBallVisualStateForTaskStatus } from "./shellBall.interaction";
+import { getShellBallProcessingReturnState, getShellBallVisualStateForTaskStatus } from "./shellBall.interaction";
 import { useShellBallStore } from "../../stores/shellBallStore";
 import {
   getShellBallTaskTerminalStatusText,
@@ -77,7 +81,6 @@ type ShellBallCoordinatorInput = {
   onInputFocusChange: (focused: boolean) => void;
   onSubmitText: () => Promise<ShellBallInputSubmitResult | null> | ShellBallInputSubmitResult | null | void;
   onSubmitVoiceText?: (text: string) => Promise<ShellBallInputSubmitResult | null> | ShellBallInputSubmitResult | null;
-  getCurrentConversationSessionId?: () => string | undefined;
   onAttachFile: () => void;
   onPrimaryClick: () => void;
 };
@@ -210,6 +213,16 @@ export function createTerminalTaskBubbleDeduper(): TerminalTaskBubbleDeduper {
   };
 }
 
+function shouldKeepShellBallBubbleRegionVisibleForTaskState(visualState: ShellBallVisualState) {
+  // Active task turns should keep their bubble visible until the backend
+  // advances into a stable reply or another user-facing terminal state.
+  return visualState === "confirming_intent" || visualState === "processing" || visualState === "waiting_auth";
+}
+
+function getLatestVisibleShellBallBubbleId(items: ShellBallBubbleItem[]) {
+  return getShellBallVisibleBubbleItems(items).at(-1)?.bubble.bubble_id ?? null;
+}
+
 function createShellBallRequestMeta() {
   const now = new Date().toISOString();
   const traceId = typeof globalThis.crypto?.randomUUID === "function"
@@ -230,6 +243,34 @@ function createShellBallBubbleDesktopState(turnOrder: ShellBallBubbleTurnOrder =
     turnIndex: turnOrder.turnIndex,
     turnPhase: turnOrder.turnPhase,
   };
+}
+
+// Active text follow-ups should use the formal steering RPC whenever the
+// backend can append them to the current task. Structured files and shortcuts
+// still keep their own formal intake path.
+function isShellBallActiveTaskSteerable(input: {
+  activeTaskIntentName: string | null;
+  activeTaskStatus: TaskUpdatedNotification["status"] | null;
+}) {
+  if (input.activeTaskStatus === "processing") {
+    return input.activeTaskIntentName === "agent_loop";
+  }
+  return input.activeTaskStatus === "waiting_auth" || input.activeTaskStatus === "blocked";
+}
+
+function shouldRouteShellBallSubmitToActiveSteering(input: {
+  activeTaskId: string | null;
+  activeTaskIntentName: string | null;
+  activeTaskStatus: TaskUpdatedNotification["status"] | null;
+  files: string[];
+  text: string;
+}) {
+  return (
+    input.activeTaskId !== null &&
+    isShellBallActiveTaskSteerable(input) &&
+    input.files.length === 0 &&
+    input.text.trim() !== ""
+  );
 }
 
 function createShellBallAgentLoadingBubbleItem(input: {
@@ -257,13 +298,72 @@ function createShellBallAgentLoadingBubbleItem(input: {
   } satisfies ShellBallBubbleItem;
 }
 
+function createShellBallDetectedPageBubbleItem(input: {
+  createdAt: string;
+  pageTitle?: string;
+  pageUrl: string;
+  taskId?: string;
+  turnIndex?: number;
+  turnPhase?: number;
+}) {
+  const normalizedTitle = input.pageTitle?.trim() ?? "";
+  const bubbleText = normalizedTitle === ""
+    ? `已识别当前网址：${input.pageUrl}`
+    : `已识别当前网页：${normalizedTitle}\n${input.pageUrl}`;
+
+  return createShellBallTextBubbleItem({
+    role: "agent",
+    text: bubbleText,
+    bubbleType: "status",
+    createdAt: input.createdAt,
+    taskId: input.taskId,
+    turnIndex: input.turnIndex,
+    turnPhase: input.turnPhase,
+  });
+}
+
+function createShellBallSubmitFeedbackBubbleItems(
+  result: ShellBallInputSubmitResult,
+  input: {
+    createdAt: string;
+    taskId?: string;
+    turnIndex?: number;
+  },
+) {
+  const feedbackItems: ShellBallBubbleItem[] = [];
+  const detectedPage = result.clientContext?.detectedPage;
+
+  if (detectedPage?.url) {
+    feedbackItems.push(createShellBallDetectedPageBubbleItem({
+      createdAt: input.createdAt,
+      pageTitle: detectedPage.title,
+      pageUrl: detectedPage.url,
+      taskId: input.taskId,
+      turnIndex: input.turnIndex,
+      turnPhase: 1,
+    }));
+  }
+
+  feedbackItems.push(createShellBallAgentBubbleItem(result, input.createdAt, {
+    turnIndex: input.turnIndex,
+    turnPhase: detectedPage?.url ? 2 : 1,
+  }));
+
+  return feedbackItems;
+}
+
 function replaceShellBallPendingBubble(
   items: ShellBallBubbleItem[],
   pendingBubbleId: string,
-  nextItem?: ShellBallBubbleItem,
+  nextItem?: ShellBallBubbleItem | ShellBallBubbleItem[],
 ) {
   const nextItems = items.filter((item) => item.bubble.bubble_id !== pendingBubbleId);
-  return nextItem === undefined ? sortShellBallBubbleItemsByTimestamp(nextItems) : sortShellBallBubbleItemsByTimestamp([...nextItems, nextItem]);
+  if (nextItem === undefined) {
+    return sortShellBallBubbleItemsByTimestamp(nextItems);
+  }
+
+  const appendedItems = Array.isArray(nextItem) ? nextItem : [nextItem];
+  return sortShellBallBubbleItemsByTimestamp([...nextItems, ...appendedItems]);
 }
 
 function markShellBallPendingBubbleAsStalled(items: ShellBallBubbleItem[], pendingBubbleId: string) {
@@ -319,6 +419,10 @@ export function sortShellBallBubbleItemsByTimestamp(items: ShellBallBubbleItem[]
 
 function isShellBallInputSubmitResult(value: ShellBallInputSubmitResult | null | void): value is ShellBallInputSubmitResult {
   return value !== null && value !== undefined && typeof value === "object" && "task" in value;
+}
+
+function getShellBallResultTaskId(result: ShellBallInputSubmitResult) {
+  return result.task?.task_id ?? result.bubble_message?.task_id ?? "";
 }
 
 export function createShellBallFinalizedSpeechBubbleItem(input: {
@@ -500,8 +604,9 @@ function createShellBallApprovalPendingReply(approvalRequest: ApprovalRequest) {
  */
 export function createShellBallRuntimeObservationReply(payload: ShellBallRuntimeNotification) {
   if ("message" in payload) {
-    const message = payload.message.trim();
-    return message === "" ? null : message;
+    // task.steered carries the user's raw follow-up text. The RPC response
+    // already provides the backend acknowledgement bubble for shell-ball.
+    return null;
   }
 
   const stopReason = payload.stop_reason?.trim();
@@ -603,13 +708,14 @@ export function createShellBallAgentBubbleItem(
   const bubbleMessage = result.bubble_message;
   const bubbleText = bubbleMessage?.text.trim() ?? "";
   const deliveryPreview = result.delivery_result?.preview_text?.trim() ?? "";
+  const taskId = getShellBallResultTaskId(result);
 
   if (bubbleMessage !== null && bubbleText !== "") {
     const bubbleType = bubbleMessage.type;
 
     if (bubbleType === "result" && result.delivery_result !== null) {
       return createShellBallDeliveryResultBubbleItem({
-        taskId: result.task.task_id,
+        taskId,
         deliveryResult: result.delivery_result,
         createdAt: bubbleMessage.created_at || fallbackCreatedAt,
         turnIndex: turnOrder.turnIndex,
@@ -635,7 +741,7 @@ export function createShellBallAgentBubbleItem(
       text: deliveryPreview,
       bubbleType: "result",
       createdAt: result.delivery_result?.payload?.task_id ? fallbackCreatedAt : bubbleMessage?.created_at ?? fallbackCreatedAt,
-      taskId: result.task.task_id,
+      taskId,
       turnIndex: turnOrder.turnIndex,
       turnPhase: turnOrder.turnPhase,
     });
@@ -646,10 +752,47 @@ export function createShellBallAgentBubbleItem(
     text: "已收到，正在处理。",
     bubbleType: "status",
     createdAt: fallbackCreatedAt,
+    taskId,
+    turnIndex: turnOrder.turnIndex,
+    turnPhase: turnOrder.turnPhase,
+  });
+}
+
+// Steering replies are status acknowledgements, not formal delivery results, so
+// shell-ball renders the returned backend bubble without inventing local output.
+function createShellBallSteerBubbleItem(
+  result: AgentTaskSteerResult,
+  fallbackCreatedAt: string,
+  turnOrder: ShellBallBubbleTurnOrder = {},
+) {
+  const bubbleMessage = result.bubble_message;
+  const bubbleText = bubbleMessage?.text.trim() ?? "";
+
+  if (bubbleMessage !== null && bubbleText !== "") {
+    return {
+      bubble: {
+        ...bubbleMessage,
+        hidden: false,
+        pinned: false,
+      },
+      role: "agent",
+      desktop: createShellBallBubbleDesktopState(turnOrder),
+    } satisfies ShellBallBubbleItem;
+  }
+
+  return createShellBallTextBubbleItem({
+    role: "agent",
+    text: "已记录新的补充要求，后续执行会纳入该指令。",
+    bubbleType: "status",
+    createdAt: fallbackCreatedAt,
     taskId: result.task.task_id,
     turnIndex: turnOrder.turnIndex,
     turnPhase: turnOrder.turnPhase,
   });
+}
+
+function isTaskStatusInvalidRpcError(error: unknown) {
+  return error instanceof JsonRpcClientError && error.code === ERROR_CODES.TASK_STATUS_INVALID;
 }
 
 function getShellBallTaskErrorText(error: unknown) {
@@ -814,6 +957,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const bubbleVisibilityPhaseRef = useRef<ShellBallBubbleVisibilityPhase>(bubbleVisibilityPhase);
   const visibleBubbleCountRef = useRef(getShellBallVisibleBubbleItems(bubbleItems).length);
   const previousVisibleBubbleCountRef = useRef(visibleBubbleCountRef.current);
+  const latestVisibleBubbleIdRef = useRef(getLatestVisibleShellBallBubbleId(bubbleItems));
   const detachedPinnedBubbleIdsRef = useRef(new Set<string>());
   const deliveryReadyBubbleKeysRef = useRef(new Set<string>());
   const approvalPendingBubbleKeysRef = useRef(new Set<string>());
@@ -845,6 +989,8 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const shellBallTaskIdsRef = useRef(new Set<string>());
   const shellBallTaskTurnIndexRef = useRef(new Map<string, number>());
   const activeShellBallTaskIdRef = useRef<string | null>(null);
+  const activeShellBallTaskIntentNameRef = useRef<string | null>(null);
+  const activeShellBallTaskStatusRef = useRef<TaskUpdatedNotification["status"] | null>(null);
   const revealBubbleRegionRef = useRef<() => void>(() => {});
   const unbindShellBallTaskRef = useRef<(taskId: string) => void>(() => {});
   const autoOpenShellBallDeliveryResultRef = useRef<(taskId: string, deliveryResult: DeliveryResult | null | undefined) => Promise<void>>(
@@ -859,6 +1005,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const syncAnchoredPinnedBubbleWindowsRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const handleBubbleActionRef = useRef<(payload: ShellBallBubbleActionPayload) => void>(() => {});
   const helperWindowsVisibleRef = useRef(input.helperWindowsVisible ?? true);
+  const visualStateRef = useRef(input.visualState);
   const getBallClientRect = input.getBallClientRect;
   const regionActiveRef = useRef(false);
   const bubbleHoveredRef = useRef(false);
@@ -867,6 +1014,10 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   const bubbleHideDelayTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const bubbleHideCompleteTimeoutRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   helperWindowsVisibleRef.current = helpersVisible;
+  visualStateRef.current = input.visualState;
+  // Programmatic interaction-state changes can retire the input without a DOM
+  // blur event, so keep the visibility timer ref aligned with the latest prop.
+  inputFocusedRef.current = input.inputFocused;
   const handlersRef = useRef({
     setInputValue: input.setInputValue,
     onAppendPendingFiles: input.onAppendPendingFiles ?? (() => {}),
@@ -878,7 +1029,6 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     onInputFocusChange: input.onInputFocusChange,
     onSubmitText: input.onSubmitText,
     onSubmitVoiceText: input.onSubmitVoiceText ?? defaultSubmitVoiceText,
-    getCurrentConversationSessionId: input.getCurrentConversationSessionId,
     onAttachFile: input.onAttachFile,
     onPrimaryClick: input.onPrimaryClick,
   });
@@ -897,7 +1047,6 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     onInputFocusChange: input.onInputFocusChange,
     onSubmitText: input.onSubmitText,
     onSubmitVoiceText: input.onSubmitVoiceText ?? defaultSubmitVoiceText,
-    getCurrentConversationSessionId: input.getCurrentConversationSessionId,
     onAttachFile: input.onAttachFile,
     onPrimaryClick: input.onPrimaryClick,
   };
@@ -924,6 +1073,9 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     approvalPendingBubbleKeysRef.current.add(bubbleKey);
 
     if (activeShellBallTaskIdRef.current === input.taskId) {
+      // approval.pending can arrive before task.updated, so keep the local
+      // routing ref aligned with the formal authorization state immediately.
+      activeShellBallTaskStatusRef.current = "waiting_auth";
       syncShellBallVisualStateFromTaskStatus("waiting_auth");
     }
 
@@ -1028,9 +1180,13 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     taskId: string,
     turnIndex?: number,
     fallbackStatus?: QueuedTaskUpdatedNotification["status"],
+    fallbackIntentName?: string | null,
   ) => {
     shellBallTaskIdsRef.current.add(taskId);
     activeShellBallTaskIdRef.current = taskId;
+    if (fallbackIntentName !== undefined) {
+      activeShellBallTaskIntentNameRef.current = fallbackIntentName;
+    }
 
     if (turnIndex !== undefined) {
       shellBallTaskTurnIndexRef.current.set(taskId, turnIndex);
@@ -1040,8 +1196,10 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     queuedTaskUpdatedNotificationsRef.current.delete(taskId);
 
     if (queuedTaskUpdatedNotification !== undefined) {
+      activeShellBallTaskStatusRef.current = queuedTaskUpdatedNotification.status;
       syncShellBallVisualStateFromTaskStatus(queuedTaskUpdatedNotification.status);
     } else if (fallbackStatus !== undefined) {
+      activeShellBallTaskStatusRef.current = fallbackStatus;
       syncShellBallVisualStateFromTaskStatus(fallbackStatus);
     }
 
@@ -1199,6 +1357,11 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       return;
     }
 
+    if (shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
+      applyBubbleVisibilityPhase("visible");
+      return;
+    }
+
     bubbleHideDelayTimeoutRef.current = scheduleShellBallTimeout(() => {
       if (!helperWindowsVisibleRef.current || visibleBubbleCountRef.current === 0) {
         applyBubbleVisibilityPhase("hidden");
@@ -1210,9 +1373,19 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         return;
       }
 
+      if (shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
+        applyBubbleVisibilityPhase("visible");
+        return;
+      }
+
       applyBubbleVisibilityPhase("fading");
       bubbleHideCompleteTimeoutRef.current = scheduleShellBallTimeout(() => {
         if (regionActiveRef.current || bubbleHoveredRef.current || inputFocusedRef.current || inputHoveredRef.current) {
+          applyBubbleVisibilityPhase("visible");
+          return;
+        }
+
+        if (shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
           applyBubbleVisibilityPhase("visible");
           return;
         }
@@ -1291,7 +1464,6 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           fallback: "task_detail",
         },
         pageContext,
-        sessionId: handlersRef.current.getCurrentConversationSessionId?.(),
         source: "floating_ball",
       });
 
@@ -1302,7 +1474,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         return;
       }
 
-      registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+      registerShellBallTask(result.task.task_id, turnIndex, result.task.status, result.task.intent?.name ?? null);
       setBubbleItems((currentItems) =>
         replaceShellBallPendingBubble(
           currentItems,
@@ -1336,8 +1508,8 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   }, [allocateBubbleTurnIndex, autoOpenShellBallDeliveryResult, beginPendingShellBallTaskRegistration, registerShellBallTask, revealBubbleRegion]);
 
   /**
-   * Submits clipboard text through the formal shell-ball text input path while
-   * preserving the local bubble turn ordering used by hover-input submissions.
+   * Submits clipboard text through the shared shell-ball free-form input path
+   * while preserving the local bubble turn ordering used by hover-input submissions.
    *
    * @param text Clipboard text captured by the desktop clipboard prompt.
    * @returns A promise that resolves after the bubble timeline has been updated.
@@ -1370,31 +1542,28 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     const finishPendingTaskRegistration = beginPendingShellBallTaskRegistration();
 
     try {
-      const result = await submitTextInput({
+      const result = await submitShellBallInput({
         text: normalizedText,
-        source: "floating_ball",
         trigger: "hover_text_input",
         inputMode: "text",
-        sessionId: handlersRef.current.getCurrentConversationSessionId?.(),
-        options: {
-          confirm_required: false,
-          preferred_delivery: "bubble",
-        },
       });
 
       if (!isShellBallInputSubmitResult(result)) {
         return;
       }
 
-      registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+      const task = result.task;
+      if (task) {
+        registerShellBallTask(task.task_id, turnIndex, task.status, task.intent?.name ?? null);
+      }
       setBubbleItems((currentItems) => {
         const nextItems = currentItems.map((item) =>
-          item.bubble.bubble_id === userBubbleItem.bubble.bubble_id
+          item.bubble.bubble_id === userBubbleItem.bubble.bubble_id && task
             ? {
                 ...item,
                 bubble: {
                   ...item.bubble,
-                  task_id: result.task.task_id,
+                  task_id: task.task_id,
                 },
               }
             : item,
@@ -1402,14 +1571,17 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
 
         return sortShellBallBubbleItemsByTimestamp([
           ...nextItems,
-          createShellBallAgentBubbleItem(result, new Date().toISOString(), {
+          ...createShellBallSubmitFeedbackBubbleItems(result, {
+            createdAt: new Date().toISOString(),
+            taskId: task?.task_id,
             turnIndex,
-            turnPhase: 1,
           }),
         ]);
       });
       revealBubbleRegion();
-      void autoOpenShellBallDeliveryResult(result.task.task_id, result.delivery_result);
+      if (task) {
+        void autoOpenShellBallDeliveryResult(task.task_id, result.delivery_result);
+      }
     } catch (error) {
       console.warn("shell-ball clipboard prompt submit failed", error);
       setBubbleItems((currentItems) =>
@@ -1479,7 +1651,6 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         trigger: "hover_text_input",
         inputMode: "text",
         context: input.context,
-        sessionId: handlersRef.current.getCurrentConversationSessionId?.(),
         options: {
           confirm_required: false,
           preferred_delivery: "bubble",
@@ -1493,15 +1664,18 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         return;
       }
 
-      registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+      const task = result.task;
+      if (task) {
+        registerShellBallTask(task.task_id, turnIndex, task.status, task.intent?.name ?? null);
+      }
       setBubbleItems((currentItems) => {
         const nextItems = currentItems.map((item) =>
-          item.bubble.bubble_id === userBubbleItem.bubble.bubble_id
+          item.bubble.bubble_id === userBubbleItem.bubble.bubble_id && task
             ? {
                 ...item,
                 bubble: {
                   ...item.bubble,
-                  task_id: result.task.task_id,
+                  task_id: task.task_id,
                 },
               }
             : item,
@@ -1510,14 +1684,17 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         return replaceShellBallPendingBubble(
           nextItems,
           pendingAgentBubbleItem.bubble.bubble_id,
-          createShellBallAgentBubbleItem(result, new Date().toISOString(), {
+          createShellBallSubmitFeedbackBubbleItems(result, {
+            createdAt: new Date().toISOString(),
+            taskId: task?.task_id,
             turnIndex,
-            turnPhase: 1,
           }),
         );
       });
       revealBubbleRegion();
-      void autoOpenShellBallDeliveryResult(result.task.task_id, result.delivery_result);
+      if (task) {
+        void autoOpenShellBallDeliveryResult(task.task_id, result.delivery_result);
+      }
     } catch (error) {
       console.warn("shell-ball screen shortcut submit failed", error);
       setBubbleItems((currentItems) =>
@@ -1588,9 +1765,12 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   useEffect(() => {
     const visibleBubbleCount = getShellBallVisibleBubbleItems(bubbleItems).length;
     const previousVisibleBubbleCount = previousVisibleBubbleCountRef.current;
+    const latestVisibleBubbleId = getLatestVisibleShellBallBubbleId(bubbleItems);
+    const previousLatestVisibleBubbleId = latestVisibleBubbleIdRef.current;
 
     visibleBubbleCountRef.current = visibleBubbleCount;
     previousVisibleBubbleCountRef.current = visibleBubbleCount;
+    latestVisibleBubbleIdRef.current = latestVisibleBubbleId;
 
     if (!helperWindowsVisibleRef.current || visibleBubbleCount === 0) {
       clearBubbleVisibilityTimers();
@@ -1603,7 +1783,19 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       return;
     }
 
-    if (visibleBubbleCount > previousVisibleBubbleCount) {
+    if (shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
+      revealBubbleRegion();
+      return;
+    }
+
+    // Replacing a loading bubble with the first concrete reply keeps the
+    // visible-count flat, so detect the newest visible bubble id as well.
+    const bubbleContentAdvanced =
+      visibleBubbleCount === previousVisibleBubbleCount &&
+      latestVisibleBubbleId !== null &&
+      latestVisibleBubbleId !== previousLatestVisibleBubbleId;
+
+    if (visibleBubbleCount > previousVisibleBubbleCount || bubbleContentAdvanced) {
       revealBubbleRegion();
       scheduleBubbleRegionHide();
     }
@@ -1622,6 +1814,11 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     }
 
     if (regionActiveRef.current || bubbleHoveredRef.current || inputFocusedRef.current || inputHoveredRef.current) {
+      revealBubbleRegion();
+      return;
+    }
+
+    if (shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
       revealBubbleRegion();
       return;
     }
@@ -1754,23 +1951,34 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
   }, [snapshot.visibility.input]);
 
   useEffect(() => {
-    const hoverDrivenState =
-      input.visualState === "hover_input" || input.visualState === "voice_listening" || input.visualState === "voice_locked";
+    regionActiveRef.current = input.regionActive;
 
-    if (hoverDrivenState) {
-      regionActiveRef.current = true;
+    if (input.regionActive) {
       revealBubbleRegion();
       return;
     }
 
-    if (input.visualState === "idle") {
-      regionActiveRef.current = false;
+    const voicePreviewActiveState =
+      input.visualState === "voice_listening" || input.visualState === "voice_locked";
 
-      if (!inputFocusedRef.current) {
-        scheduleBubbleRegionHide();
-      }
+    if (voicePreviewActiveState || shouldKeepShellBallBubbleRegionVisibleForTaskState(visualStateRef.current)) {
+      revealBubbleRegion();
+      return;
     }
-  }, [input.visualState, revealBubbleRegion, scheduleBubbleRegionHide]);
+
+    if (!helperWindowsVisibleRef.current || visibleBubbleCountRef.current === 0) {
+      clearBubbleVisibilityTimers();
+      applyBubbleVisibilityPhase("hidden");
+      return;
+    }
+
+    if (bubbleHoveredRef.current || inputFocusedRef.current || inputHoveredRef.current) {
+      revealBubbleRegion();
+      return;
+    }
+
+    scheduleBubbleRegionHide();
+  }, [applyBubbleVisibilityPhase, clearBubbleVisibilityTimers, input.regionActive, input.visualState, revealBubbleRegion, scheduleBubbleRegionHide]);
 
   useEffect(() => {
     return () => {
@@ -1818,6 +2026,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         response.data.task.task_id,
         turnIndex,
         shouldFallbackToResponseStatus ? response.data.task.status : undefined,
+        response.data.task.intent?.name ?? null,
       );
 
       setBubbleItems((currentItems) =>
@@ -1915,6 +2124,11 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     );
     revealBubbleRegion();
 
+    // Voice submissions do not pass through the hover-input confirming state,
+    // so surface the local thinking motion immediately while the formal task
+    // result is still in flight.
+    useShellBallStore.getState().setVisualState("processing");
+
     /**
      * Voice submissions should reuse the same task/bubble/delivery pipeline as
      * hover-text submissions so the shell-ball can track task detail routing and
@@ -1930,21 +2144,25 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
     void Promise.resolve(handlersRef.current.onSubmitVoiceText(finalizedSpeechPayload))
       .then((result) => {
         if (!isShellBallInputSubmitResult(result)) {
+          useShellBallStore.getState().setVisualState(getShellBallProcessingReturnState(input.regionActive));
           setBubbleItems((currentItems) =>
             replaceShellBallPendingBubble(currentItems, pendingAgentBubbleItem.bubble.bubble_id),
           );
           return;
         }
 
-        registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+        const task = result.task;
+        if (task) {
+          registerShellBallTask(task.task_id, turnIndex, task.status, task.intent?.name ?? null);
+        }
         setBubbleItems((currentItems) => {
           const nextItems = currentItems.map((item) =>
-            item.bubble.bubble_id === userBubbleItem.bubble.bubble_id
+            item.bubble.bubble_id === userBubbleItem.bubble.bubble_id && task
               ? {
                   ...item,
                   bubble: {
                     ...item.bubble,
-                    task_id: result.task.task_id,
+                    task_id: task.task_id,
                   },
                 }
               : item,
@@ -1953,17 +2171,21 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           return replaceShellBallPendingBubble(
             nextItems,
             pendingAgentBubbleItem.bubble.bubble_id,
-            createShellBallAgentBubbleItem(result, new Date().toISOString(), {
+            createShellBallSubmitFeedbackBubbleItems(result, {
+              createdAt: new Date().toISOString(),
+              taskId: task?.task_id,
               turnIndex,
-              turnPhase: 1,
             }),
           );
         });
         revealBubbleRegion();
-        void autoOpenShellBallDeliveryResult(result.task.task_id, result.delivery_result);
+        if (task) {
+          void autoOpenShellBallDeliveryResult(task.task_id, result.delivery_result);
+        }
       })
       .catch((error) => {
         console.warn("shell-ball voice submit failed", error);
+        useShellBallStore.getState().setVisualState(getShellBallProcessingReturnState(input.regionActive));
         setBubbleItems((currentItems) =>
           replaceShellBallPendingBubble(
             currentItems,
@@ -1983,7 +2205,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         finishPendingTaskRegistration();
         handlersRef.current.onFinalizedSpeechHandled();
       });
-  }, [allocateBubbleTurnIndex, autoOpenShellBallDeliveryResult, beginPendingShellBallTaskRegistration, input.finalizedSpeechPayload, registerShellBallTask, revealBubbleRegion]);
+  }, [allocateBubbleTurnIndex, autoOpenShellBallDeliveryResult, beginPendingShellBallTaskRegistration, input.finalizedSpeechPayload, input.regionActive, registerShellBallTask, revealBubbleRegion]);
 
   useEffect(() => {
     const clearTaskSubscription = subscribeTaskUpdated((payload) => {
@@ -1997,6 +2219,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
       }
 
       if (activeShellBallTaskIdRef.current === payload.task_id) {
+        activeShellBallTaskStatusRef.current = payload.status;
         syncShellBallVisualStateFromTaskStatus(payload.status);
       }
     });
@@ -2248,8 +2471,13 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           task_id: payload.taskId,
         });
 
-        syncShellBallVisualStateFromTaskStatus(result.task.status);
-        registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+        const task = result.task;
+        if (!task) {
+          throw new Error("Shell-ball intent confirmation did not return a task.");
+        }
+
+        syncShellBallVisualStateFromTaskStatus(task.status);
+        registerShellBallTask(task.task_id, turnIndex, task.status, task.intent?.name ?? null);
 
         setBubbleItems((currentItems) =>
           sortShellBallBubbleItemsByTimestamp([
@@ -2261,7 +2489,7 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           ]),
         );
         revealBubbleRegionRef.current();
-        void autoOpenShellBallDeliveryResult(result.task.task_id, result.delivery_result);
+        void autoOpenShellBallDeliveryResult(task.task_id, result.delivery_result);
       } catch (error) {
         console.warn("shell-ball intent decision failed", error);
         setBubbleItems((currentItems) =>
@@ -2410,6 +2638,164 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           break;
         }
 
+        if (shouldRouteShellBallSubmitToActiveSteering({
+          activeTaskId: activeShellBallTaskIdRef.current,
+          activeTaskIntentName: activeShellBallTaskIntentNameRef.current,
+          activeTaskStatus: activeShellBallTaskStatusRef.current,
+          files: submittedFiles,
+          text: submittedText,
+        })) {
+          const activeShellBallTaskId = activeShellBallTaskIdRef.current;
+          if (activeShellBallTaskId === null) {
+            break;
+          }
+
+          const createdAt = new Date().toISOString();
+          const turnIndex = getTaskBubbleTurnIndex(activeShellBallTaskId) ?? allocateBubbleTurnIndex();
+          bindTaskToBubbleTurn(activeShellBallTaskId, turnIndex);
+          const userBubbleItem = createShellBallTextBubbleItem({
+            role: "user",
+            text: submittedText,
+            bubbleType: "result",
+            createdAt,
+            taskId: activeShellBallTaskId,
+            turnIndex,
+            turnPhase: 0,
+          });
+          const pendingAgentBubbleItem = createShellBallAgentLoadingBubbleItem({
+            createdAt,
+            taskId: activeShellBallTaskId,
+            turnIndex,
+            turnPhase: 1,
+          });
+
+          setBubbleItems((currentItems) =>
+            sortShellBallBubbleItemsByTimestamp([...currentItems, userBubbleItem, pendingAgentBubbleItem]),
+          );
+          handlersRef.current.setInputValue("");
+          handlersRef.current.onInputFocusChange(false);
+          revealBubbleRegion();
+
+          try {
+            const result = await steerTask({
+              request_meta: createShellBallRequestMeta(),
+              task_id: activeShellBallTaskId,
+              message: submittedText,
+            });
+            registerShellBallTask(result.task.task_id, turnIndex, result.task.status, result.task.intent?.name ?? null);
+            setBubbleItems((currentItems) =>
+              replaceShellBallPendingBubble(
+                currentItems,
+                pendingAgentBubbleItem.bubble.bubble_id,
+                createShellBallSteerBubbleItem(result, new Date().toISOString(), {
+                  turnIndex,
+                  turnPhase: 1,
+                }),
+              ),
+            );
+            revealBubbleRegion();
+          } catch (error) {
+            console.warn("shell-ball active task steer failed", error);
+            // The cached active-task status can race with backend state changes.
+            // Preserve the submitted text by re-entering the ordinary intake path.
+            if (isTaskStatusInvalidRpcError(error)) {
+              const finishPendingTaskRegistration = beginPendingShellBallTaskRegistration();
+
+              try {
+                const fallbackResult = await submitTextInput({
+                  text: submittedText,
+                  source: "floating_ball",
+                  trigger: "hover_text_input",
+                  inputMode: "text",
+                  options: {
+                    confirm_required: false,
+                    preferred_delivery: "bubble",
+                  },
+                });
+
+                if (!isShellBallInputSubmitResult(fallbackResult)) {
+                  throw new Error("Shell-ball steer fallback did not return a task result.");
+                }
+
+                const fallbackTask = fallbackResult.task;
+                if (fallbackTask) {
+                  registerShellBallTask(
+                    fallbackTask.task_id,
+                    turnIndex,
+                    fallbackTask.status,
+                    fallbackTask.intent?.name ?? null,
+                  );
+                }
+                setBubbleItems((currentItems) => {
+                  const retargetedItems = currentItems.map((item) =>
+                    item.bubble.bubble_id === userBubbleItem.bubble.bubble_id && fallbackTask
+                      ? {
+                          ...item,
+                          bubble: {
+                            ...item.bubble,
+                            task_id: fallbackTask.task_id,
+                          },
+                        }
+                      : item,
+                  );
+
+                  return replaceShellBallPendingBubble(
+                    retargetedItems,
+                    pendingAgentBubbleItem.bubble.bubble_id,
+                    createShellBallAgentBubbleItem(fallbackResult, new Date().toISOString(), {
+                      turnIndex,
+                      turnPhase: 1,
+                    }),
+                  );
+                });
+                revealBubbleRegion();
+                if (fallbackTask) {
+                  void autoOpenShellBallDeliveryResult(fallbackTask.task_id, fallbackResult.delivery_result);
+                }
+              } catch (fallbackError) {
+                console.warn("shell-ball active task steer fallback submit failed", fallbackError);
+                handlersRef.current.setInputValue(submittedText);
+                handlersRef.current.onInputFocusChange(true);
+                setBubbleItems((currentItems) =>
+                  replaceShellBallPendingBubble(
+                    currentItems,
+                    pendingAgentBubbleItem.bubble.bubble_id,
+                    createShellBallTaskErrorBubbleItem({
+                      createdAt: new Date().toISOString(),
+                      error: fallbackError,
+                      taskId: activeShellBallTaskId,
+                      turnIndex,
+                      turnPhase: 1,
+                    }),
+                  ),
+                );
+                revealBubbleRegion();
+              } finally {
+                finishPendingTaskRegistration();
+              }
+
+              break;
+            }
+
+            setBubbleItems((currentItems) =>
+              replaceShellBallPendingBubble(
+                currentItems,
+                pendingAgentBubbleItem.bubble.bubble_id,
+                createShellBallTaskErrorBubbleItem({
+                  createdAt: new Date().toISOString(),
+                  error,
+                  taskId: activeShellBallTaskId,
+                  turnIndex,
+                  turnPhase: 1,
+                }),
+              ),
+            );
+            revealBubbleRegion();
+          }
+
+          break;
+        }
+
         const submittedPreview = createShellBallSubmittedContentPreview({
           text: submittedText,
           files: submittedFiles,
@@ -2418,8 +2804,13 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         if (submittedPreview === "") {
           const immediateResult = await handlersRef.current.onSubmitText();
 
-          if (isShellBallInputSubmitResult(immediateResult)) {
-            registerShellBallTask(immediateResult.task.task_id, undefined, immediateResult.task.status);
+          if (isShellBallInputSubmitResult(immediateResult) && immediateResult.task) {
+            registerShellBallTask(
+              immediateResult.task.task_id,
+              undefined,
+              immediateResult.task.status,
+              immediateResult.task.intent?.name ?? null,
+            );
             void autoOpenShellBallDeliveryResult(immediateResult.task.task_id, immediateResult.delivery_result);
           }
 
@@ -2446,20 +2837,26 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
         );
         revealBubbleRegion();
 
-		let result: ShellBallInputSubmitResult | null | void;
+        // Text submissions should surface think immediately on send, then let
+        // formal task updates replace that optimistic processing state.
+        useShellBallStore.getState().setVisualState("processing");
 
-		const finishPendingTaskRegistration = beginPendingShellBallTaskRegistration();
-		const pendingBubbleId = pendingAgentBubbleItem.bubble.bubble_id;
-		const stallTimeout = scheduleShellBallTimeout(() => {
-		  setBubbleItems((currentItems) => markShellBallPendingBubbleAsStalled(currentItems, pendingBubbleId));
-		  revealBubbleRegionRef.current();
-		}, SHELL_BALL_SUBMIT_STALL_NOTICE_MS);
+        let result: ShellBallInputSubmitResult | null | void;
+        let task: ShellBallInputSubmitResult["task"] | null = null;
 
-		try {
-		  result = await handlersRef.current.onSubmitText();
-		} catch (error) {
-		  clearShellBallTimeout(stallTimeout);
-		  console.warn("shell-ball text submit failed", error);
+        const finishPendingTaskRegistration = beginPendingShellBallTaskRegistration();
+        const pendingBubbleId = pendingAgentBubbleItem.bubble.bubble_id;
+        const stallTimeout = scheduleShellBallTimeout(() => {
+          setBubbleItems((currentItems) => markShellBallPendingBubbleAsStalled(currentItems, pendingBubbleId));
+          revealBubbleRegionRef.current();
+        }, SHELL_BALL_SUBMIT_STALL_NOTICE_MS);
+
+        try {
+          result = await handlersRef.current.onSubmitText();
+        } catch (error) {
+          clearShellBallTimeout(stallTimeout);
+          console.warn("shell-ball text submit failed", error);
+          useShellBallStore.getState().setVisualState(getShellBallProcessingReturnState(input.regionActive));
           setBubbleItems((currentItems) =>
             replaceShellBallPendingBubble(
               currentItems,
@@ -2477,17 +2874,20 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
           break;
         }
 
-		if (isShellBallInputSubmitResult(result)) {
-		  clearShellBallTimeout(stallTimeout);
-		  registerShellBallTask(result.task.task_id, turnIndex, result.task.status);
+        if (isShellBallInputSubmitResult(result)) {
+          clearShellBallTimeout(stallTimeout);
+          task = result.task;
+          if (task) {
+            registerShellBallTask(task.task_id, turnIndex, task.status, task.intent?.name ?? null);
+          }
           setBubbleItems((currentItems) => {
             const nextItems = currentItems.map((item) =>
-              item.bubble.bubble_id === userBubbleItem.bubble.bubble_id
+              item.bubble.bubble_id === userBubbleItem.bubble.bubble_id && task
                 ? {
                     ...item,
                     bubble: {
                       ...item.bubble,
-                      task_id: result.task.task_id,
+                      task_id: task.task_id,
                     },
                   }
                 : item,
@@ -2496,30 +2896,35 @@ export function useShellBallCoordinator(input: ShellBallCoordinatorInput) {
             return replaceShellBallPendingBubble(
               nextItems,
               pendingAgentBubbleItem.bubble.bubble_id,
-              createShellBallAgentBubbleItem(result, new Date().toISOString(), {
+              createShellBallSubmitFeedbackBubbleItems(result, {
+                createdAt: new Date().toISOString(),
+                taskId: task?.task_id,
                 turnIndex,
-                turnPhase: 1,
               }),
             );
           });
           revealBubbleRegion();
-          void autoOpenShellBallDeliveryResult(result.task.task_id, result.delivery_result);
+          if (task) {
+            void autoOpenShellBallDeliveryResult(task.task_id, result.delivery_result);
+          }
           finishPendingTaskRegistration();
           break;
         }
 
-		setBubbleItems((currentItems) =>
-		  replaceShellBallPendingBubble(currentItems, pendingAgentBubbleItem.bubble.bubble_id),
-		);
-		clearShellBallTimeout(stallTimeout);
-		finishPendingTaskRegistration();
-		break;
+        useShellBallStore.getState().setVisualState(getShellBallProcessingReturnState(input.regionActive));
+        clearShellBallTimeout(stallTimeout);
+
+        setBubbleItems((currentItems) =>
+          replaceShellBallPendingBubble(currentItems, pendingAgentBubbleItem.bubble.bubble_id),
+        );
+        finishPendingTaskRegistration();
+        break;
       }
       case "primary_click":
         handlersRef.current.onPrimaryClick();
         break;
     }
-  }, [allocateBubbleTurnIndex, autoOpenShellBallDeliveryResult, beginPendingShellBallTaskRegistration, handleScreenshotPrompt, handleWindowPrompt, registerShellBallTask, revealBubbleRegion]);
+  }, [allocateBubbleTurnIndex, autoOpenShellBallDeliveryResult, beginPendingShellBallTaskRegistration, bindTaskToBubbleTurn, getTaskBubbleTurnIndex, handleScreenshotPrompt, handleWindowPrompt, input.regionActive, registerShellBallTask, revealBubbleRegion]);
 
   return {
     snapshot,

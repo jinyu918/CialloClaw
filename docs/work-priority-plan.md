@@ -35,6 +35,7 @@
 - 对外统一围绕 `task`
 - 对内执行兼容对象保留 `run / step / event / tool_call`
 - 正式结果统一走 `delivery_result / artifact / citation`
+- 无任务锚点的纯社交 / 闲聊输入不属于正式执行路径，可只返回脱离 `task` 的轻量气泡；一旦输入需要执行、确认、授权、交付或持续追踪，必须回到 `task` 主链路。
 - 高风险动作统一进入 `approval_request / authorization_record / audit_record / recovery_point`
 
 ### 2.3 协议与工程口径
@@ -261,7 +262,7 @@ P3 负责扩展生态、规模化、插件化、多模型化。P3 绝不允许�
 #### P1-E 能力底座增强
 
 - [x] OCR worker 真接入，已支持 `extract_text / ocr_image / ocr_pdf` 与统一错误映射。
-- [x] Playwright 完整接入，已支持 `page_read / page_search / page_interact / structured_dom` 与健康检查回收。
+- [x] Playwright 完整接入，已支持 `page_read / page_search / page_interact / structured_dom` 与健康检查回收；3b 已补齐执行层 attach hint 注入、attach-only snapshot 续跑保留和既有 `browser_*` intent 的主链路回归修复，但进程级 session narrowing 仍待后续扩展 attach contract 与 worker 目标选择逻辑。
 - [x] Media worker 真接入，已支持 `transcode_media / normalize_recording / extract_frames`。
 - [x] worker 结果已回写 `tool_call.completed` 事件通知，并携带 `source / path / url / output_path` 等关键元信息。
 - [x] Stronghold 正式接入。
@@ -455,7 +456,7 @@ P3 负责扩展生态、规模化、插件化、多模型化。P3 绝不允许�
 - [ ] 补齐“运行态工作台细粒度承接”这个原子功能：当前任务详情和仪表盘已经能看到运行态摘要，但还需要把更多运行中信号稳定承接到工作台，而不是只展示最小摘要。
 - [ ] 补齐“高风险动作跨端验收”这个原子功能：至少一条高风险动作需要持续保持“授权请求 -> 恢复点 -> 审计 -> 结果承接”全链可回归，而不是只在单次联调时跑通过。
 - [ ] 补齐“屏幕感知失败语义冻结”这个原子功能：授权拒绝、采样失败、OCR 失败、会话失效、无有效识别内容都要继续沿用既有 task/event/delivery 语义，不得扩散出新的伪状态。
-- [ ] 补齐“后端主链回归基线”这个原子功能：任务创建、任务详情、结果承接、运行时稳定化、视觉任务、补充指令这些主链能力要维持成一套可长期执行的回归集合。
+- [ ] 补齐“后端主链回归基线”这个原子功能：任务创建、任务详情、结果承接、运行时稳定化、视觉任务、补充指令这些主链能力要维持成一套可长期执行的回归集合。当前已补齐 issue 367 相关的 Agent Loop 能力暴露、补充指令、文件/网页只读能力与 budget downgrade 边界回归，但仍缺把任务创建、任务详情、正式结果承接和视觉任务统一编入同一套长期回归集合。
 
 ##### 屏幕感知专项
 

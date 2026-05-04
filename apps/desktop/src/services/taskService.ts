@@ -4,17 +4,16 @@ import type {
   PageContext,
   RequestMeta,
   RequestSource,
-  Task,
 } from "@cialloclaw/protocol";
+import { getActiveWindowContext, type DesktopWindowContextPayload } from "@/platform/desktopWindowContext";
 import { startTask } from "@/rpc/methods";
-import { useTaskStore } from "@/stores/taskStore";
 import { submitTextInput } from "./agentInputService";
 import {
   getConversationPageContextForSession,
-  getCurrentConversationSessionId,
   rememberConversationPageContextFromTask,
   rememberConversationSessionFromTask,
 } from "./conversationSessionService";
+import { compactPageContext, mapDesktopWindowSnapshotToPageContext } from "./pageContext";
 
 type StartTaskContext = {
   context?: InputContext;
@@ -42,30 +41,6 @@ function normalizeTaskInputText(value: string | undefined) {
   return trimmed === "" ? undefined : trimmed;
 }
 
-function compactTaskPageContext(pageContext: PageContext | undefined) {
-  if (!pageContext) {
-    return undefined;
-  }
-
-  const normalizedAppName = pageContext?.app_name?.trim();
-  const normalizedTitle = pageContext?.title?.trim();
-  const normalizedUrl = pageContext?.url?.trim();
-  const normalizedWindowTitle = pageContext?.window_title?.trim();
-  const normalizedVisibleText = pageContext?.visible_text?.trim();
-  const normalizedHoverTarget = pageContext?.hover_target?.trim();
-
-  const compacted = {
-    ...(normalizedAppName ? { app_name: normalizedAppName } : {}),
-    ...(normalizedTitle ? { title: normalizedTitle } : {}),
-    ...(normalizedUrl ? { url: normalizedUrl } : {}),
-    ...(normalizedWindowTitle ? { window_title: normalizedWindowTitle } : {}),
-    ...(normalizedVisibleText ? { visible_text: normalizedVisibleText } : {}),
-    ...(normalizedHoverTarget ? { hover_target: normalizedHoverTarget } : {}),
-  } satisfies PageContext;
-
-  return Object.keys(compacted).length === 0 ? undefined : compacted;
-}
-
 function isShellBallIntakePageContext(pageContext: PageContext) {
   return pageContext.url === "local://shell-ball" && pageContext.app_name?.toLowerCase() === "desktop";
 }
@@ -82,8 +57,55 @@ function hasTaskSpecificPageContextAnchor(pageContext: PageContext | undefined) 
   );
 }
 
-function resolveTaskPageContext(pageContext: PageContext | undefined, sessionId: string | undefined) {
-  const compactedPageContext = compactTaskPageContext(pageContext);
+function pageContextAnchorsMatch(left: PageContext | undefined, right: PageContext | undefined) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.url && right.url) {
+    return left.url === right.url;
+  }
+
+  if (left.hover_target && right.hover_target) {
+    return left.hover_target === right.hover_target;
+  }
+
+  const leftApp = left.app_name?.toLowerCase();
+  const rightApp = right.app_name?.toLowerCase();
+  if (!leftApp || !rightApp || leftApp !== rightApp) {
+    return false;
+  }
+
+  return (left.title && right.title && left.title === right.title)
+    || (left.window_title && right.window_title && left.window_title === right.window_title);
+}
+
+async function readForegroundPageContext(): Promise<PageContext | undefined> {
+  try {
+    const windowContext = await getActiveWindowContext();
+    return mapDesktopWindowSnapshotToPageContext(windowContext as DesktopWindowContextPayload | null);
+  } catch {
+    return undefined;
+  }
+}
+
+async function hydrateRememberedPageContext(rememberedPageContext: PageContext) {
+  const foregroundPageContext = await readForegroundPageContext();
+  if (!pageContextAnchorsMatch(rememberedPageContext, foregroundPageContext)) {
+    return rememberedPageContext;
+  }
+
+  // The remembered session anchor keeps stable page identity only. When the
+  // current foreground snapshot still points at the same page, rehydrate fresh
+  // attach hints so follow-up task starts do not replay stale process metadata.
+  return compactPageContext({
+    ...rememberedPageContext,
+    ...foregroundPageContext,
+  }) ?? rememberedPageContext;
+}
+
+async function resolveTaskPageContext(pageContext: PageContext | undefined, sessionId: string | undefined) {
+  const compactedPageContext = compactPageContext(pageContext);
 
   if (hasTaskSpecificPageContextAnchor(compactedPageContext)) {
     return compactedPageContext;
@@ -91,20 +113,22 @@ function resolveTaskPageContext(pageContext: PageContext | undefined, sessionId:
 
   const rememberedPageContext = getConversationPageContextForSession(sessionId);
   if (rememberedPageContext) {
-    return rememberedPageContext;
+    return hydrateRememberedPageContext(rememberedPageContext);
   }
 
   return DEFAULT_TASK_PAGE_CONTEXT;
 }
 
 function resolveTaskSessionId(sessionId: string | undefined) {
-  return sessionId?.trim() || getCurrentConversationSessionId();
+  // Task-entry helpers start fresh unless a caller deliberately pins a backend
+  // session for an explicit continuation flow.
+  return sessionId?.trim() || undefined;
 }
 
 export async function startTaskFromSelectedText(text: string, context: StartTaskContext = {}) {
   const normalizedText = text.trim();
   const resolvedSessionId = resolveTaskSessionId(context.sessionId);
-  const pageContext = resolveTaskPageContext(context.pageContext, resolvedSessionId);
+  const pageContext = await resolveTaskPageContext(context.pageContext, resolvedSessionId);
   if (normalizedText === "") {
     throw new Error("selected text is empty");
   }
@@ -133,7 +157,7 @@ export async function startTaskFromSelectedText(text: string, context: StartTask
 export async function startTaskFromFiles(files: string[], context: StartTaskContext = {}, text?: string) {
   const normalizedFiles = files.map((file) => file.trim()).filter(Boolean);
   const resolvedSessionId = resolveTaskSessionId(context.sessionId);
-  const pageContext = resolveTaskPageContext(context.pageContext, resolvedSessionId);
+  const pageContext = await resolveTaskPageContext(context.pageContext, resolvedSessionId);
   if (normalizedFiles.length === 0) {
     throw new Error("dropped files are empty");
   }
@@ -170,7 +194,7 @@ export async function startTaskFromFiles(files: string[], context: StartTaskCont
 export async function startTaskFromErrorSignal(errorMessage: string, context: StartTaskContext = {}) {
   const normalizedMessage = errorMessage.trim();
   const resolvedSessionId = resolveTaskSessionId(context.sessionId);
-  const pageContext = resolveTaskPageContext(context.pageContext, resolvedSessionId);
+  const pageContext = await resolveTaskPageContext(context.pageContext, resolvedSessionId);
   if (normalizedMessage === "") {
     throw new Error("error signal is empty");
   }
@@ -210,10 +234,9 @@ export async function bootstrapTask(title: string) {
   if (taskResult === null) {
     throw new Error("hover text input is empty");
   }
+  if (taskResult.task === null) {
+    throw new Error("hover text input did not create a task");
+  }
 
   return taskResult.task;
-}
-
-export function listActiveTasks(): Task[] {
-  return useTaskStore.getState().tasks;
 }

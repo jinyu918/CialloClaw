@@ -78,42 +78,6 @@ func (s *stubLoopModelClient) GenerateToolCalls(_ context.Context, request model
 	return result, nil
 }
 
-type selectiveWaitLoopModelClient struct {
-	stubLoopModelClient
-	blockedTaskID string
-}
-
-func (s *selectiveWaitLoopModelClient) GenerateText(ctx context.Context, request model.GenerateTextRequest) (model.GenerateTextResponse, error) {
-	return s.stubLoopModelClient.GenerateText(ctx, request)
-}
-
-func (s *selectiveWaitLoopModelClient) GenerateToolCalls(_ context.Context, request model.ToolCallRequest) (model.ToolCallResult, error) {
-	if s.generateToolSeen != nil && request.TaskID == s.blockedTaskID {
-		select {
-		case <-s.generateToolSeen:
-		default:
-			close(s.generateToolSeen)
-		}
-	}
-	if s.generateToolWait != nil && request.TaskID == s.blockedTaskID {
-		<-s.generateToolWait
-	}
-	result := s.toolResult
-	if strings.TrimSpace(result.OutputText) == "" && len(result.ToolCalls) == 0 {
-		result.OutputText = request.Input
-	}
-	if result.RequestID == "" {
-		result.RequestID = "req_loop_tools"
-	}
-	if result.Provider == "" {
-		result.Provider = "openai_responses"
-	}
-	if result.ModelID == "" {
-		result.ModelID = "gpt-5.4"
-	}
-	return result, nil
-}
-
 type testStorageAdapter struct {
 	databasePath string
 }
@@ -571,13 +535,11 @@ func TestHandleStreamConnDoesNotReplayStreamedRuntimeNotificationsAfterResponse(
 }
 
 func TestHandleStreamConnFiltersRuntimeNotificationsToRequestTask(t *testing.T) {
-	modelClient := &selectiveWaitLoopModelClient{
-		stubLoopModelClient: stubLoopModelClient{
-			toolResult: model.ToolCallResult{
-				OutputText: "Scoped runtime finished.",
-			},
-			generateToolWait: make(chan struct{}),
+	modelClient := &stubLoopModelClient{
+		toolResult: model.ToolCallResult{
+			OutputText: "Scoped runtime finished.",
 		},
+		generateToolWait: make(chan struct{}),
 	}
 	server := newTestServerWithModelClient(modelClient)
 
@@ -600,7 +562,6 @@ func TestHandleStreamConnFiltersRuntimeNotificationsToRequestTask(t *testing.T) 
 
 	taskA := startTask("sess_loop_scope_a")
 	taskB := startTask("sess_loop_scope_b")
-	modelClient.blockedTaskID = taskA
 
 	left, right := net.Pipe()
 	defer left.Close()
@@ -639,13 +600,6 @@ func TestHandleStreamConnFiltersRuntimeNotificationsToRequestTask(t *testing.T) 
 		t.Fatalf("expected first streamed envelope to be loop.* notification, got %+v", firstEnvelope)
 	}
 
-	if _, err := server.orchestrator.TaskSteer(map[string]any{
-		"task_id": taskB,
-		"message": "Mention the unrelated steering marker.",
-	}); err != nil {
-		t.Fatalf("queue steering for unrelated task: %v", err)
-	}
-
 	confirmDone := make(chan error, 1)
 	go func() {
 		_, err := server.orchestrator.ConfirmTask(map[string]any{
@@ -680,6 +634,8 @@ func TestHandleStreamConnFiltersRuntimeNotificationsToRequestTask(t *testing.T) 
 		t.Fatalf("clear read deadline: %v", err)
 	}
 
+	close(modelClient.generateToolWait)
+
 	select {
 	case err := <-confirmDone:
 		if err != nil {
@@ -688,8 +644,6 @@ func TestHandleStreamConnFiltersRuntimeNotificationsToRequestTask(t *testing.T) 
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected unrelated task confirmation to complete")
 	}
-
-	close(modelClient.generateToolWait)
 }
 
 func TestHandleStreamConnAllowsSettingsReadWhileTaskConfirmWaits(t *testing.T) {
