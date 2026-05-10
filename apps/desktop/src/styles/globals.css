@@ -1,0 +1,158 @@
+@import "./desktopTheme.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-sans: var(--cc-font-ui);
+  --font-display: var(--cc-font-display);
+  --font-mono: var(--cc-font-mono);
+  --bg-0: var(--cc-cream-2);
+  --bg-1: var(--cc-cream-1);
+  --bg-2: var(--cc-paper-soft);
+  --ink-0: var(--cc-ink);
+  --ink-1: var(--cc-ink-soft);
+  --line: var(--cc-line);
+  --aqua: var(--cc-sky);
+  --orange: var(--cc-honey);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  color: var(--ink-0);
+  background:
+    var(--cc-page-bg);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+html[data-app-window="shell-ball"],
+html[data-app-window="shell-ball-bubble"],
+html[data-app-window="shell-ball-input"],
+html[data-app-window="onboarding"],
+html[data-app-window="shell-ball-voice"],
+body[data-app-window="shell-ball"],
+body[data-app-window="shell-ball-bubble"],
+body[data-app-window="shell-ball-input"],
+body[data-app-window="onboarding"],
+body[data-app-window="shell-ball-voice"],
+#root[data-app-window="shell-ball"],
+#root[data-app-window="shell-ball-bubble"],
+#root[data-app-window="shell-ball-input"],
+#root[data-app-window="onboarding"],
+#root[data-app-window="shell-ball-voice"] {
+  background: transparent;
+}
+
+html[data-app-window="shell-ball"],
+html[data-app-window="shell-ball-bubble"],
+html[data-app-window="shell-ball-input"],
+html[data-app-window="onboarding"],
+html[data-app-window="shell-ball-voice"],
+body[data-app-window="shell-ball"],
+body[data-app-window="shell-ball-bubble"],
+body[data-app-window="shell-ball-input"],
+body[data-app-window="onboarding"],
+body[data-app-window="shell-ball-voice"] {
+  overflow: hidden;
+}
+
+body[data-app-window="shell-ball"],
+body[data-app-window="shell-ball-bubble"],
+body[data-app-window="shell-ball-input"],
+body[data-app-window="onboarding"],
+body[data-app-window="shell-ball-voice"] {
+  min-height: 0;
+}
+
+#root[data-app-window="shell-ball"],
+#root[data-app-window="shell-ball-bubble"],
+#root[data-app-window="shell-ball-input"],
+#root[data-app-window="onboarding"],
+#root[data-app-window="shell-ball-voice"] {
+  display: grid;
+  min-height: 0;
+  width: max-content;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.glass-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@media (max-width: 1240px) {
+  .mirror-page__hero {
+    grid-template-areas:
+      "copy copy"
+      "metrics insight";
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.95fr);
+  }
+
+  .mirror-page__board-bar {
+    flex-direction: column;
+    gap: var(--mirror-space-2);
+  }
+
+  .mirror-page__board-meta {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 980px) {
+  .mirror-page {
+    height: 100vh;
+    max-height: 100vh;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .mirror-page__frame {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+  }
+
+  .mirror-page__hero,
+  .mirror-page__hero {
+    grid-template-areas:
+      "copy"
+      "metrics"
+      "insight";
+  }
+
+  .mirror-page__board {
+    padding: 1rem;
+  }
+
+  .mirror-page__board-note {
+    max-width: none;
+  }
+
+  .mirror-page__canvas {
+    min-height: 0;
+  }
+
+  .mirror-page__detail-layer {
+    padding: var(--mirror-space-2);
+  }
+
+  .mirror-page__card-footer {
+    flex-direction: column;
+  }
+}

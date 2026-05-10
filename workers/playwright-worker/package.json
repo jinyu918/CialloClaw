@@ -1,0 +1,19 @@
+{
+  "name": "@cialloclaw/playwright-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "build": "node --check src/index.js"
+  },
+  "dependencies": {
+    "@cialloclaw/protocol": "workspace:*",
+    "playwright": "^1.59.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

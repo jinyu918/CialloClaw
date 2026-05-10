@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_task_start_demo",
+  "method": "agent.task.start",
+  "params": {
+    "request_meta": {
+      "trace_id": "trace_demo_task_start",
+      "client_time": "2026-04-07T10:31:00+08:00"
+    },
+    "session_id": "sess_demo_001",
+    "source": "floating_ball",
+    "trigger": "text_selected_click",
+    "input": {
+      "type": "text_selection",
+      "text": "这里放用户选中的文本内容",
+      "page_context": {
+        "title": "当前页面标题",
+        "url": "local://current-page",
+        "app_name": "browser"
+      }
+    },
+    "context": {
+      "selection": {
+        "text": "这里是补充上下文"
+      },
+      "files": [
+        "D:/CialloClawWorkspace/demo/context.md"
+      ]
+    },
+    "delivery": {
+      "preferred": "bubble",
+      "fallback": "task_detail"
+    },
+    "options": {
+      "confirm_required": true
+    }
+  }
+}

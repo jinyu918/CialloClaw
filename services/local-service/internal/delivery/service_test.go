@@ -1,0 +1,198 @@
+// This test file covers delivery and persistence-plan assembly behavior.
+package delivery
+
+import (
+	"testing"
+
+	"github.com/cialloclaw/cialloclaw/services/local-service/internal/presentation"
+)
+
+// TestBuildStorageAndArtifactPlans verifies storage and artifact plans are
+// assembled together.
+func TestBuildStorageAndArtifactPlans(t *testing.T) {
+	service := NewService()
+	deliveryResult := service.BuildDeliveryResult("task_001", "workspace_document", "测试摘要", "已为你写入文档并打开")
+	artifacts := service.BuildArtifact("task_001", "测试摘要", deliveryResult)
+
+	storagePlan := service.BuildStorageWritePlan("task_001", deliveryResult)
+	if storagePlan == nil {
+		t.Fatal("expected storage write plan to be generated for workspace document delivery")
+	}
+	if storagePlan["target_path"] == nil {
+		t.Fatal("expected storage write plan to carry a target path")
+	}
+	if storagePlan["target_path"] != "workspace/测试摘要.md" {
+		t.Fatalf("expected storage write plan to use workspace-relative target path, got %v", storagePlan["target_path"])
+	}
+
+	artifactPlans := service.BuildArtifactPersistPlans("task_001", artifacts)
+	if len(artifactPlans) != 1 {
+		t.Fatalf("expected one artifact persist plan, got %d", len(artifactPlans))
+	}
+}
+
+// TestBuildDeliveryResultWithTargetPath verifies an explicit output path flows
+// into both delivery_result and artifact payloads.
+func TestBuildDeliveryResultWithTargetPath(t *testing.T) {
+	service := NewService()
+	deliveryResult := service.BuildDeliveryResultWithTargetPath(
+		"task_001",
+		"workspace_document",
+		"文件写入结果",
+		"已为你写入文档并打开",
+		"notes/output.md",
+	)
+
+	payload := deliveryResult["payload"].(map[string]any)
+	if payload["path"] != "workspace/notes/output.md" {
+		t.Fatalf("expected explicit target path to be normalized into workspace, got %v", payload["path"])
+	}
+
+	artifacts := service.BuildArtifact("task_001", "文件写入结果", deliveryResult)
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one artifact, got %d", len(artifacts))
+	}
+	if artifacts[0]["title"] != "output.md" {
+		t.Fatalf("expected artifact title to follow target path base name, got %v", artifacts[0]["title"])
+	}
+}
+
+// TestBuildDeliveryResultForResultPage verifies result_page delivery resolves a
+// stable dashboard URL instead of a workspace path.
+func TestBuildDeliveryResultForResultPage(t *testing.T) {
+	service := NewService()
+	deliveryResult := service.BuildDeliveryResultWithTargetPath(
+		"task result/001",
+		"result_page",
+		"网页读取结果",
+		"结果已生成，正在打开结果页",
+		"ignored.md",
+	)
+
+	payload := deliveryResult["payload"].(map[string]any)
+	if payload["path"] != nil {
+		t.Fatalf("expected result_page delivery to skip workspace path, got %v", payload["path"])
+	}
+	if payload["url"] != "./dashboard.html#/tasks/delivery/task%20result%2F001" {
+		t.Fatalf("expected result_page delivery to expose stable dashboard url, got %v", payload["url"])
+	}
+	if payload["task_id"] != "task result/001" {
+		t.Fatalf("expected result_page delivery to preserve task id, got %v", payload["task_id"])
+	}
+
+	if artifacts := service.BuildArtifact("task result/001", "网页读取结果", deliveryResult); artifacts != nil {
+		t.Fatalf("expected result_page delivery to skip file artifacts, got %+v", artifacts)
+	}
+	if plan := service.BuildStorageWritePlan("task result/001", deliveryResult); plan != nil {
+		t.Fatalf("expected result_page delivery to skip workspace write plan, got %+v", plan)
+	}
+}
+
+func TestBuildArtifactPersistPlansBackfillsDeliveryPayloadAndCreatedAt(t *testing.T) {
+	service := NewService()
+	plans := service.BuildArtifactPersistPlans("task_001", []map[string]any{{
+		"artifact_id":      "art_001",
+		"artifact_type":    "generated_doc",
+		"title":            "result.md",
+		"path":             "workspace/result.md",
+		"mime_type":        "text/markdown",
+		"delivery_type":    "open_file",
+		"delivery_payload": nil,
+	}})
+	if len(plans) != 1 {
+		t.Fatalf("expected one artifact persist plan, got %d", len(plans))
+	}
+	if plans[0]["delivery_payload_json"] != "{}" {
+		t.Fatalf("expected empty delivery payload json fallback, got %+v", plans[0])
+	}
+	if plans[0]["created_at"] == "" {
+		t.Fatalf("expected created_at fallback, got %+v", plans[0])
+	}
+}
+
+func TestBuildArtifactPersistPlansAssignsIdentifiersWhenMissing(t *testing.T) {
+	service := NewService()
+	plans := service.BuildArtifactPersistPlans("task_001", []map[string]any{{
+		"artifact_type": "generated_file",
+		"title":         "result.txt",
+		"path":          "workspace/result.txt",
+		"mime_type":     "text/plain",
+		"delivery_type": "open_file",
+	}})
+	if len(plans) != 1 {
+		t.Fatalf("expected one artifact persist plan, got %d", len(plans))
+	}
+	if plans[0]["artifact_id"] == "" {
+		t.Fatalf("expected missing artifact_id to be backfilled, got %+v", plans[0])
+	}
+	if plans[0]["task_id"] != "task_001" {
+		t.Fatalf("expected task_id to be preserved during identifier backfill, got %+v", plans[0])
+	}
+}
+
+func TestEnsureArtifactIdentifiersStayStableAcrossOrdering(t *testing.T) {
+	artifacts := []map[string]any{
+		{
+			"artifact_type": "generated_file",
+			"title":         "result.txt",
+			"path":          "workspace/result.txt",
+			"mime_type":     "text/plain",
+		},
+		{
+			"artifact_type": "generated_file",
+			"title":         "other.txt",
+			"path":          "workspace/other.txt",
+			"mime_type":     "text/plain",
+		},
+	}
+
+	forward := EnsureArtifactIdentifiers("task_001", artifacts)
+	reversed := EnsureArtifactIdentifiers("task_001", []map[string]any{artifacts[1], artifacts[0]})
+
+	if forward[0]["artifact_id"] == "" || forward[1]["artifact_id"] == "" {
+		t.Fatalf("expected runtime artifact identifiers to be backfilled, got %+v", forward)
+	}
+	if forward[0]["artifact_id"] != reversed[1]["artifact_id"] {
+		t.Fatalf("expected first artifact id to stay stable across ordering, got forward=%+v reversed=%+v", forward, reversed)
+	}
+	if forward[1]["artifact_id"] != reversed[0]["artifact_id"] {
+		t.Fatalf("expected second artifact id to stay stable across ordering, got forward=%+v reversed=%+v", forward, reversed)
+	}
+}
+
+func TestBuildArtifactReturnsNilWithoutUsablePayload(t *testing.T) {
+	service := NewService()
+	if artifacts := service.BuildArtifact("task_001", "title", map[string]any{"payload": "invalid"}); artifacts != nil {
+		t.Fatalf("expected invalid payload to skip artifacts, got %+v", artifacts)
+	}
+	if artifacts := service.BuildArtifact("task_001", "title", map[string]any{"payload": map[string]any{"path": ""}}); artifacts != nil {
+		t.Fatalf("expected empty path to skip artifacts, got %+v", artifacts)
+	}
+}
+
+func TestBuildApprovalExecutionPlanRoutesByIntent(t *testing.T) {
+	service := NewService()
+	translatePlan := service.BuildApprovalExecutionPlan("task_001", map[string]any{"name": "translate"})
+	if translatePlan["delivery_type"] != "bubble" {
+		t.Fatalf("expected translate plan to use bubble delivery, got %+v", translatePlan)
+	}
+	writePlan := service.BuildApprovalExecutionPlan("task_001", map[string]any{"name": "write_file"})
+	if writePlan["result_title"] != presentation.Text(presentation.MessageResultTitleWriteFile, nil) {
+		t.Fatalf("expected write_file title override, got %+v", writePlan)
+	}
+	summarizePlan := service.BuildApprovalExecutionPlan("task_001", map[string]any{"name": "summarize"})
+	if summarizePlan["result_title"] != presentation.Text(presentation.MessageResultTitleSummarize, nil) {
+		t.Fatalf("expected summarize approval title override, got %+v", summarizePlan)
+	}
+}
+
+func TestDeliveryHelpersExposeDefaultAndBubbleContract(t *testing.T) {
+	service := NewService()
+	if service.DefaultResultType() != "workspace_document" {
+		t.Fatalf("expected workspace_document default result type, got %q", service.DefaultResultType())
+	}
+	bubble := service.BuildBubbleMessage("task_001", "status", "done", "2026-04-14T10:00:00Z")
+	if bubble["bubble_id"] != "bubble_task_001" || bubble["task_id"] != "task_001" || bubble["type"] != "status" {
+		t.Fatalf("unexpected bubble message payload: %+v", bubble)
+	}
+}

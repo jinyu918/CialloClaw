@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentTaskStartParams",
+  "type": "object",
+  "required": [
+    "request_meta",
+    "source",
+    "trigger",
+    "input"
+  ],
+  "properties": {
+    "request_meta": {
+      "type": "object",
+      "required": ["trace_id", "client_time"],
+      "properties": {
+        "trace_id": { "type": "string" },
+        "client_time": { "type": "string" }
+      }
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "source": {
+      "enum": ["floating_ball", "dashboard", "tray_panel"]
+    },
+    "trigger": {
+      "enum": [
+        "voice_commit",
+        "hover_text_input",
+        "text_selected_click",
+        "file_drop",
+        "error_detected",
+        "recommendation_click"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": ["text", "text_selection", "file", "error"]
+        },
+        "text": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "error_message": { "type": "string" },
+        "page_context": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "url": { "type": "string" },
+            "app_name": { "type": "string" },
+            "browser_kind": {
+              "enum": ["chrome", "edge", "other_browser", "non_browser"]
+            },
+            "process_path": { "type": "string" },
+            "process_id": { "type": "integer" },
+            "window_title": { "type": "string" },
+            "visible_text": { "type": "string" },
+            "hover_target": { "type": "string" }
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "url": { "type": "string" },
+            "app_name": { "type": "string" },
+            "browser_kind": {
+              "enum": ["chrome", "edge", "other_browser", "non_browser"]
+            },
+            "process_path": { "type": "string" },
+            "process_id": { "type": "integer" },
+            "window_title": { "type": "string" },
+            "visible_text": { "type": "string" },
+            "hover_target": { "type": "string" }
+          }
+        },
+        "screen": {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" },
+            "screen_summary": { "type": "string" },
+            "visible_text": { "type": "string" },
+            "window_title": { "type": "string" },
+            "hover_target": { "type": "string" }
+          }
+        },
+        "behavior": {
+          "type": "object",
+          "properties": {
+            "last_action": { "type": "string" },
+            "dwell_millis": { "type": "integer" },
+            "copy_count": { "type": "integer" },
+            "window_switch_count": { "type": "integer" },
+            "page_switch_count": { "type": "integer" }
+          }
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" }
+          }
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "message": { "type": "string" }
+          }
+        },
+        "clipboard": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" }
+          }
+        },
+        "text": {
+          "type": "string"
+        },
+        "selection_text": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "file_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "screen_summary": {
+          "type": "string"
+        },
+        "clipboard_text": {
+          "type": "string"
+        },
+        "hover_target": {
+          "type": "string"
+        },
+        "last_action": {
+          "type": "string"
+        },
+        "dwell_millis": {
+          "type": "integer"
+        },
+        "copy_count": {
+          "type": "integer"
+        },
+        "window_switch_count": {
+          "type": "integer"
+        },
+        "page_switch_count": {
+          "type": "integer"
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "preferred": {
+          "enum": ["bubble", "workspace_document", "result_page", "open_file", "reveal_in_folder", "task_detail"]
+        },
+        "fallback": {
+          "enum": ["bubble", "workspace_document", "result_page", "open_file", "reveal_in_folder", "task_detail"]
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "confirm_required": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

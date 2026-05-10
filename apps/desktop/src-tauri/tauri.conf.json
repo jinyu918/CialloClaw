@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CialloClaw",
+  "version": "0.1.0",
+  "identifier": "com.cialloclaw.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "node ./src-tauri/scripts/runWithSidecar.mjs dev",
+    "beforeBuildCommand": "node ./src-tauri/scripts/runWithSidecar.mjs build"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "externalBin": ["binaries/local-service"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "shell-ball",
+        "title": "CialloClaw Shell Ball",
+        "width": 144,
+        "height": 156,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "url": "shell-ball.html"
+      },
+      {
+        "label": "dashboard",
+        "title": "CialloClaw Dashboard",
+        "width": 1280,
+        "height": 860,
+        "decorations": false,
+        "visible": false,
+        "url": "dashboard.html"
+      }
+    ]
+  }
+}
